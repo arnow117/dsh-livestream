@@ -80,19 +80,30 @@ function connectOnce(): Promise<Obs> {
   const { port, password } = websocketConfig();
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-    const pending = new Map<string, { res: (v: any) => void; rej: (e: Error) => void; requestType: string }>();
-    const timer = setTimeout(() => { ws.close(); reject(new Error('连 OBS 超时')); }, 5000);
-    ws.onerror = () => { clearTimeout(timer); reject(new Error('连不上 OBS')); };
-    ws.onmessage = (msg) => {
-      try {
-        assertBiliCurrent();
-      } catch (error) {
-        clearTimeout(timer);
-        ws.close();
-        reject(error);
-        return;
+    const pending = new Map<string, { res: (v: any) => void; rej: (e: Error) => void; requestType: string; timer: ReturnType<typeof setTimeout> }>();
+    const fail = (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+      for (const request of pending.values()) {
+        clearTimeout(request.timer);
+        request.rej(error);
       }
+      pending.clear();
+    };
+    const timer = setTimeout(() => { fail(new Error('连 OBS 超时')); ws.close(); }, 5000);
+    ws.onerror = () => fail(new Error('连不上 OBS'));
+    ws.onclose = () => fail(new Error('OBS 连接已关闭'));
+    ws.onmessage = (msg) => {
       const { op, d } = JSON.parse(String(msg.data));
+      if (op === 0 || op === 2) {
+        try {
+          assertBiliCurrent();
+        } catch (error) {
+          fail(error as Error);
+          ws.close();
+          return;
+        }
+      }
       if (op === 0) {
         const identify: Record<string, unknown> = { rpcVersion: 1 };
         if (d.authentication) {
@@ -106,15 +117,28 @@ function connectOnce(): Promise<Obs> {
           call: (requestType, requestData = {}) => {
             assertBiliCurrent();
             const requestId = randomUUID();
-            ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
-            return new Promise((res, rej) => pending.set(requestId, { res, rej, requestType }));
+            return new Promise((res, rej) => {
+              const deadline = setTimeout(() => {
+                pending.delete(requestId);
+                rej(new Error(`OBS ${requestType} 超时`));
+              }, 10_000);
+              pending.set(requestId, { res, rej, requestType, timer: deadline });
+              try {
+                ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+              } catch (error) {
+                pending.delete(requestId);
+                clearTimeout(deadline);
+                rej(error);
+              }
+            });
           },
-          close: () => ws.close(),
+          close: () => { fail(new Error('OBS 连接已关闭')); ws.close(); },
         });
       } else if (op === 7) {
         const p = pending.get(d.requestId);
         if (!p) return;
         pending.delete(d.requestId);
+        clearTimeout(p.timer);
         if (d.requestStatus.result) p.res(d.responseData ?? {});
         else p.rej(new Error(`OBS ${p.requestType} 失败：${d.requestStatus.code} ${d.requestStatus.comment ?? ''}`));
       }

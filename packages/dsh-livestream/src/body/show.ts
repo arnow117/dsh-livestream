@@ -189,6 +189,8 @@ export class LiveShow {
   private endingTimer: NodeJS.Timeout | null = null;
   private brain: BrainState = 'off';
   private brainSession: string | null = null;
+  private sessionGeneration = 0;
+  private sessionIdentity = 0;
   /**
    * 游戏线：另一个会话里的她，专门玩游戏（直播线回直播间，两边的请求同时跑、互不等待）。
    * 有游戏线时，直播间的事（主人的话也是）只推给直播线；游戏线这一轮停下就叫她接着玩
@@ -282,6 +284,11 @@ export class LiveShow {
   }
 
   connectTarget(config: LiveConnection, rememberViewers = false): LiveStatus {
+    const previous = this.hub.currentConfig;
+    const changed = previous && (previous.platform !== config.platform || previous.roomId !== config.roomId
+      || (previous.platform === 'bilibili' && config.platform === 'bilibili' && previous.cookie !== config.cookie)
+      || (previous.platform === 'douyin' && config.platform === 'douyin' && previous.bridgeUrl !== config.bridgeUrl));
+    if (changed || this.platform !== config.platform) this.retireSession();
     this.rememberViewers = config.platform === 'bilibili' && rememberViewers;
     if (config.platform === 'bilibili') this.awaitingBiliConnection = false;
     this.platform = config.platform;
@@ -294,6 +301,7 @@ export class LiveShow {
   }
 
   disconnect(): void {
+    this.invalidateSession(this.onAir);
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.hub.disconnect();
@@ -313,6 +321,7 @@ export class LiveShow {
   setPlatform(platform: LivePlatform): void {
     if (this.platform === 'douyin' && platform === 'bilibili') this.awaitingBiliConnection = true;
     this.disconnect();
+    this.retireSession();
     this.platform = platform;
   }
 
@@ -370,8 +379,30 @@ export class LiveShow {
 
   // ── 开播、下播 ─────────────────────────────────────
 
+  private retireSession(): void {
+    this.invalidateSession(false);
+  }
+
+  private invalidateSession(keepSession: boolean): void {
+    this.sessionGeneration++;
+    if (!keepSession) {
+      this.sessionIdentity++;
+      this.brainSession = null;
+      this.gameSession = null;
+    }
+    this.pushing = false;
+    this.turnRunning = false;
+    this.queued = 0;
+    this.queuedGame = 0;
+    this.speaking = 0;
+    this.priority = [];
+    this.resetGameLine();
+  }
+
   /** 开播：sessionId 是她直播用的会话（控制台刚开好的），身体先推开场 */
   goLive(sessionId: string, gameSessionId?: string): void {
+    if (this.onAir && this.brainSession === sessionId && this.gameSession === (gameSessionId ?? null)) return;
+    this.retireSession();
     this.brainSession = sessionId;
     this.gameSession = gameSessionId ?? null;
     if (this.onAir) return;
@@ -402,6 +433,7 @@ export class LiveShow {
   /** 插件重启后接着播（同一个会话、同一场记忆和记录）：先告诉她断了多久 */
   resumeLive(snapshot: LiveSnapshot, now = Date.now()): void {
     if (this.onAir) return;
+    this.retireSession();
     this.brainSession = snapshot.sessionId;
     this.gameSession = snapshot.gameSessionId ?? null;
     this.resetGameLine();
@@ -477,7 +509,9 @@ export class LiveShow {
     this.priority = [];
     // 游戏线收手：这一轮结束，不再叫她
     if (this.gameSession) {
+      const generation = this.sessionGeneration;
       void this.hooks.push(this.gameSession, GAME_LINE_END, this.gameTurnRunning).catch(() => false).then(() => {
+        if (generation !== this.sessionGeneration) return;
         for (const wake of [...this.attentionWaiters]) wake();
       });
     }
@@ -629,9 +663,11 @@ export class LiveShow {
       this.record({ type: 'topic', seq: ++this.seq, kind: 'game', line: 'game' });
     }
     const running = this.gameTurnRunning;
+    const generation = this.sessionGeneration;
     this.gamePushing = true;
     try {
       const ok = await this.hooks.push(this.gameSession, text, running);
+      if (generation !== this.sessionGeneration) return;
       if (!ok) {
         if (mail) this.gameMail.unshift(mail);
         if (now - this.gameLineWarnedAt > 60_000) {
@@ -647,7 +683,7 @@ export class LiveShow {
       // 插进她这一轮的话：叫醒在等的 game_continue（有游戏线时只有游戏线在等），不然要等游戏里下一件事才看得到
       else for (const wake of [...this.attentionWaiters]) wake();
     } finally {
-      this.gamePushing = false;
+      if (generation === this.sessionGeneration) this.gamePushing = false;
     }
   }
 
@@ -690,7 +726,8 @@ export class LiveShow {
     if (this.queued >= GAME_MOUTH_BACKLOG) return;
     const topic = this.takeLive(now);
     if (!topic) return;
-    if (!(await this.deliver(topic, now, true))) return;
+    const generation = this.sessionGeneration;
+    if (!(await this.deliver(topic, now, true)) || generation !== this.sessionGeneration) return;
     this.gamePushedAt = Date.now();
     for (const wake of [...this.attentionWaiters]) wake();
   }
@@ -713,6 +750,7 @@ export class LiveShow {
 
   /** 把一件事推进她的会话；推成了返回 true */
   private async deliver(topic: Topic, now: number, midTurn = false): Promise<boolean> {
+    const generation = this.sessionGeneration;
     this.seq += 1;
     const focus = focusOf(topic);
     if (focus.length) this.stage.broadcast({ type: 'focus', userIds: focus });
@@ -740,6 +778,7 @@ export class LiveShow {
     this.setBrain('thinking', topicLabel(topic));
     try {
       const ok = await this.hooks.push(this.brainSession!, text, midTurn);
+      if (generation !== this.sessionGeneration) return false;
       if (!ok) {
         // 她的会话不在线（DSH 重启过、会话被关了）：要紧的事放回去，等控制台重新开播
         if (topic.kind === 'opening' || topic.kind === 'ending' || topic.kind === 'owner') this.priority.unshift(topic);
@@ -751,7 +790,7 @@ export class LiveShow {
       if (topic.kind === 'ending') this.endingPushed = true;
       return true;
     } finally {
-      this.pushing = false;
+      if (generation === this.sessionGeneration) this.pushing = false;
     }
   }
 
@@ -835,11 +874,13 @@ export class LiveShow {
   async say(raw: string, mood: string, signal: AbortSignal, line: 'live' | 'game' = 'live'): Promise<string> {
     const text = speakable(raw);
     if (!text) return '';
+    const generation = this.sessionGeneration;
     // 嘴两条线共用、按先后念：游戏线的话一句不丢（死了、危险、拿到装备都在这里说）；直播线推下一件事时不等游戏线的话
     const game = line === 'game';
     this.queued += 1;
     if (game) this.queuedGame += 1;
     return this.stage.withMic(async () => {
+      if (generation !== this.sessionGeneration) return '';
       this.speaking += 1;
       this.attention.speechStarted();
       this.setBrain('speaking');
@@ -864,15 +905,17 @@ export class LiveShow {
         });
         await done;
       } finally {
-        this.speaking -= 1;
-        this.queued -= 1;
-        if (game) this.queuedGame -= 1;
-        this.attention.speechEnded(Date.now());
-        this.lines = [...this.lines, { text, mood, at: start }].slice(-RECENT_LINES);
-        this.herLines.push(text);
-        this.spoken += [...text].length;
-        this.record({ type: 'say', text, mood, start, end: Date.now(), ...(game ? { line: 'game' } : {}) });
-        this.setBrain(!this.onAir ? 'off' : this.turnRunning ? 'thinking' : 'listening');
+        if (generation === this.sessionGeneration) {
+          this.speaking -= 1;
+          this.queued -= 1;
+          if (game) this.queuedGame -= 1;
+          this.attention.speechEnded(Date.now());
+          this.lines = [...this.lines, { text, mood, at: start }].slice(-RECENT_LINES);
+          this.herLines.push(text);
+          this.spoken += [...text].length;
+          this.record({ type: 'say', text, mood, start, end: Date.now(), ...(game ? { line: 'game' } : {}) });
+          this.setBrain(!this.onAir ? 'off' : this.turnRunning ? 'thinking' : 'listening');
+        }
       }
       return text;
     }, game ? 1 : 0);
@@ -885,9 +928,11 @@ export class LiveShow {
   async guestSay(who: string, raw: string, voice: string, signal: AbortSignal): Promise<string> {
     const text = speakable(raw);
     if (!text || !this.onAir) return '';
+    const generation = this.sessionGeneration;
     this.queued += 1;
     try {
       await this.stage.withMic(async () => {
+        if (generation !== this.sessionGeneration) return;
         const start = Date.now();
         let speech: Awaited<ReturnType<ShowHooks['synthesize']>> = null;
         for (let attempt = 1; attempt <= 2 && !speech && !signal.aborted; attempt++) {
@@ -905,17 +950,22 @@ export class LiveShow {
           ...(speech?.timeline.length ? { timeline: speech.timeline } : {}),
         });
         await done;
-        this.record({ type: 'guest', who, text, start, end: Date.now() });
+        if (generation === this.sessionGeneration) this.record({ type: 'guest', who, text, start, end: Date.now() });
       });
     } finally {
-      this.queued -= 1;
+      if (generation === this.sessionGeneration) this.queued -= 1;
     }
+    if (generation !== this.sessionGeneration) return '';
     this.ownerSay(raw, who);
     return text;
   }
 
   get currentSession(): string | null {
     return this.brainSession;
+  }
+
+  get currentSessionGeneration(): number {
+    return this.sessionIdentity;
   }
 
   // ── 她的工具用到的 ──────────────────────────────────

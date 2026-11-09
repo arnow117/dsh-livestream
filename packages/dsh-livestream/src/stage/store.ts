@@ -524,7 +524,19 @@ function handle(event: StageEvent): void {
         return update((s) => term({ ...s, media: { id, title, up, src, from, until, at } }, 'video', `放视频：${short(title, 24)}`));
       }
       return update((s) => (s.media?.id === event.id ? { ...s, media: null } : s));
-    case 'reload': location.reload(); return;
+    case 'reload':
+      if (event.scope !== 'target') {
+        location.reload();
+        return;
+      }
+      recent.length = 0;
+      lastEnterFx = 0;
+      lastReaction = 0;
+      return update((s) => ({
+        ...s,
+        chats: [], alerts: [], focus: new Set(), reply: [], online: undefined,
+        stats: freshStats(), term: [], fx: [], reaction: null,
+      }));
     case 'board': return update((s) => ({ ...s, board: event.text }));
     case 'orders': return update((s) => ({ ...s, orders: event.items }));
     case 'notice': return update((s) => ({ ...s, notice: event.text }));

@@ -158,6 +158,15 @@ flowchart LR
 | AC-10 | 完整能力/身份隔离、临时 context clear、prompt、stage scoped reset | TASK-002 | 同 uid 的 Douyin→Bili 未连接 lookup/profile/DM、pending flush/late frames/focus、旧工具/后台零副作用、Bili/FEAT-001 回归 |
 | AC-11 | Drawer/usage 组件 | TASK-002 | e2e 双视口鼠标完整旅程、已覆盖的 Enter/焦点子集与失败恢复；完整键盘流程依用户决定后续处理，按文档注明 synthetic/live 范围 |
 
+#### 评审返修的当前执行方案（契约细化）
+
+在既有 AC-07/08/10 的目标隔离与当前一句语音可完成约束内，采用下列有界返修，不扩大平台能力：
+
+- OBS：握手 Identify/激活与发起新请求仍检查调用所属 epoch；已发请求的 reply/close/error 负责结算 Promise，不被创建 socket 时的旧 AsyncLocalStorage 上下文拒绝。请求注册先于发送，pending 调用有 10 秒上限，close/error/显式 close 结束全部 pending 并清理 timer；失败继续由 Broadcast 的所属资源状态阻止切目标，显式 stop 可重试。不改变 OBS 设置、推流内容或新增自动外部操作。
+- Show：目标/会话代际标识退休旧监听身份，切平台或目标保存后不再监听旧 brain/game；新的会话开始与断开目标时，旧异步 push 的返回不得重排旧话题、改变新会话 brain/flags/队列。尚未开始的旧语音队列不得在新目标合成或播放，已经开始的一句允许完成，但完成后的统计和异步回调不得写入新目标；保留 B 站正常下播/收尾语义和用户历史。按实际 await/回调做有界同根路径核对，不做通用 Show 重构。
+- 舞台：真实 stage/store 的 target reload 只清房间事件、焦点/回复、临时反馈和目标统计，不刷新页面、不更换当前 Audio/字幕或打断回执。普通无 scope reload 保持原主题/角色重载行为。覆盖实际 receiver，不能只测试控制台或 stage stub；coverage 纳入被实际修改的 store。
+- 同一 Build worker 完成三项返修和必要测试；独立 Validate 对变更输入重验后，同一只读 reviewer 复评 delta 与相关契约。完整键盘段仍停止，不作任何新实验。
+
 ### 实施计划
 
 **关联产品上下文**：`.sdlc-v1/context/REQ-002.product.md`
@@ -346,3 +355,33 @@ TASK-002 为唯一计划 Task；无并行 writer。正式执行由主 Agent 的 
 - 原键盘段的两次失败、唯一限时诊断、916.9522 秒工具阻塞与无定位证据均保留；此次按用户选择继续交付，不重置该段额度，不重新派发键盘诊断。
 - 业务候选为 `e3f292343c91958541286a6bb9d1208f93ebc0aa`，相较独立验证过的 `a4c3c68296a7596bbaaf00c99bd6eb1f92eee1b0`，仅新增事件边界单元测试和 SDLC 记录；生产代码、Web 资产/runner/配置未变。独立 Validate 仍须实际执行新增单元覆盖与当前验收映射；原同输入 typecheck/build/Web 证据可按实际 diff 核对后复用，不由 Build 结果替代独立执行。
 - 继续独立 Validate → Review → Ship，主 Agent 协调实际本机加载、owner/UI smoke 和固定公开示例最多一次有界集成只读检查；没有用户房间 URL，不将公开示例写成用户目标已验证。GLM/TTS 配置不变，真实模型/配音消费预算仍为零。
+
+### 正式 Review 返修：Build 工作树证据（2026-11-09/10）
+
+- 在 `bd771ed682a1032393722d8f836df06e53804112` 的同一工作树完成，业务源码/测试变更尚未提交；产品、state、project 和 Git 均由主 Agent 持有。原 Review `changes_requested`、两次键盘探针失败及唯一诊断额度保留，未做新键盘实验。
+- OBS：op0/op2 握手及 op6 发起仍检查所属 epoch；op7 结算不再受 socket 创建时旧 ALS 影响。请求先登记再发送，10 秒超时，断开、出错和显式关闭结算所有 pending 并清理 timer。真实 `connectObs` 配 AsyncResource/内存 socket 覆盖失效后已发启动响应、cleanup 复用旧 socket 成功结算、关闭/错误/超时及同步响应；Broadcast 所属资源锁与显式重试逻辑沿用现有测试，无真实 OBS 操作。
+- Show/agent：目标或会话退休后阻止旧 push、游戏线结果和排队语音写入新场；当前已开始的一句可结束，但不向新场写统计或回调；老 game/brain 的 watcher 停止，复用相同 session id 时重置游标。按主 Agent 的兼容反馈，直播中单纯断开订阅只失效旧异步结果，保留当前合法 brain/game 会话和 watcher 游标，新 owner 消息及其新回复仍可继续。实际 Show、agent watcher、延迟替身及 stage 事件验证主/游戏 push、普通/嘉宾排队、在播断开与新会话。
+- 真实 `stage/store.ts` 的 target reload 清旧事件、focus/reply、在线统计和临时反馈，保留进行中的 Audio/字幕和结束回执；普通 reload 仍刷新。测试通过 EventSource/Audio 内存替身实际驱动 store receiver，覆盖旧观众/礼物统计清除、新事件计数、声音不暂停、结束回执和普通 reload；V8 配置纳入实际 store。Web fixture 的舞台 iframe 仍是专属 stub，不能当真实舞台 UI 检查。
+- 测试先行：原始三项回归以 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run test/obsLease.test.ts test/showTargetRetirement.test.ts test/stageTargetReset.test.ts` exit 1，实际重现旧 socket 回复 pending、旧会话仍在、旧排队语音仍播放和 target reload 刷新。其后新增 watcher 用例首次断言误把默认 mood 写成空串（实际为 `talk`），调整测试预期后通过；未因该装置错误改生产行为。
+- 最终 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run test/obsLease.test.ts test/showTargetRetirement.test.ts test/stageTargetReset.test.ts test/agentTargetRetirement.test.ts test/broadcastLifecycle.test.ts` exit 0，25 项通过。最终 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check` exit 0；`npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-review-fix --reporter=dot` exit 0，56 文件、264 通过、8 既有 fixture 缺失跳过。`node packages/dsh-livestream/test/coverage-diff.mjs 0fa95631550857708e67684b6bbba41e102c34ae packages/dsh-livestream/coverage/feat-002-review-fix/coverage-final.json` exit 0：变更行 950/1111（85.51%）、分支 501/594（84.34%）。
+- 包目录复制源码至 `.e2e/feat-002-review-build.mMB4Rq/`，只链接依赖，在副本执行 `node build.mjs` exit 0；未触碰共享 linked `lib/`。包目录依次运行 `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000` 和同命令改 `e2e-voice-regression.config.ts`，各 exit 0、双视口 6/6；缓存 Chromium 156.0.8078.4，当前输出 `.e2e/feat-002/` 与 `.e2e/feat-002-voice/`，前一报告归档 `.e2e/archive/feat-002-before-watch-fix.zYmHwi/`。没有模型或真实配音供应商调用。
+- 最终 fixture 端口 63688/63689/63819/63820 只读 `lsof -sTCP:LISTEN` exit 1、无监听；只读 `ps` 检查本任务 Vitest/fixture exit 1、无匹配；Node 枚举临时 `show-retire-*`/`agent-retire-*` exit 0、空。`git diff --check` exit 0。没有停止、重启或修改共享服务。之前自动审批拒绝、7390 旧 fixture 历史继续保留。
+- 剩余：按当前用户确认范围继续独立 Validate 与同一 reviewer 复评，之后才可由主 Agent 安排 Ship 和本机加载；完整键盘流程按用户决定后续处理，真实用户房间、真实礼物、长期稳定及真实模型/配音未由合成测试验证。
+
+### 独立 Validate 复验（2026-11-09，本地合成；PASS，待主 Agent 接受）
+
+- 被测 HEAD `bd771ed682a1032393722d8f836df06e53804112`，固定基线 `0fa95631550857708e67684b6bbba41e102c34ae`，`TASK-002=done`；起始业务树干净。环境 macOS arm64、Node 26.13.0、pnpm 12.18.0；独立执行者的实际模型元数据不可见。用户已明确将完整键盘流程留待后续处理；前述两次失败、唯一诊断超时及无定位事实仍保留，本轮没有新的键盘实验或键盘完整通过声明。
+- 23:35:06 +08，仓库根 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-validate-final`：exit 0，53 文件、251 通过、8 跳过（259 总项），4.72 秒；新增 `douyinAdapterBoundaries.test.ts` 的 7 项均实际通过。8 项是原 attention 2 项 / decode 6 项缺失录制 fixture 的既有跳过项，并非通过项。V8 报告 `packages/dsh-livestream/coverage/feat-002-validate-final/`。
+- 23:35 +08，仓库根 `node packages/dsh-livestream/test/coverage-diff.mjs 0fa95631550857708e67684b6bbba41e102c34ae packages/dsh-livestream/coverage/feat-002-validate-final/coverage-final.json`：exit 0；变更行 844/999（84.48%），分支 459/548（83.76%），超过 80%/70% 阈值。
+- `git diff --name-status a4c3c68296a7596bbaaf00c99bd6eb1f92eee1b0 HEAD` 只显示三个 `.sdlc-v1/` 文档/状态文件及新增 `test/douyinAdapterBoundaries.test.ts`。对生产源码、构建脚本、包配置、锁文件、tsconfig、两套 Web 配置与 fixture/test、静态资源执行 `git diff --exit-code` 为 exit 0；tsconfig 仅 include `src`。因此复用上方独立 Validate 在相同相关输入与本机环境下实际执行的 typecheck exit 0、隔离构建 exit 0、抖音和声音 E2E 各 6/6（不复用 Build worker 的测试结果）。其原始报告和 Build 前归档保持不变；Web 使用 fixture 身份和 stage stub，不等于生产身份/真实舞台验证。
+- 验收映射以本节更新上方独立 Validate 表：AC-01、05–10 保持原 COVERED（合成）及原证据和限制；AC-02、03、04 由本轮实际执行的新增 7 项转为 COVERED（合成）：内存 socket 和虚拟时钟验证连接错误、45 秒采集等待超时、心跳超时、stopped/closed，终止后无自动重订阅及清理；真实 adapter→Hub→Show→stage 验证 member/enter、follow，brain/TTS 使用替身；fetch 故意忽略 abort 时旧订阅 GET 晚到不改变新房间 live 状态。固定上游 checkout `3a79c57d85c59289db3b77211b3ec01fae47d42c` 的 `collector/liveSession.ts` 对已结束或未开播房间使用 closed，`collector/collector.ts` 对未 live 也可产生 progress.error，因此离线合成检查使用本轮 closed 及上轮 progress.error，并非对真实离线房间的实测。AC-11 按用户替换后的当前条件为 COVERED：沿用上方两视口鼠标保存/连接/错误恢复/断开、无溢出及已有设置/保存 Enter 与焦点证据；完整键盘流程仍未验证。
+- 本轮新测试的 socket/fetch 为内存替身，使用 fake timers，并检查终止后无余留 timer；无连接真实 GLM/TTS/Bili/OBS、用户房间、用户 Chrome 或共享端口。既有全量测试按授权使用临时 loopback 监听及 macOS `say`；`yovoiceTts.test.ts` 的 3081 字面量经 fetch stub 为内存请求。完成后只读 `ps` 对本轮 Vitest/fixture 特征进程筛选 exit 1、无匹配；`os.tmpdir()` 中 `douyin-adapter-stage-*` 枚举为空。未停止共享服务。
+- 合成通过仅适用于此候选及所述本地测试范围。真实用户房间、真实礼物、长期稳定、生产 Harness owner 身份、真实模型与音频播放均未由本轮验证；是否加载及有界公开样例实测由主 Agent 按现有授权另行负责。请求主 Agent 核对 HEAD/工作树后 record-validation pass；不在此处直接修改 state。
+
+### 独立 Review（bd771ed，changes_requested）
+
+- 审查者 douyin_review；只读累计基线 `0fa95631550857708e67684b6bbba41e102c34ae` → validation `bd771ed682a1032393722d8f836df06e53804112`。核对 validated/HEAD/业务树及当前用户确认 AC-11；未重跑全套测试或启动服务/浏览器。
+- P1 新增：`body/obs.ts:88` 每帧检查 socket 创建时的旧 ALS epoch，cleanup lease 复用 socket 发 StopStream 后，合法 reply 反而关闭 socket且未结算 pending。实际 connectObs/biliOperations 加 AsyncResource 的纯内存复现得到 PENDING_AFTER_VALID_REPLY、socketClosed=true、cleanupStillActive=true；现有广播测试整体 mock OBS，没有覆盖此边界。
+- P1 旧行为被平台切换放大：`body/show.ts:313` 保留旧 brainSession/gameSession，`dsh/agent.ts:166` 继续监听旧 session 并交给 say；`show.ts:742` 延迟 push 返回没有代际校验。实际源码内存复现先证明切 Douyin 后旧 session 仍可产生新 say，再证明旧 owner push 返回 false 后 priority 成为 [旧Bili话题, 新opening]。合并为同一跨目标异步上下文隔离发现。
+- P2 新增跨端遗漏：`show.ts:308` 的 reload.scope=target 在真实 `stage/store.ts:527` 仍无条件 location.reload，打断播放；控制台 scoped clear 和 Web stage stub 未覆盖真实 receiver。
+- 有界检索覆盖 OBS 请求/清理、Show push/语音/会话监听和两端 reload 消费者；未扩大到全仓清理。本次未发现有证据支持的重复实现或可避免工程债。主 Agent 接受三项为必须修复，当前执行方案细化如上；保持用户允许的键盘延期及真实外部范围限制。

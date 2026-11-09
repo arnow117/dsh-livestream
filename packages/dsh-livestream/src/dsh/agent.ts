@@ -64,6 +64,7 @@ const wordsOf = (event: any): string => (event?.data?.message?.content ?? [])
  * 有游戏线时两个会话一起盯：游戏线的话也念（嘴里排满了就少念一句），它的时刻里摘出游戏现在怎样，写给直播线
  */
 const cursors = new Map<string, number>();
+let watchedGeneration = -1;
 const handOffs = new HandOffs();
 let watching = false;
 /** 这场直播（她的会话，有游戏线时两个加起来）累计用掉的 token 和钱：舞台上换算成她吃了多少饭，show_stats 告诉她 */
@@ -164,6 +165,13 @@ function watchSession(ctx: AgentContext, sessionId: string, line: 'live' | 'game
 }
 
 async function watch(ctx: AgentContext): Promise<void> {
+  if (watchedGeneration !== show.currentSessionGeneration) {
+    watchedGeneration = show.currentSessionGeneration;
+    cursors.clear();
+    voiced.clear();
+    gameMoment = '';
+    gameWords = '';
+  }
   const sessionId = show.currentSession;
   if (!sessionId || watching) return;
   watching = true;

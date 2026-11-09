@@ -13,6 +13,7 @@ export default defineConfig({
         'src/shared/biliOperations.ts',
         'src/core/live.ts',
         'src/stage/protocol.ts',
+        'src/stage/store.ts',
         'src/stage/widgets.tsx',
         'src/stage/effects.tsx',
         'src/core/platforms/index.ts',
