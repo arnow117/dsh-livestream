@@ -40,17 +40,17 @@
       "engineering_context_ref": ".sdlc-v1/context/FEAT-002.engineering.md",
       "id": "FEAT-002",
       "release": {
-        "at": null,
-        "commit": null,
-        "status": "pending"
+        "at": "2026-11-09T16:45:00Z",
+        "commit": "63fe27163da1b918dedc27becaf893f4054b29ba",
+        "status": "released"
       },
       "requirement_id": "REQ-002",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-09T16:20:50Z",
+        "by": "douyin_review",
+        "decision": "approved"
       },
-      "status": "in_progress",
+      "status": "released",
       "tasks": {
         "TASK-002": {
           "depends_on": [],
@@ -60,12 +60,12 @@
           "updated_at": "2026-11-09T16:16:07Z"
         }
       },
-      "updated_at": "2026-11-09T16:16:07Z",
+      "updated_at": "2026-11-09T16:45:00Z",
       "validation": {
-        "at": null,
-        "command": null,
-        "commit": null,
-        "result": "pending"
+        "at": "2026-11-09T16:18:51Z",
+        "command": "npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-ending-validate",
+        "commit": "63fe27163da1b918dedc27becaf893f4054b29ba",
+        "result": "pass"
       }
     }
   },
@@ -92,9 +92,9 @@
       "id": "REQ-002",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-002.product.md",
-      "status": "in_delivery",
+      "status": "released",
       "title": "抖音直播间只读接入与本地舞台互动",
-      "updated_at": "2026-11-09T16:16:07Z"
+      "updated_at": "2026-11-09T16:45:00Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

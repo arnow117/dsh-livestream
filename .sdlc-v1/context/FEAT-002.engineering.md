@@ -12,7 +12,7 @@
 
 **创建日期**：2026-11-09
 
-**状态**：修正 Plan 已由主 Agent 接受；REQ-002 in_delivery，FEAT-002 / TASK-002 已实际登记并进入 Build，进度以 state.json 为准。
+**状态**：批准实现 `63fe27163da1b918dedc27becaf893f4054b29ba` 已通过独立验证和评审，并在原本机目标完成加载及 owner/UI 检查；生命周期状态以 state.json 为准。完整键盘流程依用户决定后续处理。
 
 **分支/功能基线**：`codex/macos-yovoice` / `0fa95631550857708e67684b6bbba41e102c34ae`。
 
@@ -422,3 +422,38 @@ TASK-002 为唯一计划 Task；无并行 writer。正式执行由主 Agent 的 
 - 隔离复制至包内 `.e2e/feat-002-ending-build.jIU2TS/` 并运行 `node build.mjs` exit 0，未写共享 linked `lib/`。包目录 `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000` 与同命令更换 `e2e-voice-regression.config.ts` 各 exit 0、双视口各 6/6；前一份 Web 结果在 `.e2e/archive/feat-002-before-ending-fix.E1qv96/`，当前结果在 `.e2e/feat-002/` 与 `.e2e/feat-002-voice/`。Web 舞台仍是隔离 stub；没有新键盘实验。
 - 只读 `lsof` 检查本轮 fixture 端口 49362/49363/49500/49501 exit 1、无监听；授权只读 `ps` 筛选 Vitest/fixture exit 1、无匹配，Node 枚举临时 `show-ending-*` exit 0、空。`git diff --check` exit 0；未操作共享服务、账号、房间或真实模型/配音/OBS。原始 3081 内存 mock、历史自动审批拒绝与早期 7390 fixture 记录继续保留。
 - 等待主 Agent 验收后按协议独立 Validate 和同一 reviewer 复评。完整键盘旅程依用户决定延期，既有失败及唯一诊断额度不重置；真实房间、礼物、长期稳定性和真实模型/语音效果仍未由本轮合成测试验证。
+
+### ending/断开返修独立 Validate（2026-11-10，本地合成；PASS，待主 Agent 接受）
+
+- 被测 HEAD `63fe27163da1b918dedc27becaf893f4054b29ba`，基线 `0fa95631550857708e67684b6bbba41e102c34ae`；测试开始业务树干净，`TASK-002=done`。环境 macOS arm64、Node 26.13.0、pnpm 12.18.0、HeadlessChrome 156.0.8078.4。实际执行者模型元数据不可见；外部模型调用预算 0。完整键盘流程依用户决定延期，先前失败及唯一诊断无定位历史保留，本轮无新键盘实验。
+- 00:16:44 +08 仓库根 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-ending-validate`：exit 0，57 文件、274 通过、8 既有跳过，4.71 秒；`showEndingDisconnect.test.ts` 10 项以及既有返修回归全部实际执行。8 项为 attention 2 项 / decode 6 项缺录制 fixture，未计通过。报告 `packages/dsh-livestream/coverage/feat-002-ending-validate/`。
+- 仓库根 `node packages/dsh-livestream/test/coverage-diff.mjs 0fa95631550857708e67684b6bbba41e102c34ae packages/dsh-livestream/coverage/feat-002-ending-validate/coverage-final.json` exit 0：变更行 991/1154（85.88%）、分支 530/627（84.53%），超过 80%/70%。`npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check` exit 0。复制候选 `src/`、`stage/`、`assets/`、`build.mjs`、`package.json`、`cordis.patch.yml` 至包内 `.e2e/feat-002-ending-validate-build/` 并只引用已安装依赖，副本 `node build.mjs` exit 0，四个 bundle 生成；未在共享 linked lib 构建。
+- 原报告和 fixture bundle 先复制到包内 `.e2e/archive/feat-002-ending-before-independent/`。00:16:54 包内 `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000` exit 0，desktop 1440×900 和 narrow 375×812 各 3 条、6/6，19.93 秒；00:17:24 相同命令更换 `--config e2e-voice-regression.config.ts` exit 0，双视口各 3 条、6/6，9.71 秒。当前 JUnit/trace/截图在 `.e2e/feat-002/` 和 `.e2e/feat-002-voice/`。配置 strict/read-only、无重试，locator 测试无 Agent/provider；两套首条旅程断言自身 stage stub 实际访问，所有旅程断言共享 3080/3081/7390/8757 的浏览器拦截记录为空。Web 使用 fixture owner 和 stage stub，不等于生产 owner 鉴权或真实 stage UI。
+- AC-07/08/10 增量（COVERED，合成）：实际 `showEndingDisconnect.test.ts` 对 Bili/Douyin 分别覆盖未发送 ending、在途成功不重复、在途失败保留单一 ending 并重试；旧 true/false 结果到达新会话不改变新状态；当前播放句完成前不结束；替换会话时 ending 与 timer 引用被退休。最后一项断言 timer 为 null，未模拟等待旧 90 秒；同时核对 `retireSession()` 实际执行 `clearTimeout`。`showTargetRetirement`/`agentTargetRetirement` 随本轮完整 suite 通过，覆盖旧 room topic、旧普通/嘉宾队列和在播断开后的新 owner/new message。先前三个 Review 返修的 `obsLease`、`broadcastLifecycle`、`stageTargetReset` 也实际重跑通过；对应合成细节和限制见上一节。其余 AC-01–06、09 与用户确认后的 AC-11 沿用前述映射并由本次完整 suite 与两套 Web 重新执行；完整键盘流程未验证。
+- 测试 fixture 临时端口 49783/49784/49886/49887 `lsof -nP ... -sTCP:LISTEN` exit 1、无监听；授权只读 `ps` 筛选本任务 Vitest/fixture exit 1、无匹配；`os.tmpdir()` 中 `show-ending-*`、`show-retire-*`、`agent-retire-*` 枚举为空。内存替身不访问真实 OBS/模型/TTS；既有全量测试按授权使用本机临时监听与 macOS `say`，3081 字面量经 fetch stub。未操作共享服务或用户 Chrome。
+- 上述为当前候选本地合成验证，不代表真实用户房间、礼物、长期稳定性、生产 Harness owner 身份、真实模型及语音播放已验证。请求主 Agent 核对 HEAD/工作树后 record-validation pass；本阶段不写 state。
+
+### 独立 Review 批准（63fe271，2026-11-10）
+
+- douyin_review 复评 `c3ba196 → 63fe27163da1b918dedc27becaf893f4054b29ba` 与最后 ending/断开 finding，未发现新的可执行问题，批准该实现；原三个 findings 保持关闭。
+- 纯内存重跑原 endLive→disconnect→direct：c3ba196 为 pushes=0/endingPushed=false，新候选为1/true且保留当前会话。核对 ending 按会话身份结算、旧timer实际clearTimeout、activeSpeech等待当前句；新增10项覆盖双平台、在途成功/失败重试与旧结果隔离，timer测试未推进90秒但结合明确clearTimeout足够覆盖本改动。
+- 核对当前HEAD/validated/业务树、独立274通过/8既有跳过、85.88%行/84.53%分支、type/隔离build与两套原始Web各6/6；未重复全套、未写文件、未启动服务。未发现有证据支持的重复实现或可避免工程债。
+- 主 Agent 接受批准。真实用户房间、礼物、长期稳定、生产身份、真实GLM/TTS与完整键盘流程的原限制保留；本结论不替代随后的本机加载、源码制品与有界公开样例smoke。
+
+### Ship 制品准备（2026-11-10，awaiting acceptance）
+
+- 批准实现与独立验证 commit 均为 `63fe27163da1b918dedc27becaf893f4054b29ba`，source baseline `0fa95631550857708e67684b6bbba41e102c34ae`；执行前 HEAD 同该 commit，业务工作树干净，只有 SDLC 元数据待提交。正式 Validate 和 approved Review 见前两节；本节未操作 state/Git、未执行部署或公网探针。
+- 从 `.e2e/feat-002-ending-validate-build/` 复用独立 build，经 `prepare.py` 对 `src/stage/assets/build.mjs/package.json/cordis.patch.yml` 的完整文件列表及字节逐一核对批准 Git 对象，exit 0。仅把批准的 `stage/assets/cordis.patch.yml/package.json` 和该副本 `lib` 复制至独立 pack-source，`npm pack --ignore-scripts --json` exit 0；无 npm publish/install/network。归档 `../../../reuse/20261110-douyin/dsh-livestream-0.0.1.tgz` SHA-256 `b649ac5913906fd3c17a178a00cb9fab7b5fc6f5e82cb92448ab60e1e7665153`，`manifest.json` 有每个编译文件及所有包文件哈希和固定 DyHub dist 哈希。tar 路径安全、全为普通文件；fresh unpack 与 pack-source 每个文件逐字节一致，不含 node_modules/.env/.git/测试报告；source map 无本机绝对路径，针对常见私钥和 token 形态的扫描无匹配（不能保证穷尽全部秘密）。根许可证、根 README、两份示例指南单独复制并逐文件核对批准 Git；素材独立许可留在包内。
+- 新解包健康与业务 smoke：`node artifact-smoke.mjs` 使用全新临时 DSH_HOME、真实 root 注册 state/settings/connect/disconnect、专属 loopback 以及 fake brain/TTS，exit 0；验证 64 位数的房间号字符串不丢精度、非法房间 400、连接中与 live 状态、source→Hub→Show→stage、断开无自动重订阅且不调用全局停止、新进程恢复设置但不自动采集。root 和 agent 的现有 peer 临时链接导入成功，随后移除；不启真实 stage server 或生产宿主身份。初次沙箱运行专属监听遭 `EPERM`（Node exit 1，外层 tee 未设 pipefail 导致 shell exit 0），之后在授权的专属 loopback 环境重跑 `set -o pipefail; node artifact-smoke.mjs 2>&1 | tee smoke.log` exit 0。之后增强 smoke 的目录归属检查并重跑 exit 0；最终两次进程端口 50780/50787 均 lsof exit 1、无监听，临时 home 与 peer 链接已删除。此前成功运行端口 50632/50643 亦核实无监听。
+- `node --check live-probe.mjs` / `supervise.mjs` 和 `node supervise.mjs --check unpacked/package <pinned-dyhub>` exit 0；干净环境从全新临时 cwd 导入包 root 和固定 upstream composition 模块 exit 0，不启动服务/浏览器。离线 preflight 首次误用不存在的 `/usr/local/bin/node` exit 127，临时目录已清理；改为本机 `/opt/homebrew/bin/node` 后通过。一次性公网集成探针已准备但**未执行**，使用固定 upstream `3a79c57d85c59289db3b77211b3ec01fae47d42c` 的原始 browser collector/normalizer/dedupe/bus/真实 WS/API 与批准包真实路由、临时空账号和独立 headless Chrome；上游默认包含一次播放器只读初始化点击，媒体阻断，挑战立即结束；无登录、Cookie、发言、模型或 TTS。具体边界和审阅后单次命令在制品 README。实际目标加载、生产 owner/UI 与外部样例由主 Agent继续；不把准备视为发布。
+- 旧 last-good `../../../reuse/20261109-voice-settings/dsh-livestream-0.0.1.tgz` SHA-256 `d9fbbc15d35fe5a6d2563a93208ff1315eb248ffa49e6dcd7f2f16a631540946` 已复核，不曾修改；尚未部署故无需回滚。技术观测、结果与回流计划以 `REQ-002.product.md` 结果观察计划为准；真实用户房间、礼物、长期稳定性、生产身份、真实 GLM/TTS 和完整键盘旅程仍未验证。无此制品的生产观测，下次检查为主 Agent 实际加载与授权的单次公开样例结果；不宣布 released。
+
+### 主 Agent 本机交付与技术观察（2026-11-10）
+
+- **发布目标/批准来源**：按用户“先交付可用版本，键盘流程后续处理”选择，在原本机 Harness 目标加载批准/validation `63fe27163da1b918dedc27becaf893f4054b29ba`，保留 fork `codex/macos-yovoice`，同时交付可复用源码/制品。独立 Validate 274通过/8既有跳过、Review approved 记录如上，不扩展为真实房间或模型质量通过。
+- **制品成立**：`../reuse/20261110-douyin/dsh-livestream-0.0.1.tgz`，SHA256 `b649ac5913906fd3c17a178a00cb9fab7b5fc6f5e82cb92448ab60e1e7665153`；批准构建输入/逐文件哈希、fresh-unpack真实root/source→Hub→Show→stage合成smoke与重启已由Ship实际检查。配套manifest、LICENSE、指南、可复跑脚本保留，未打包凭据/模型/运行数据。
+- **公开样例实测（单次，结果INCONCLUSIVE）**：主 Agent 实际执行制品目录 `node supervise.mjs --execute unpacked/package <固定DyHub目录>`，exit0；固定pinned browser组合、专属临时home/空cookie与headlessChrome157.0.8103.38，5.014秒内上游 connecting→closed→stopped，插件断开前connecting，无真实事件，不能称插件连接成功或真实输入通过。媒体拦截1次，push/synth调用均0；10个观察到的自有进程全部退出，临时数据删除，未重复连接。完整脱敏结果在 `../reuse/20261110-douyin/live-probe-result.json`。早期采集器层成功样例仅为历史选型证据，不能用于补成本次集成成功。
+- **实际加载**：再读owner状态确认offair、3080仍为本次拥有的PID99911；保存权限700/600的任务私有回滚基线后，仅SIGTERM该宿主，备份旧生成lib，将新解包lib移入原linked包。8个编译文件（含map）逐项哈希与manifest一致。执行父工作区 `npm start > logs/livestream-douyin-final.log 2>&1`，新宿主PID14706/exec56558，3080与7390健康。实际HTTP返回stage.js的SHA为 `e210dac3164eab7fa1692efb5dd78034ebba8b4f58e3c6e676b984e70174c35e`，与批准制品相同。yovoice25480/3081、闲置DyHub39562/8757未停止或重启。
+- **生产身份/配置smoke**：owner GET state200，未认证GET state与POST settings均401；numeric Douyin房间被400拒绝且配置文件无变化。当前localRehearsal=true、offair、GLM profile/credentials/env指纹与升级前相同。Chrome实际打开新版“直播→设置”，选择抖音已保存到磁盘，空房间未连接；旧保存字段逐项相同，原yovoice/q8/音色描述保留，仅新增livePlatform/douyinRoomId。任务生成的私有配置副本已删除，旧编译产物与last-good制品保留供负责人回滚；无失败需要执行回滚。
+- **实际UI/入口**：Chrome已保留Harness控制台和通过页面链接打开的DyHub控制台；页面显示抖音只读/本地舞台，B站专属设置隐藏，声音已生效；采集器界面0房间/0事件、空Cookie。没有onair、真实GLM/TTS、账号或推流动作。截图 `../smoke/douyin/final-console.png`；脱敏API/配置/版本证据 `../smoke/douyin/deployment.json`。完整Keyboard仍未验证，不因鼠标验收改称通过。
+- **观察与缺口**：产品观察计划沿用REQ002产品上下文；本次技术观察为实际owner/UI可用、编译版本匹配、配置保留、无自动采集及共享服务存活。用户目前没有真实目标URL，故房间输入、真实礼物、长期稳定性与本次真实模型/声音联动仍待实房间条件具备后检查；下一次技术检查时机为用户提供可用房间后的首次显式接入，不设置自动监控或重复采集。完整键盘按用户选择另行处理，不重置既有非收敛历史/唯一诊断额度。
