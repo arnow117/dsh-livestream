@@ -55,12 +55,12 @@
         "TASK-002": {
           "depends_on": [],
           "id": "TASK-002",
-          "status": "blocked",
+          "status": "done",
           "title": "集成抖音只读房间事件与本地舞台互动",
-          "updated_at": "2026-11-09T15:16:59Z"
+          "updated_at": "2026-11-09T15:34:26Z"
         }
       },
-      "updated_at": "2026-11-09T15:16:59Z",
+      "updated_at": "2026-11-09T15:34:26Z",
       "validation": {
         "at": null,
         "command": null,
@@ -94,7 +94,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-002.product.md",
       "status": "in_delivery",
       "title": "抖音直播间只读接入与本地舞台互动",
-      "updated_at": "2026-11-09T15:16:59Z"
+      "updated_at": "2026-11-09T15:34:26Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

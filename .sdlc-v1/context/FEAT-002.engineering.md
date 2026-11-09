@@ -156,7 +156,7 @@ flowchart LR
 | AC-02/04/08 | Douyin source、状态优先级/手动恢复/取消、只读生命周期 | TASK-002 | WS 断开及 stopped 时零自动重订阅；GET 乱序、live+旧 progress.error、真实后续 error、断开零控制请求 |
 | AC-03/05/06 | 本地事件时间、礼物 delta、Hub/Show/attention、未知价/统计 | TASK-002 | source→Hub→Show fake push/TTS；未来 ts 礼物成熟/过期、真实 normalizer 缺字段 wire fixture、去重/串组/结束帧 |
 | AC-10 | 完整能力/身份隔离、临时 context clear、prompt、stage scoped reset | TASK-002 | 同 uid 的 Douyin→Bili 未连接 lookup/profile/DM、pending flush/late frames/focus、旧工具/后台零副作用、Bili/FEAT-001 回归 |
-| AC-11 | Drawer/usage 组件 | TASK-002 | e2e 双视口/键盘/失败恢复，按文档实际操作并注明 synthetic/live 范围 |
+| AC-11 | Drawer/usage 组件 | TASK-002 | e2e 双视口鼠标完整旅程、已覆盖的 Enter/焦点子集与失败恢复；完整键盘流程依用户决定后续处理，按文档注明 synthetic/live 范围 |
 
 ### 实施计划
 
@@ -228,7 +228,7 @@ TASK-002 为唯一计划 Task；无并行 writer。正式执行由主 Agent 的 
 - 礼物 duplicate/out-of-order/end/missing-group/全零 groupId 或 giftId/interleaved-user、跨 30 秒、TTL/4000 组界限与独立新订阅缓存清零；实际 Source→Hub→attention 输入 future ts，按本地时钟成熟并过期，Bili ts 语义不变。正常热度未知价礼物可受节奏约束地谢礼，不称免费。
 - stats 的缺失字段须通过固定上游真实 normalizer 生成最小 wire fixture（含 provenance：commit、method、合成输入、生成方式），提交 fixture 后经真实 adapter 证明缺失→0→unknown；不只手写省略字段，不嵌入上游 runtime/签名依赖。相同 fixture 补全零 groupId/giftId sentinel；正数总量与终态清空检查，点赞 count N 不展开 N 条。
 
-**Web 三条旅程**（e2e CLI/Web engine）：①选择抖音→保存刷新→connecting→真实 bridge live→事件进入控制台/舞台/假脑；②采集器不可达/非 live 的 progress.error/传输断开→输入保留与错误→无自动重订阅→断开→必要的采集控制台恢复说明→显式连接→断开及采集仍运行提示；③活动操作/订阅切换被拒绝→全部停止/清理→断开→Bili 尚未连接时无旧用户/feed/focus→声音保存/私有试听回归。真实 Console/CSS、真实路由/source，隔离真实 WS server 模拟固定协议；fixture owner 不等同完整 Harness 鉴权。桌面 1440×900、narrow 375×812，检查键盘、焦点、溢出、错误、console/network 与确定性业务结果；截图/trace 不替代断言。
+**Web 三条旅程**（e2e CLI/Web engine）：①选择抖音→保存刷新→connecting→真实 bridge live→事件进入控制台/舞台/假脑；②采集器不可达/非 live 的 progress.error/传输断开→输入保留与错误→无自动重订阅→断开→必要的采集控制台恢复说明→显式连接→断开及采集仍运行提示；③活动操作/订阅切换被拒绝→全部停止/清理→断开→Bili 尚未连接时无旧用户/feed/focus→声音保存/私有试听回归。真实 Console/CSS、真实路由/source，隔离真实 WS server 模拟固定协议；fixture owner 不等同完整 Harness 鉴权。桌面 1440×900、narrow 375×812，检查鼠标完整旅程、已覆盖的 Enter/焦点子集、溢出、错误、console/network 与确定性业务结果；完整键盘流程依 2026-11-09 用户决定后续处理，不再作为本次通过前提，也不新增键盘实验；截图/trace 不替代断言。
 
 **资源与产物**：`cache.mode:'read-only'`、`strict:true`、workers=1、retries=0；不用 `agent.*` 或模型配置，预算 0。单用例 120 秒、单动作/断言 5 秒、整次 Web 10 分钟；单次测试批次 10 分钟内，超时保留日志并归因，不无限重跑。所有 HTTP/WS 端口用 loopback ephemeral，临时 DSH_HOME/独立 mutable 数据，fixture/server/socket/timer 由本任务关闭。禁止使用共享 3080/3081/7390/8757 或真实 DSH_HOME；不下载浏览器/模型/新框架。FEAT-002 原始报告写包内忽略目录 `.e2e/feat-002/`（report/JUnit/trace/screenshot/fixture.log）与 `coverage/feat-002/`（JSON/LCOV）；FEAT-001 历史证据保留，失败证据归档后重跑。
 
@@ -339,3 +339,10 @@ TASK-002 为唯一计划 Task；无并行 writer。正式执行由主 Agent 的 
 - 新增测试改变覆盖率运行输入，因此最后重新执行 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-boundaries`，exit 0，53 文件、251 通过、8 既有 fixture 缺失跳过；覆盖 JSON/LCOV 保存在包内 `coverage/feat-002-boundaries/`。`node packages/dsh-livestream/test/coverage-diff.mjs 0fa95631550857708e67684b6bbba41e102c34ae packages/dsh-livestream/coverage/feat-002-boundaries/coverage-final.json` exit 0，变更行 844/999（84.48%）、分支 459/548（83.76%）。先前相同生产快照的独立 typecheck 和隔离 build 仍为上文证据；本轮未重跑 Web。
 - 新测试自身不创建网络监听，仅使用内存 socket、无效本机目标和虚拟时钟，结束时断言无余留计时器并删除临时数据；全量测试使用已有临时端口和替身，macOS 原生声音测试如既有测试运行，未调用真实模型或语音供应商。任务 Vitest 已退出；沙箱内只读 `ps` 受限（exit 1，operation not permitted），授权只读重查无对应进程（exit 1）；Node 对 `os.tmpdir()` 的 `douyin-adapter-stage-*` 只读枚举 exit 0、剩余为空。`git diff --check` exit 0。未操作共享服务。上文首次完整套件自动审批拒绝及早期 7390 fixture 访问历史继续有效。
 - 本补测满足 AC-02/03/04 以上直接合成边界，不代表真实房间、礼物、长期稳定或真实模型/语音已验证。AC-11 键盘段仍按上文停止并等待用户决定；本次没有键盘实验、修改或完成状态请求。整体 Build 仍 incomplete，保留独立 Validate 的 INCONCLUSIVE / fail 历史。
+
+### 用户确认交付范围与恢复（2026-11-09）
+
+- 用户明确答复“先交付可用版本，键盘流程后续处理”。产品 AC-11 已同步为双视口鼠标完整旅程及已覆盖的 Enter/焦点子集，完整键盘流程保留待验证。当前有效方案仅同步该验收范围，不修改生产实现、测试资产或其他 AC。
+- 原键盘段的两次失败、唯一限时诊断、916.9522 秒工具阻塞与无定位证据均保留；此次按用户选择继续交付，不重置该段额度，不重新派发键盘诊断。
+- 业务候选为 `e3f292343c91958541286a6bb9d1208f93ebc0aa`，相较独立验证过的 `a4c3c68296a7596bbaaf00c99bd6eb1f92eee1b0`，仅新增事件边界单元测试和 SDLC 记录；生产代码、Web 资产/runner/配置未变。独立 Validate 仍须实际执行新增单元覆盖与当前验收映射；原同输入 typecheck/build/Web 证据可按实际 diff 核对后复用，不由 Build 结果替代独立执行。
+- 继续独立 Validate → Review → Ship，主 Agent 协调实际本机加载、owner/UI smoke 和固定公开示例最多一次有界集成只读检查；没有用户房间 URL，不将公开示例写成用户目标已验证。GLM/TTS 配置不变，真实模型/配音消费预算仍为零。
