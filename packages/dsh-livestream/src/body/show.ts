@@ -224,6 +224,7 @@ export class LiveShow {
   private turnRunning = false;
   private turnSince = 0;
   private pushing = false;
+  private endingPushIdentity: number | null = null;
   /** 道别已经推给她了：这一轮结束、话念完就收工 */
   private endingPushed = false;
   /** 边看边聊：正在放的视频里有什么、上次告诉她看到了哪一秒、什么时候告诉的 */
@@ -243,6 +244,8 @@ export class LiveShow {
   /** 排在弹幕前面的事：主人的话、开场、谢幕 */
   private priority: TopicBody[] = [];
   private speaking = 0;
+  /** The line already holding the microphone may finish across a disconnect. */
+  private activeSpeech = 0;
   /** 她写好、还没念完的话（包括排着队等嘴的）：导演看这个决定要不要推下一件 */
   private queued = 0;
   private lines: SpokenLine[] = [];
@@ -381,21 +384,28 @@ export class LiveShow {
 
   private retireSession(): void {
     this.invalidateSession(false);
+    if (this.endingTimer) clearTimeout(this.endingTimer);
+    this.endingTimer = null;
+    this.ending = false;
+    this.endingPushed = false;
   }
 
   private invalidateSession(keepSession: boolean): void {
+    const keepEnding = keepSession && this.ending;
+    const endingInFlight = keepEnding && this.endingPushIdentity === this.sessionIdentity;
     this.sessionGeneration++;
     if (!keepSession) {
       this.sessionIdentity++;
       this.brainSession = null;
       this.gameSession = null;
+      this.endingPushIdentity = null;
     }
-    this.pushing = false;
-    this.turnRunning = false;
+    if (!endingInFlight) this.pushing = false;
+    if (!keepEnding || !this.endingPushed) this.turnRunning = false;
     this.queued = 0;
     this.queuedGame = 0;
     this.speaking = 0;
-    this.priority = [];
+    this.priority = keepEnding ? this.priority.filter((topic) => topic.kind === 'ending') : [];
     this.resetGameLine();
   }
 
@@ -702,6 +712,7 @@ export class LiveShow {
     this.attention.minChatPicks = gameOn ? GAME_CHAT_PICKS : 0;
     if (this.gameSession) void this.directGameLine(now);
     if (this.pushing) return;
+    if (this.ending && this.activeSpeech > 0) return;
     // 她在玩游戏、这一轮还没完（在 game_continue 里等、在做事）：直播间的事照样推给她，插进她这一轮的下一步
     // （有游戏线时游戏在另一个会话里，直播线照平常一件一件来）
     if (this.turnRunning && this.game && !this.gameSession) return this.directGame(now);
@@ -751,6 +762,8 @@ export class LiveShow {
   /** 把一件事推进她的会话；推成了返回 true */
   private async deliver(topic: Topic, now: number, midTurn = false): Promise<boolean> {
     const generation = this.sessionGeneration;
+    const identity = this.sessionIdentity;
+    const ending = topic.kind === 'ending';
     this.seq += 1;
     const focus = focusOf(topic);
     if (focus.length) this.stage.broadcast({ type: 'focus', userIds: focus });
@@ -775,10 +788,14 @@ export class LiveShow {
     });
     const text = this.platform === 'douyin' ? `当前是抖音只读接入 / 本地舞台，不向抖音发送消息。\n${prompt}` : prompt;
     this.pushing = true;
+    if (ending) this.endingPushIdentity = identity;
     this.setBrain('thinking', topicLabel(topic));
     try {
       const ok = await this.hooks.push(this.brainSession!, text, midTurn);
-      if (generation !== this.sessionGeneration) return false;
+      const current = ending
+        ? this.ending && this.sessionIdentity === identity && this.endingPushIdentity === identity
+        : generation === this.sessionGeneration;
+      if (!current) return false;
       if (!ok) {
         // 她的会话不在线（DSH 重启过、会话被关了）：要紧的事放回去，等控制台重新开播
         if (topic.kind === 'opening' || topic.kind === 'ending' || topic.kind === 'owner') this.priority.unshift(topic);
@@ -790,7 +807,12 @@ export class LiveShow {
       if (topic.kind === 'ending') this.endingPushed = true;
       return true;
     } finally {
-      if (generation === this.sessionGeneration) this.pushing = false;
+      if (ending && this.sessionIdentity === identity && this.endingPushIdentity === identity) {
+        this.endingPushIdentity = null;
+        this.pushing = false;
+      } else if (!ending && generation === this.sessionGeneration) {
+        this.pushing = false;
+      }
     }
   }
 
@@ -881,6 +903,7 @@ export class LiveShow {
     if (game) this.queuedGame += 1;
     return this.stage.withMic(async () => {
       if (generation !== this.sessionGeneration) return '';
+      this.activeSpeech += 1;
       this.speaking += 1;
       this.attention.speechStarted();
       this.setBrain('speaking');
@@ -905,6 +928,7 @@ export class LiveShow {
         });
         await done;
       } finally {
+        this.activeSpeech -= 1;
         if (generation === this.sessionGeneration) {
           this.speaking -= 1;
           this.queued -= 1;
@@ -933,24 +957,29 @@ export class LiveShow {
     try {
       await this.stage.withMic(async () => {
         if (generation !== this.sessionGeneration) return;
-        const start = Date.now();
-        let speech: Awaited<ReturnType<ShowHooks['synthesize']>> = null;
-        for (let attempt = 1; attempt <= 2 && !speech && !signal.aborted; attempt++) {
-          speech = await this.hooks.synthesize(text, AbortSignal.any([signal, AbortSignal.timeout(this.hooks.synthTimeoutMs?.() ?? SYNTH_TIMEOUT_MS)]), voice).catch((err) => {
-            this.hooks.log?.('warn', `嘉宾的语音合成失败（第 ${attempt} 次）：${(err as Error).message}`);
-            return null;
+        this.activeSpeech += 1;
+        try {
+          const start = Date.now();
+          let speech: Awaited<ReturnType<ShowHooks['synthesize']>> = null;
+          for (let attempt = 1; attempt <= 2 && !speech && !signal.aborted; attempt++) {
+            speech = await this.hooks.synthesize(text, AbortSignal.any([signal, AbortSignal.timeout(this.hooks.synthTimeoutMs?.() ?? SYNTH_TIMEOUT_MS)]), voice).catch((err) => {
+              this.hooks.log?.('warn', `嘉宾的语音合成失败（第 ${attempt} 次）：${(err as Error).message}`);
+              return null;
+            });
+          }
+          const id = randomUUID();
+          const estimateMs = estimateSpeechMs(text);
+          const done = this.stage.waitSaid(id, estimateMs, signal);
+          this.stage.broadcast({
+            type: 'say', id, text, mood: '', estimateMs, speaker: who,
+            audio: speech ? Buffer.from(speech.audio).toString('base64') : null,
+            ...(speech?.timeline.length ? { timeline: speech.timeline } : {}),
           });
+          await done;
+          if (generation === this.sessionGeneration) this.record({ type: 'guest', who, text, start, end: Date.now() });
+        } finally {
+          this.activeSpeech -= 1;
         }
-        const id = randomUUID();
-        const estimateMs = estimateSpeechMs(text);
-        const done = this.stage.waitSaid(id, estimateMs, signal);
-        this.stage.broadcast({
-          type: 'say', id, text, mood: '', estimateMs, speaker: who,
-          audio: speech ? Buffer.from(speech.audio).toString('base64') : null,
-          ...(speech?.timeline.length ? { timeline: speech.timeline } : {}),
-        });
-        await done;
-        if (generation === this.sessionGeneration) this.record({ type: 'guest', who, text, start, end: Date.now() });
       });
     } finally {
       if (generation === this.sessionGeneration) this.queued -= 1;
