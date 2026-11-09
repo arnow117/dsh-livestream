@@ -300,16 +300,6 @@ async function completeWithDsh(ctx: AgentContext, model: string, system: string,
 }
 
 export function apply(ctx: AgentContext): void {
-  hooks.secret = async (name) => {
-    const credentials = ctx.get?.('credentials');
-    const hit = credentials ? await credentials.resolve(name).catch(() => undefined) : undefined;
-    return hit?.value ?? process.env[name] ?? '';
-  };
-  hooks.setSecret = async (name, value) => {
-    const credentials = ctx.get?.('credentials');
-    if (!credentials?.set) throw new Error('这个 DSH 没有凭据服务，存不了');
-    await credentials.set(name, value);
-  };
   hooks.complete = (model, system, user) => completeWithDsh(ctx, model, system, user);
   hooks.push = (sessionId, text, now) => push(ctx, sessionId, text, now);
   markAgentReady();
@@ -344,7 +334,7 @@ export function apply(ctx: AgentContext): void {
         usage.priced
           ? `模型大概花了 ${money(usage.yuan)}（缓存命中很便宜；工作日白天高峰价，其余时间半价）。`
           : '这个模型的价钱这里不知道，只能报 token。',
-        ['macos', 'yovoice'].includes(process.env.DSH_LIVESTREAM_TTS_BACKEND ?? '')
+        ['macos', 'yovoice'].includes(settings.tts.backend)
           ? `念了大约 ${s.spokenChars} 个字，使用本地语音。`
           : `念了大约 ${s.spokenChars} 个字，配音大概 ${money(tts)}（3 元一万字）。`,
       ];

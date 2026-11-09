@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { encodeSpeech } from './audioProcess';
 import type { Speech } from './tts';
+import { DEFAULT_YOVOICE_VOICE } from '../shared/ttsSettings';
 
-const DEFAULT_VOICE = '年轻温暖的中文女声，自然亲切，像和朋友聊天，咬字清楚，语气轻松活泼';
+const DEFAULT_VOICE = DEFAULT_YOVOICE_VOICE;
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
 const REQUEST_TIMEOUT_MS = 10_000;
 const CLEANUP_TIMEOUT_MS = 20_000;
@@ -32,7 +33,7 @@ export class YovoiceClient {
     }
   }
 
-  synthesize(text: string, signal: AbortSignal): Promise<Speech> {
+  synthesize(text: string, signal: AbortSignal, model = this.model, voice = this.voice): Promise<Speech> {
     if (signal.aborted) return Promise.reject(signal.reason);
     signal = AbortSignal.any([signal, AbortSignal.timeout(90_000)]);
     return new Promise((resolve, reject) => {
@@ -44,7 +45,7 @@ export class YovoiceClient {
           reject(signal.reason);
         },
         start: () => {
-          void this.runJob(text, signal).then(resolve, reject).finally(() => {
+          void this.runJob(text, signal, model, voice).then(resolve, reject).finally(() => {
             this.active = false;
             this.drain();
           });
@@ -132,7 +133,7 @@ export class YovoiceClient {
     }
   }
 
-  private async runJob(text: string, signal: AbortSignal): Promise<Speech> {
+  private async runJob(text: string, signal: AbortSignal, model: string, voice: string): Promise<Speech> {
     const id = randomBytes(16).toString('hex');
     const path = `/v1/jobs/${id}`;
     let mayExist = false;
@@ -142,7 +143,7 @@ export class YovoiceClient {
       // 提交不使用调用者的取消信号：等提交结果确定后再取消服务端任务。
       mayExist = true;
       const response = await this.request(path, 'PUT', AbortSignal.timeout(REQUEST_TIMEOUT_MS), {
-        text, modelId: this.model, voxMode: 'design', voiceDescription: this.voice, seed: 42,
+        text, modelId: model, voxMode: 'design', voiceDescription: voice, seed: 42,
       });
       if (response.status >= 400 && response.status < 500) mayExist = false;
       let result = await this.job(response, id, signal);
@@ -175,12 +176,12 @@ export class YovoiceClient {
 }
 
 let client: YovoiceClient | undefined;
-export function synthesizeYovoice(text: string, signal: AbortSignal): Promise<Speech> {
+export function synthesizeYovoice(text: string, signal: AbortSignal, model?: string, voice?: string): Promise<Speech> {
   client ??= new YovoiceClient(
     process.env.YOVOICE_URL ?? '',
     process.env.YOVOICE_API_TOKEN ?? '',
     process.env.DSH_LIVESTREAM_YOVOICE_MODEL?.trim() || 'voxcpm2-q8',
     process.env.DSH_LIVESTREAM_YOVOICE_VOICE?.trim() || DEFAULT_VOICE,
   );
-  return client.synthesize(text, signal);
+  return client.synthesize(text, signal, model, voice);
 }

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { Speech } from './tts';
 import { encodeSpeech, runAudioProcess } from './audioProcess';
 
-export async function synthesizeMacos(text: string, signal: AbortSignal): Promise<Speech> {
+export async function synthesizeMacos(text: string, signal: AbortSignal, voice = process.env.DSH_LIVESTREAM_MACOS_VOICE?.trim() || 'Tingting'): Promise<Speech> {
   signal.throwIfAborted();
   const dir = await mkdtemp(join(tmpdir(), 'dsh-livestream-tts-'));
   const input = join(dir, 'input.txt');
@@ -13,7 +13,6 @@ export async function synthesizeMacos(text: string, signal: AbortSignal): Promis
   const mp3 = join(dir, 'speech.mp3');
   try {
     await writeFile(input, text, 'utf8');
-    const voice = process.env.DSH_LIVESTREAM_MACOS_VOICE?.trim() || 'Tingting';
     await runAudioProcess('/usr/bin/say', ['-v', voice, '-f', input, '-o', aiff], signal);
     return await encodeSpeech(aiff, mp3, text, signal);
   } finally {

@@ -80,7 +80,7 @@ describe('local rehearsal mode', () => {
   });
 
   it('reports yovoice as local speech without a cloud TTS charge', async () => {
-    process.env.DSH_LIVESTREAM_TTS_BACKEND = 'yovoice';
+    runtime.updateSettings({ tts: { ...runtime.settings.tts, backend: 'yovoice' } });
     try {
       const response = await routes.get('/api/dsh-livestream/state')!(new Request('http://localhost/'));
       expect((await response.json()).runtime.ttsBackend).toBe('yovoice');
@@ -88,7 +88,7 @@ describe('local rehearsal mode', () => {
       expect(result).toContain('使用本地语音');
       expect(result).not.toContain('3 元一万字');
     } finally {
-      process.env.DSH_LIVESTREAM_TTS_BACKEND = 'macos';
+      runtime.updateSettings({ tts: { ...runtime.settings.tts, backend: 'macos' } });
     }
   });
 });

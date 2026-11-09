@@ -20,7 +20,8 @@ import type { GameSource, StageEvent } from '../stage/protocol';
 import { splitByMood } from '../core/moodText';
 import { speakable } from '../core/speakable';
 import { GUEST_VOICE } from '../body/voices';
-import { agentReady, asr, broadcast, cookie, DEFAULT_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { mergeTtsSettings } from '../shared/ttsSettings';
+import { agentReady, asr, broadcast, cookie, DEFAULT_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
@@ -47,7 +48,7 @@ function state() {
     show: show.status(),
     broadcast: broadcast.status(),
     settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined },
-    runtime: { localRehearsal, ttsBackend: ['macos', 'yovoice'].includes(process.env.DSH_LIVESTREAM_TTS_BACKEND ?? '') ? process.env.DSH_LIVESTREAM_TTS_BACKEND : 'doubao' },
+    runtime: { localRehearsal, ttsBackend: settings.tts.backend },
     stageUrl: server.url,
     characters: packs.list('characters'),
     templates: packs.list('templates'),
@@ -166,6 +167,24 @@ async function resumeLive(ctx: HostContext, stopped: () => boolean): Promise<voi
 
 export function apply(ctx: HostContext): void {
   ctx.effect(() => {
+    const secret = async (name: string) => {
+      const credentials = ctx.get?.('credentials');
+      const hit = credentials ? await credentials.resolve(name).catch(() => undefined) : undefined;
+      return hit?.value ?? process.env[name] ?? '';
+    };
+    const setSecret = async (name: string, value: string) => {
+      const credentials = ctx.get?.('credentials');
+      if (!credentials?.set) throw new Error('这个 DSH 没有凭据服务，存不了');
+      await credentials.set(name, value);
+    };
+    hooks.secret = secret;
+    hooks.setSecret = setSecret;
+    return () => {
+      if (hooks.secret === secret) hooks.secret = async (name) => process.env[name] ?? '';
+      if (hooks.setSecret === setSecret) hooks.setSecret = async () => { throw new Error('这个 DSH 没有凭据服务，存不了'); };
+    };
+  }, 'dsh-livestream credentials');
+  ctx.effect(() => {
     server.start().catch((err) => console.warn(`[dsh-livestream] 舞台服务器起不来（端口 ${settings.stagePort}）：${(err as Error).message}`));
     return () => server.stop();
   }, 'dsh-livestream stage server');
@@ -191,7 +210,8 @@ export function apply(ctx: HostContext): void {
   route('/api/dsh-livestream/state', ['GET'], () => json(state()), 'state');
 
   route('/api/dsh-livestream/settings', ['POST'], async (request) => {
-    const patch = await body<Partial<Settings>>(request);
+    const patch = await body<Partial<Settings> | null>(request);
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return fail('设置无效');
     const next: Partial<Settings> = {};
     if (patch.roomId !== undefined) {
       const room = Number(patch.roomId);
@@ -207,6 +227,15 @@ export function apply(ctx: HostContext): void {
       next.template = String(patch.template);
     }
     if (patch.voice !== undefined) next.voice = String(patch.voice).trim();
+    if (patch.tts !== undefined) {
+      try {
+        next.tts = mergeTtsSettings(settings.tts, patch.tts);
+        if (next.voice !== undefined && Object.hasOwn(patch.tts, 'doubaoVoice') && next.tts.doubaoVoice !== next.voice) return fail('音色设置冲突');
+        if (next.voice !== undefined && !Object.hasOwn(patch.tts, 'doubaoVoice')) next.tts.doubaoVoice = next.voice;
+      } catch {
+        return fail('声音设置无效');
+      }
+    }
     if (patch.idleAfterSec !== undefined) next.idleAfterSec = Math.max(10, Math.min(600, Number(patch.idleAfterSec) || 45));
     if (patch.gameChatGapSec !== undefined) next.gameChatGapSec = Math.max(5, Math.min(120, Number(patch.gameChatGapSec) || 15));
     if (patch.pace !== undefined) next.pace = cleanPace({ ...settings.pace, ...patch.pace });
@@ -227,12 +256,17 @@ export function apply(ctx: HostContext): void {
       const rooms = new Set(settings.ownRooms);
       if (own) rooms.add(settings.roomId); else rooms.delete(settings.roomId);
       next.ownRooms = [...rooms];
-      show.rememberViewers = own && show.status().roomId === settings.roomId;
     }
     const repaint = (next.character && next.character !== settings.character) || (next.template && next.template !== settings.template);
     // 换了 Python 或模型：关掉正在跑的识别进程，下次用新的
-    if ((next.asrPython !== undefined && next.asrPython !== settings.asrPython) || (next.asrModel !== undefined && next.asrModel !== settings.asrModel)) asr.close();
-    updateSettings(next);
+    const resetAsr = (next.asrPython !== undefined && next.asrPython !== settings.asrPython) || (next.asrModel !== undefined && next.asrModel !== settings.asrModel);
+    try {
+      updateSettings(next);
+    } catch {
+      return fail('保存设置失败', 500);
+    }
+    if (resetAsr) asr.close();
+    if (own !== undefined && settings.roomId) show.rememberViewers = own && show.status().roomId === settings.roomId;
     if (next.boardText !== undefined) publishBoard();
     if (next.noticeText !== undefined) publishNotice();
     if (next.character) show.setNames(currentCharacter()?.names ?? []);
@@ -241,6 +275,33 @@ export function apply(ctx: HostContext): void {
     if (next.template && show.gameSource) placeGame(show.gameSource);
     return json(state());
   }, 'settings');
+
+  route('/api/dsh-livestream/tts/preview', ['POST'], async (request) => {
+    const patch = await body<{ text?: unknown; tts?: unknown } | null>(request);
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch) || typeof patch.text !== 'string') return fail('试听文字无效');
+    const text = patch.text.trim();
+    const characters = [...text];
+    const malformed = characters.some((character) => character.length === 1 && character.charCodeAt(0) >= 0xd800 && character.charCodeAt(0) <= 0xdfff);
+    if (!text || malformed || characters.length > 200) return fail('试听文字须为 1 至 200 个字');
+    let tts;
+    try {
+      tts = mergeTtsSettings(settings.tts, patch.tts === undefined ? {} : patch.tts);
+    } catch {
+      return patch.tts === undefined ? fail('声音配置不可用，请在设置中修正', 503) : fail('声音设置无效');
+    }
+    if (tts.backend === 'yovoice' && (!process.env.YOVOICE_URL || !process.env.YOVOICE_API_TOKEN || !['voxcpm2-q8', 'voxcpm2-bf16'].includes(tts.yovoiceModel))) return fail('yovoice 配置不可用', 503);
+    const timeout = AbortSignal.timeout(90_000);
+    try {
+      const result = await previewSpeech(text, AbortSignal.any([request.signal, timeout]), tts);
+      if (!result) return fail('未配置该音色所需的凭据', 503);
+      request.signal.throwIfAborted();
+      return new Response(new Uint8Array(result.audio), { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' } });
+    } catch {
+      if (timeout.aborted) return fail('试听超时', 504);
+      if (request.signal.aborted) throw request.signal.reason;
+      return fail('语音服务不可用，请检查配置后重试', 502);
+    }
+  }, 'tts preview');
 
   route('/api/dsh-livestream/connect', ['POST'], async () => {
     if (localRehearsal) return fail('本地彩排模式不连接 B 站');

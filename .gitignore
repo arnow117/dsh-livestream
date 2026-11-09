@@ -11,3 +11,7 @@ packages/*/lib/
 packages/*/test/fixtures/
 tools/*.mjs
 /art/
+
+# Local browser and coverage artifacts
+packages/dsh-livestream/.e2e/
+packages/dsh-livestream/coverage/

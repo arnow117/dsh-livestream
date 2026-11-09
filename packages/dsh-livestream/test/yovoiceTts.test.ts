@@ -70,8 +70,8 @@ describe('yovoice speech adapter', () => {
     const server = fakeServer({ holdFirst: true });
     vi.stubGlobal('fetch', server.fetch);
     const client = new YovoiceClient('http://127.0.0.1:3081', 'test-token');
-    const first = client.synthesize('第一句', AbortSignal.timeout(10000));
-    const second = client.synthesize('第二句', AbortSignal.timeout(10000));
+    const first = client.synthesize('第一句', AbortSignal.timeout(10000), 'voxcpm2-q8', '第一种声音');
+    const second = client.synthesize('第二句', AbortSignal.timeout(10000), 'voxcpm2-bf16', '第二种声音');
     await waitFor(() => server.calls.some((call) => call.method === 'GET'));
     expect(server.calls.filter((call) => call.method === 'PUT')).toHaveLength(1);
     server.release();
@@ -79,7 +79,8 @@ describe('yovoice speech adapter', () => {
     const puts = server.calls.filter((call) => call.method === 'PUT');
     expect(puts).toHaveLength(2);
     expect(puts[0].path).toMatch(/^\/v1\/jobs\/[0-9a-f]{32}$/);
-    expect(JSON.parse(String(puts[0].init.body))).toEqual({ text: '第一句', modelId: 'voxcpm2-q8', voxMode: 'design', voiceDescription: expect.any(String), seed: 42 });
+    expect(JSON.parse(String(puts[0].init.body))).toEqual({ text: '第一句', modelId: 'voxcpm2-q8', voxMode: 'design', voiceDescription: '第一种声音', seed: 42 });
+    expect(JSON.parse(String(puts[1].init.body))).toMatchObject({ modelId: 'voxcpm2-bf16', voiceDescription: '第二种声音' });
     expect(puts[0].init.redirect).toBe('error');
     expect(speech.words).toHaveLength(3);
     const dir = await mkdtemp(join(tmpdir(), 'dsh-yovoice-test-'));

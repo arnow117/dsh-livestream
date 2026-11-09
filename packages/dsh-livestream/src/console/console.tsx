@@ -7,6 +7,8 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import QRCode from 'qrcode';
+import type { TtsSettings } from '../shared/ttsSettings';
+import { usesNewConsole } from '../body/voices';
 
 // ── DSH 服务 ──────────────────────────────────────────
 
@@ -60,7 +62,7 @@ function useServices(): ConsoleServices | null {
 const PRESET_ID = 'dsh-livestream';
 /** 游戏线（另一个会话里的她，专门玩游戏）用的预设 */
 const GAME_PRESET_ID = 'dsh-livestream-game';
-const SECRET_REFS = { cookie: 'BILIBILI_COOKIE', tts: 'DOUBAO_TTS_API_KEY' } as const;
+const SECRET_REFS = { cookie: 'BILIBILI_COOKIE', tts: 'DOUBAO_TTS_API_KEY', appId: 'DOUBAO_TTS_APP_ID', accessKey: 'DOUBAO_TTS_ACCESS_KEY' } as const;
 
 interface PackEntry { id: string; name: string; builtin: boolean }
 interface SpokenLine { text: string; mood: string; at: number }
@@ -90,7 +92,7 @@ interface HostState {
   show: ShowStatus;
   broadcast: BroadcastStatus;
   runtime?: { localRehearsal: boolean; ttsBackend: 'macos' | 'yovoice' | 'doubao' };
-  settings: { roomId: number | null; character: string; template: string; voice: string; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
+  settings: { roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
   stageUrl: string;
   characters: PackEntry[];
   templates: PackEntry[];
@@ -98,10 +100,10 @@ interface HostState {
   defaultBoard: string;
 }
 
-async function api<T = HostState>(path: string, body?: unknown): Promise<T> {
+async function api<T = HostState>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`/api/dsh-livestream/${path}`, body === undefined
     ? { cache: 'no-store' }
-    : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal });
   const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
   if (!res.ok || data.ok === false) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data as T;
@@ -225,8 +227,8 @@ function useSecrets(): Record<string, boolean | null> {
   const [state, setState] = useState<Record<string, boolean | null>>({ cookie: null, tts: null });
   useEffect(() => {
     if (!creds) return;
-    const refs = [SECRET_REFS.cookie, SECRET_REFS.tts];
-    void creds.describe(refs).then((r) => setState({ cookie: !!r.value?.[SECRET_REFS.cookie]?.configured, tts: !!r.value?.[SECRET_REFS.tts]?.configured })).catch(() => {});
+    const refs = Object.values(SECRET_REFS);
+    void creds.describe(refs).then((r) => setState({ cookie: !!r.value?.[SECRET_REFS.cookie]?.configured, tts: !!r.value?.[SECRET_REFS.tts]?.configured, appId: !!r.value?.[SECRET_REFS.appId]?.configured, accessKey: !!r.value?.[SECRET_REFS.accessKey]?.configured })).catch(() => {});
   }, [creds, version]);
   return state;
 }
@@ -249,6 +251,159 @@ function SecretField({ label, ref_, hint, configured }: { label: string; ref_: s
       </div>
       {error && <p className="dl-error">{error}</p>}
     </div>
+  );
+}
+
+export function TtsSettingsPanel({ initial, onSaved, onSavingChange, secrets }: { initial: TtsSettings; onSaved: (state: HostState) => void; onSavingChange?: (saving: boolean) => void; secrets: Record<string, boolean | null> }) {
+  const [draft, setDraft] = useState(initial);
+  const [saved, setSaved] = useState(initial);
+  const [text, setText] = useState('你好，欢迎来到我的直播间。');
+  const knownVoices = ['', 'zh_female_mengyatou_uranus_bigtts', 'zh_female_zhixingnv_uranus_bigtts'];
+  const [customVoice, setCustomVoice] = useState(!knownVoices.includes(initial.doubaoVoice));
+  const [status, setStatus] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [audioUrl, setAudioUrl] = useState('');
+  const controller = useRef<AbortController | null>(null);
+  const saveController = useRef<AbortController | null>(null);
+  const currentUrl = useRef('');
+  const sequence = useRef(0);
+  const audio = useRef<HTMLAudioElement>(null);
+
+  const clearPreview = () => {
+    sequence.current += 1;
+    controller.current?.abort();
+    controller.current = null;
+    audio.current?.pause();
+    if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
+    currentUrl.current = '';
+    setAudioUrl('');
+  };
+  useEffect(() => () => {
+    sequence.current += 1;
+    controller.current?.abort();
+    saveController.current?.abort();
+    onSavingChange?.(false);
+    audio.current?.pause();
+    if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
+  }, []);
+
+  const change = (patch: Partial<TtsSettings>) => {
+    clearPreview();
+    setStatus('');
+    setDraft((old) => ({ ...old, ...patch }));
+  };
+  const preview = async () => {
+    clearPreview();
+    const id = sequence.current;
+    const request = new AbortController();
+    controller.current = request;
+    setStatus('正在生成试听');
+    try {
+      const response = await fetch('/api/dsh-livestream/tts/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text, tts: draft }),
+        signal: request.signal,
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || '试听失败');
+      }
+      const blob = await response.blob();
+      if (sequence.current !== id || request.signal.aborted) return;
+      currentUrl.current = URL.createObjectURL(blob);
+      setAudioUrl(currentUrl.current);
+      setStatus('试听已准备好');
+    } catch (error) {
+      if (sequence.current !== id) return;
+      setStatus(request.signal.aborted ? '试听已取消' : (error as Error).message);
+    } finally {
+      if (sequence.current === id) controller.current = null;
+    }
+  };
+  const save = async () => {
+    if (saveController.current) return;
+    clearPreview();
+    const request = new AbortController();
+    saveController.current = request;
+    setSaving(true);
+    onSavingChange?.(true);
+    setStatus('正在保存声音');
+    try {
+      const result = await api('settings', { tts: draft }, request.signal);
+      if (request.signal.aborted) return;
+      setDraft(result.settings.tts);
+      setSaved(result.settings.tts);
+      onSaved(result);
+      setStatus('声音设置已保存，后续语音会使用新设置');
+    } catch (error) {
+      if (!request.signal.aborted) setStatus((error as Error).message);
+    } finally {
+      if (!request.signal.aborted) {
+        saveController.current = null;
+        setSaving(false);
+        onSavingChange?.(false);
+      }
+    }
+  };
+  const dirty = draft.backend !== saved.backend
+    || draft.yovoiceModel !== saved.yovoiceModel
+    || draft.yovoiceVoice !== saved.yovoiceVoice
+    || draft.macosVoice !== saved.macosVoice
+    || draft.doubaoVoice !== saved.doubaoVoice
+    || draft.doubaoRate !== saved.doubaoRate;
+  const newConsole = !draft.doubaoVoice || usesNewConsole(draft.doubaoVoice);
+  return (
+    <section className="dl-voice">
+      <h3>声音</h3>
+      <fieldset className="dl-voice-fields" disabled={saving}>
+        <div className="dl-field">
+          <label>语音后端
+            <select value={draft.backend} onChange={(e) => change({ backend: e.target.value as TtsSettings['backend'] })}>
+              <option value="yovoice">yovoice 本地</option>
+              <option value="macos">Mac 本地语音</option>
+              <option value="doubao">豆包云语音</option>
+            </select>
+          </label>
+          {draft.backend === 'yovoice' && <>
+            <label>模型<select value={draft.yovoiceModel} onChange={(e) => change({ yovoiceModel: e.target.value as TtsSettings['yovoiceModel'] })}>
+              {!['voxcpm2-q8', 'voxcpm2-bf16'].includes(draft.yovoiceModel) && <option value={draft.yovoiceModel}>不支持的模型，请重新选择</option>}
+              <option value="voxcpm2-q8">VoxCPM2 q8</option>
+              <option value="voxcpm2-bf16">VoxCPM2 BF16（需事先安装）</option>
+            </select></label>
+            <label>音色描述<textarea value={draft.yovoiceVoice} maxLength={1000} rows={3} onChange={(e) => change({ yovoiceVoice: e.target.value })} /></label>
+          </>}
+          {draft.backend === 'macos' && <label>Mac 音色名<input value={draft.macosVoice} onChange={(e) => change({ macosVoice: e.target.value })} /></label>}
+          {draft.backend === 'doubao' && <>
+            <label>豆包音色<select value={customVoice ? 'custom' : draft.doubaoVoice} onChange={(e) => { setCustomVoice(e.target.value === 'custom'); change({ doubaoVoice: e.target.value === 'custom' ? '' : e.target.value }); }}>
+              <option value="">跟随角色默认</option>
+              <option value="zh_female_mengyatou_uranus_bigtts">萌丫头 2.0</option>
+              <option value="zh_female_zhixingnv_uranus_bigtts">知性女 2.0</option>
+              <option value="custom">自定义 ID</option>
+            </select></label>
+            <label>豆包音色 ID<input value={draft.doubaoVoice} onChange={(e) => { setCustomVoice(!knownVoices.includes(e.target.value)); change({ doubaoVoice: e.target.value }); }} placeholder="留空跟随角色" /></label>
+            <label>语速<input type="number" min={-50} max={100} value={draft.doubaoRate} onChange={(e) => change({ doubaoRate: Number(e.target.value) })} /></label>
+          </>}
+          <label>试听文字<textarea value={text} maxLength={400} rows={2} onChange={(e) => { clearPreview(); setStatus(''); setText(e.target.value); }} /></label>
+          <div className="dl-row">
+            <button type="button" disabled={!text.trim()} onClick={() => void preview()}>试听</button>
+            <button type="button" onClick={() => { clearPreview(); setStatus('试听已取消'); }}>取消试听</button>
+            <button type="button" onClick={() => void save()}>保存声音</button>
+          </div>
+          <p className="dl-hint" aria-live="polite">声音设置：{dirty ? '未保存' : '已生效'}</p>
+          {!text.trim() && <p className="dl-hint">请填写试听文字。</p>}
+          {status && <p role="status">{status}</p>}
+          {audioUrl && <audio ref={audio} controls src={audioUrl} onPlay={() => setStatus('正在播放试听')} onPause={() => setStatus('试听已准备好')} onEnded={() => setStatus('试听已准备好')} />}
+        </div>
+        {draft.backend === 'doubao' && <>
+          {(newConsole || !draft.doubaoVoice) && <SecretField label="豆包语音 API Key" ref_={SECRET_REFS.tts} configured={secrets.tts} hint="新版控制台 API Key" />}
+          {(!newConsole || !draft.doubaoVoice) && <>
+            <SecretField label="豆包 APP ID" ref_={SECRET_REFS.appId} configured={secrets.appId} hint="旧版控制台 APP ID" />
+            <SecretField label="豆包 Access Key" ref_={SECRET_REFS.accessKey} configured={secrets.accessKey} hint="旧版控制台 Access Key" />
+          </>}
+        </>}
+      </fieldset>
+    </section>
   );
 }
 
@@ -276,12 +431,33 @@ export function Console() {
   const [room, setRoom] = useState('');
   const [copied, setCopied] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [voiceSaving, setVoiceSaving] = useState(false);
+  const [voiceReady, setVoiceReady] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
+  const [voiceReload, setVoiceReload] = useState(0);
   const [dock, setDock] = useState<'owner' | 'sim'>('owner');
   const previewRef = useRef<HTMLDivElement>(null);
   const secrets = useSecrets();
 
   const refresh = () => api('state').then((s) => { setHost(s); setRoom((r) => r || (s.settings.roomId ? String(s.settings.roomId) : '')); });
   useEffect(() => { void refresh().catch(() => {}); }, []);
+  useEffect(() => {
+    if (!drawer) {
+      setVoiceReady(false);
+      return;
+    }
+    let active = true;
+    setVoiceReady(false);
+    setVoiceError('');
+    void api('state').then((state) => {
+      if (!active) return;
+      setHost(state);
+      setVoiceReady(true);
+    }).catch(() => {
+      if (active) setVoiceError('读取声音设置失败，请重试');
+    });
+    return () => { active = false; };
+  }, [drawer, voiceReload]);
 
   const show = status ?? host?.show ?? null;
   const settings = host?.settings;
@@ -470,9 +646,14 @@ export function Console() {
       </div>
 
       {drawer && (
-        <div className="dl-drawer-wrap" onClick={() => setDrawer(false)}>
+        <div className="dl-drawer-wrap" onClick={() => { if (!voiceSaving) setDrawer(false); }}>
           <aside className="dl-drawer" onClick={(e) => e.stopPropagation()}>
-            <header><h2>设置</h2><button className="dl-icon-btn" onClick={() => setDrawer(false)}>关闭</button></header>
+            <header><h2>设置</h2><button className="dl-icon-btn" disabled={voiceSaving} onClick={() => setDrawer(false)}>关闭</button></header>
+            {voiceReady && settings?.tts
+              ? <TtsSettingsPanel initial={settings.tts} onSaved={setHost} onSavingChange={setVoiceSaving} secrets={secrets} />
+              : <section className="dl-voice"><h3>声音</h3>{voiceError
+                ? <div className="dl-field"><p role="alert">{voiceError}</p><button onClick={() => setVoiceReload((value) => value + 1)}>重试</button></div>
+                : <p role="status">正在读取声音设置</p>}</section>}
             <h3>直播间</h3>
             <div className="dl-field">
               <label>B 站直播间房间号</label>
@@ -556,7 +737,6 @@ export function Console() {
               <p className="dl-hint">她看的 B 站视频没有字幕时，用本机的 faster-whisper 听一段（5 分钟一段，显卡上几秒）写成字幕给她看。不填就只告诉她「没有字幕」。装法：<code>python -m venv asr-venv</code>，再 <code>asr-venv\Scripts\python -m pip install faster-whisper nvidia-cublas-cu12 nvidia-cudnn-cu12</code>（没有 N 卡只装 faster-whisper）。模型第一次用时自动下载（约 1.6 GB，走 hf-mirror 镜像）。</p>
             </div>
             <h3>密钥</h3>
-            <SecretField label="豆包语音 API Key" ref_={SECRET_REFS.tts} configured={secrets.tts} hint="火山引擎新版控制台的 API Key（和 dsh-game 共用）" />
             <LoginField />
             <SecretField label="B 站 Cookie（不想扫码时手填）" ref_={SECRET_REFS.cookie} configured={secrets.cookie} hint="浏览器里登录 B 站后复制的 Cookie；扫码登录会自动填这一项" />
             <h3>舞台</h3>
@@ -1029,6 +1209,11 @@ export const CONSOLE_CSS = `
 .dl-drawer h3{margin:22px 0 4px;font-size:12px;font-weight:600;color:var(--dl-faint);letter-spacing:1px}
 .dl-field{display:flex;flex-direction:column;gap:7px;margin-top:10px;min-width:0}
 .dl-field label{font-size:12px;color:var(--dl-dim);display:flex;align-items:center;gap:8px}
+.dl-voice-fields{border:0;padding:0;margin:0;min-width:0}
+.dl-voice .dl-field > label{align-items:stretch;flex-direction:column}
+.dl-voice .dl-field > label > input,.dl-voice .dl-field > label > select,.dl-voice .dl-field > label > textarea{box-sizing:border-box;width:100%;min-width:0}
+.dl-voice .dl-row{flex-wrap:wrap}
+.dl-voice :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
 .dl-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dl-dim);margin:8px 0 2px}
 .dl-check input{flex:none}
 .dl-tag{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--dl-line);color:var(--dl-faint)}

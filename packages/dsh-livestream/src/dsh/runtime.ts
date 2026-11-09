@@ -8,7 +8,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,7 @@ import type { CharacterManifest, GameSource } from '../stage/protocol';
 import { gameRect } from '../stage/layout';
 import { connectObs, showGameSources } from '../body/obs';
 import type { OwnerPace } from '../core/attention/attention';
+import { defaultTtsSettings, mergeTtsSettings, type TtsSettings } from '../shared/ttsSettings';
 
 export interface Settings {
   roomId: number | null;
@@ -39,6 +40,7 @@ export interface Settings {
   template: string;
   /** 空串用角色包的默认音色 */
   voice: string;
+  tts: TtsSettings;
   stagePort: number;
   stageToken: string;
   /** 下播提炼观众记忆用的模型（provider/model） */
@@ -160,6 +162,7 @@ function loadSettings(): Settings {
     character: 'dafeiyu',
     template: 'default',
     voice: '',
+    tts: defaultTtsSettings(process.env, saved.voice ?? ''),
     stagePort: 7390,
     stageToken: '',
     distillModel: 'deepseek-official/deepseek-flash',
@@ -180,6 +183,8 @@ function loadSettings(): Settings {
     blocked: [],
     ...saved,
   };
+  settings.tts = mergeTtsSettings(defaultTtsSettings(process.env, saved.voice ?? ''), saved.tts ?? {}, { allowInvalidCurrent: true });
+  settings.voice = settings.tts.doubaoVoice;
   if (!settings.stageToken) {
     settings.stageToken = randomBytes(12).toString('base64url');
     saveSettings(settings);
@@ -189,14 +194,30 @@ function loadSettings(): Settings {
 
 function saveSettings(next: Settings): void {
   mkdirSync(dataDir, { recursive: true });
-  writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2));
+  const temporary = join(dataDir, `.settings-${randomBytes(16).toString('hex')}.tmp`);
+  try {
+    writeFileSync(temporary, JSON.stringify(next, null, 2), { flag: 'wx', mode: 0o600 });
+    renameSync(temporary, SETTINGS_FILE);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
 export const settings: Settings = loadSettings();
 
 export function updateSettings(patch: Partial<Settings>): Settings {
-  Object.assign(settings, patch);
-  saveSettings(settings);
+  let tts = patch.tts ? mergeTtsSettings(settings.tts, patch.tts) : settings.tts;
+  if (patch.voice !== undefined) {
+    if (patch.tts?.doubaoVoice !== undefined && patch.voice.trim() !== tts.doubaoVoice) throw new Error('音色设置冲突');
+    tts = mergeTtsSettings(tts, { doubaoVoice: patch.voice });
+  }
+  const next = { ...settings, ...patch, tts, voice: tts.doubaoVoice };
+  saveSettings(next);
+  Object.assign(settings, next);
+  if (patch.tts || patch.voice !== undefined || patch.character !== undefined) {
+    for (const entry of prepared.values()) entry.controller.abort();
+    prepared.clear();
+  }
   return settings;
 }
 
@@ -249,20 +270,22 @@ export const show = new LiveShow(
     push: (sessionId, text, now) => hooks.push(sessionId, text, now),
     synthesize: (text, signal, voice) => {
       if (voice) return speech(text, signal, voice);
-      const ready = prepared.get(`${currentVoice()}|${text}`);
+      const snapshot = speechSnapshot();
+      const key = preparedKey(snapshot, text);
+      const ready = prepared.get(key);
       if (ready) {
-        prepared.delete(`${currentVoice()}|${text}`);
+        prepared.delete(key);
         const abort = () => ready.controller.abort(signal.reason);
         signal.addEventListener('abort', abort, { once: true });
         if (signal.aborted) abort();
         return ready.promise.catch((error) => {
           if (signal.aborted) throw error;
-          return speech(text, signal);
+          return speech(text, signal, undefined, snapshot);
         }).finally(() => signal.removeEventListener('abort', abort));
       }
-      return speech(text, signal);
+      return speech(text, signal, undefined, snapshot);
     },
-    synthTimeoutMs: () => process.env.DSH_LIVESTREAM_TTS_BACKEND === 'yovoice' ? 90_000 : 15_000,
+    synthTimeoutMs: () => settings.tts.backend === 'yovoice' ? 90_000 : 15_000,
     distill,
     log: (level, message) => hooks.log(level, message),
     persist: (snapshot) => saveLive(snapshot),
@@ -309,19 +332,35 @@ export function publishNotice(): void {
 }
 publishNotice();
 
-async function speech(text: string, signal: AbortSignal, voice = currentVoice()): Promise<{ audio: Uint8Array; timeline: Array<{ chars: number; atMs: number }> } | null> {
-  if (process.env.DSH_LIVESTREAM_TTS_BACKEND === 'yovoice') {
-    const { audio, words } = await synthesizeYovoice(text, signal);
+type SpeechSnapshot = { tts: TtsSettings; voice: string };
+
+function speechSnapshot(tts = settings.tts, override?: string): SpeechSnapshot {
+  return { tts: { ...tts }, voice: override || tts.doubaoVoice || currentCharacter()?.voice || DEFAULT_VOICE };
+}
+
+function preparedKey(snapshot: SpeechSnapshot, text: string): string {
+  return JSON.stringify([snapshot.tts, snapshot.voice, text]);
+}
+
+export async function speech(text: string, signal: AbortSignal, voice?: string, snapshot = speechSnapshot(settings.tts, voice)): Promise<{ audio: Uint8Array; timeline: Array<{ chars: number; atMs: number }> } | null> {
+  const { tts } = snapshot;
+  if (tts.backend === 'yovoice') {
+    if (!['voxcpm2-q8', 'voxcpm2-bf16'].includes(tts.yovoiceModel)) throw new Error('不支持的 yovoice 模型');
+    const { audio, words } = await synthesizeYovoice(text, signal, tts.yovoiceModel, tts.yovoiceVoice);
     return { audio, timeline: subtitleTimeline(text, words) };
   }
-  if (process.env.DSH_LIVESTREAM_TTS_BACKEND === 'macos') {
-    const { audio, words } = await synthesizeMacos(text, signal);
+  if (tts.backend === 'macos') {
+    const { audio, words } = await synthesizeMacos(text, signal, tts.macosVoice);
     return { audio, timeline: subtitleTimeline(text, words) };
   }
-  const auth = await ttsAuth(voice);
+  const auth = await ttsAuth(snapshot.voice);
   if (!auth) return null;
-  const { audio, words } = await synthesize(auth, voice, text, signal);
+  const { audio, words } = await synthesize(auth, snapshot.voice, text, signal, tts.doubaoRate);
   return { audio, timeline: subtitleTimeline(text, words) };
+}
+
+export function previewSpeech(text: string, signal: AbortSignal, tts: TtsSettings) {
+  return speech(text, signal, undefined, speechSnapshot(tts));
 }
 
 /** 提前合成好的句子（念稿时先合成、念的时候直接用，句和句之间不空等）：音色|文字 → 语音 */
@@ -329,11 +368,12 @@ const prepared = new Map<string, { controller: AbortController; promise: Promise
 
 /** 提前合成一句（text 是 speakable 处理过的那段）；最多留 40 句，用掉就删 */
 export function prepareSpeech(text: string): void {
-  const key = `${currentVoice()}|${text}`;
+  const snapshot = speechSnapshot();
+  const key = preparedKey(snapshot, text);
   if (!text || prepared.has(key)) return;
   const controller = new AbortController();
-  const timeout = process.env.DSH_LIVESTREAM_TTS_BACKEND === 'yovoice' ? 120_000 : 60_000;
-  const promise = speech(text, AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]));
+  const timeout = snapshot.tts.backend === 'yovoice' ? 120_000 : 60_000;
+  const promise = speech(text, AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]), undefined, snapshot);
   void promise.catch(() => {});
   prepared.set(key, { controller, promise });
   while (prepared.size > 40) {
