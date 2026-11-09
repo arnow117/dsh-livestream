@@ -1,0 +1,18 @@
+{
+  "name": "local-livestream-harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "DSH_HOME=\"$PWD/.dsh\" DSH_TELEMETRY_MODE=DISABLED node --env-file=.env node_modules/.bin/dsh web --host 127.0.0.1 --port 3080 --no-open",
+    "dsh": "DSH_HOME=\"$PWD/.dsh\" DSH_TELEMETRY_MODE=DISABLED node --env-file=.env node_modules/.bin/dsh",
+    "tts": "sh -ac '. ./.env\nexec \"$YOVOICE_CLI\" serve --listen 127.0.0.1:3081 --data-dir \"$YOVOICE_DATA_DIR\" --generation-timeout 3m'"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.2-rc.1"
+  },
+  "allowScripts": {
+    "@deepseek-ai/dsh-subprocess-local@0.2.2-rc.1": true,
+    "node-pty@1.2.0-beta.15": true,
+    "koffi@3.1.1": true
+  }
+}

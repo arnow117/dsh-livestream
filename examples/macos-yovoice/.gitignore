@@ -1,0 +1,4 @@
+.env
+.dsh/
+node_modules/
+*.log

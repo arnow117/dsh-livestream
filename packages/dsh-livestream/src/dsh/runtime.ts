@@ -24,6 +24,8 @@ import { DmManager } from '../body/dm';
 import { Packs } from '../body/packs';
 import { StageServer } from '../body/server';
 import { canSpeak, subtitleTimeline, synthesize, type TtsAuth } from '../body/tts';
+import { synthesizeMacos } from '../body/macosTts';
+import { synthesizeYovoice } from '../body/yovoiceTts';
 import { DEFAULT_VOICE } from '../body/voices';
 import type { DistillLlm } from '../core/memory/distill';
 import type { CharacterManifest, GameSource } from '../stage/protocol';
@@ -118,6 +120,8 @@ export const DEFAULT_BOARD = [
   '边玩边回弹幕，没人替她玩',
 ].join('\n');
 
+const LOCAL_BOARD = '本地彩排\n和主人聊天，回应模拟观众的弹幕与礼物';
+
 /** 机密的名字（DSH 凭据）。豆包的和 dsh-game 共用 */
 export const SECRETS = {
   cookie: 'BILIBILI_COOKIE',
@@ -127,6 +131,7 @@ export const SECRETS = {
 } as const;
 
 export const PRESET_ID = 'dsh-livestream';
+export const localRehearsal = process.env.DSH_LIVESTREAM_LOCAL_REHEARSAL === '1';
 
 export const dataDir = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'dsh-livestream');
 
@@ -247,16 +252,23 @@ export const show = new LiveShow(
       const ready = prepared.get(`${currentVoice()}|${text}`);
       if (ready) {
         prepared.delete(`${currentVoice()}|${text}`);
-        return ready.catch(() => speech(text, signal));
+        const abort = () => ready.controller.abort(signal.reason);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+        return ready.promise.catch((error) => {
+          if (signal.aborted) throw error;
+          return speech(text, signal);
+        }).finally(() => signal.removeEventListener('abort', abort));
       }
       return speech(text, signal);
     },
+    synthTimeoutMs: () => process.env.DSH_LIVESTREAM_TTS_BACKEND === 'yovoice' ? 90_000 : 15_000,
     distill,
     log: (level, message) => hooks.log(level, message),
     persist: (snapshot) => saveLive(snapshot),
     onGame: (source) => placeGame(source),
   },
-  { dataDir, names: currentCharacter()?.names ?? [], idleAfterMs: () => settings.idleAfterSec * 1000, pace: () => ownerPace(settings.pace), board: () => settings.boardText, title: () => settings.liveTitle, gameChatGapMs: () => (settings.gameChatGapSec ?? 15) * 1000, blocked: (uid) => settings.blocked.some((b) => b.uid === uid) },
+  { dataDir, names: currentCharacter()?.names ?? [], idleAfterMs: () => settings.idleAfterSec * 1000, pace: () => ownerPace(settings.pace), board: currentBoard, title: () => settings.liveTitle, gameChatGapMs: () => (settings.gameChatGapSec ?? 15) * 1000, blocked: (uid) => settings.blocked.some((b) => b.uid === uid) },
 );
 
 /**
@@ -264,6 +276,7 @@ export const show = new LiveShow(
  * 网页画面舞台自己放，OBS 里不用加东西。连不上 OBS（没开、只在本机预览）就算了
  */
 export function placeGame(source: GameSource | null): void {
+  if (localRehearsal) return;
   const template = packs.template(settings.template);
   const windowSource = source && 'window' in source ? source : null;
   void (async () => {
@@ -281,8 +294,12 @@ export function placeGame(source: GameSource | null): void {
 }
 
 /** 告示板换了：舞台马上换（之后连上的舞台页也拿到最新的） */
+function currentBoard(): string {
+  return localRehearsal && settings.boardText === DEFAULT_BOARD ? LOCAL_BOARD : settings.boardText;
+}
+
 export function publishBoard(): void {
-  show.stage.broadcast({ type: 'board', text: settings.boardText });
+  show.stage.broadcast({ type: 'board', text: currentBoard() });
 }
 publishBoard();
 
@@ -293,6 +310,14 @@ export function publishNotice(): void {
 publishNotice();
 
 async function speech(text: string, signal: AbortSignal, voice = currentVoice()): Promise<{ audio: Uint8Array; timeline: Array<{ chars: number; atMs: number }> } | null> {
+  if (process.env.DSH_LIVESTREAM_TTS_BACKEND === 'yovoice') {
+    const { audio, words } = await synthesizeYovoice(text, signal);
+    return { audio, timeline: subtitleTimeline(text, words) };
+  }
+  if (process.env.DSH_LIVESTREAM_TTS_BACKEND === 'macos') {
+    const { audio, words } = await synthesizeMacos(text, signal);
+    return { audio, timeline: subtitleTimeline(text, words) };
+  }
   const auth = await ttsAuth(voice);
   if (!auth) return null;
   const { audio, words } = await synthesize(auth, voice, text, signal);
@@ -300,14 +325,22 @@ async function speech(text: string, signal: AbortSignal, voice = currentVoice())
 }
 
 /** 提前合成好的句子（念稿时先合成、念的时候直接用，句和句之间不空等）：音色|文字 → 语音 */
-const prepared = new Map<string, Promise<Awaited<ReturnType<typeof speech>>>>();
+const prepared = new Map<string, { controller: AbortController; promise: Promise<Awaited<ReturnType<typeof speech>>> }>();
 
 /** 提前合成一句（text 是 speakable 处理过的那段）；最多留 40 句，用掉就删 */
 export function prepareSpeech(text: string): void {
   const key = `${currentVoice()}|${text}`;
   if (!text || prepared.has(key)) return;
-  prepared.set(key, speech(text, AbortSignal.timeout(60_000)));
-  while (prepared.size > 40) prepared.delete(prepared.keys().next().value!);
+  const controller = new AbortController();
+  const timeout = process.env.DSH_LIVESTREAM_TTS_BACKEND === 'yovoice' ? 120_000 : 60_000;
+  const promise = speech(text, AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]));
+  void promise.catch(() => {});
+  prepared.set(key, { controller, promise });
+  while (prepared.size > 40) {
+    const oldest = prepared.keys().next().value!;
+    prepared.get(oldest)?.controller.abort();
+    prepared.delete(oldest);
+  }
 }
 
 export const server = new StageServer({
@@ -397,7 +430,7 @@ export const social = new SocialManager(new BiliSocial(cookie));
 /** 直播时每隔一会儿看一眼收件箱：开播以后新来的私信、回复、@，没别的事时告诉她 */
 const INBOX_EVERY_MS = 90_000;
 setInterval(() => {
-  if (!show.isOnAir) return;
+  if (!show.isOnAir || localRehearsal) return;
   void social.newSince().then((lines) => { if (lines.length) show.notifyInbox(lines); }).catch(() => {});
 }, INBOX_EVERY_MS).unref?.();
 

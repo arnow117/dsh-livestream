@@ -95,3 +95,15 @@ DOUBAO_TTS_ACCESS_KEY=...
 - **代码**：MIT（见 [`LICENSE`](LICENSE)）。
 - **大肥鱼的动画片段**（`packages/dsh-livestream/assets/characters/dafeiyu/`）：CC BY-NC-SA 4.0，是社区作品的衍生作品，署名和来源见那个目录里的 [`LICENSE.md`](packages/dsh-livestream/assets/characters/dafeiyu/LICENSE.md)。只能非商业使用；商业用途请自备角色素材，或向原作者申请许可。
 - `docs/` 里的截图来自演示视频的录制，其中 B 站视频的画面做了模糊处理。
+
+## macOS 本地彩排
+
+在启动 Harness 的进程环境中设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL=1` 和 `DSH_LIVESTREAM_TTS_BACKEND=macos`。本地语音调用系统 `say`、PATH 中的 `ffmpeg` 和 `ffprobe`，不需要豆包密钥；默认使用 `Tingting`，可通过 `DSH_LIVESTREAM_MACOS_VOICE` 指定已安装的系统音色。语音转换需要能够访问 macOS 的语音服务；某些沙箱会让 `say` 输出空音频。字幕时间按实际音频时长均分估算，并非逐字强制对齐。文字通过临时文件传递，不经过 shell；取消或超时后清理文件。
+
+彩排模式不连接或登录 B 站，不推流、不探测 OBS、不轮询账号消息，也不向直播会话暴露 B 站及游戏工具；`show_stats` 仍可使用。它不恢复之前未结束的直播。不要在彩排期间开启推流或连接直播间。正式直播不设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL`，仍使用原有行为；不设置语音后端时仍使用豆包。
+
+启动前，在插件设置中把 `distillModel` 设为现有的 `provider/model`，例如本机 GLM 路由 `glm-coding-plan/glm-5.3-flash`，并在 Harness 会话中选择同一模型。这样需要提炼记忆时也会使用该路由。控制台中打开直播并用模拟观众发送消息，舞台地址可在本机浏览器打开；结束时点击下播。不开 B 站、无需 OBS 或 B 站 Cookie。模拟事件和主播回复仍会调用所选模型并消耗其额度。
+
+也可将 `DSH_LIVESTREAM_TTS_BACKEND` 设为 `yovoice`，并在 Harness 进程环境中提供 `YOVOICE_URL` 和 `YOVOICE_API_TOKEN`。此后端使用 yovoice 的任务接口，默认选择 `voxcpm2-q8` 和中文女声描述；可分别通过 `DSH_LIVESTREAM_YOVOICE_MODEL`、`DSH_LIVESTREAM_YOVOICE_VOICE` 覆盖。它将任务串行提交，取消时请求服务端取消并等待终态，音频转成 MP3 后按时长估算字幕；不会自动切换到其他语音服务。如果无法确认被取消任务的终态，插件会停止提交后续 yovoice 任务；先检查该任务和共享服务状态，再重启 Harness。模型冷启动可能较慢，服务闲置后会再次冷启动。
+
+可复用的 Harness、GLM 和 yovoice 配置模板及启动说明见 [Mac 本地语音示例](examples/macos-yovoice/README.md)，已完成的检查及实测范围见 [验证记录](examples/macos-yovoice/VALIDATION.md)。

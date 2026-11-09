@@ -22,7 +22,7 @@ if (!webOnly) {
     target: 'node22',
     sourcemap: true,
     // ws 的可选原生加速包：没有就用纯 JS
-    external: ['bufferutil', 'utf-8-validate'],
+    external: ['@deepseek-ai/*', 'bufferutil', 'utf-8-validate'],
     banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
   });
 }

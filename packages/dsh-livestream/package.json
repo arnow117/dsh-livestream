@@ -44,8 +44,11 @@
     "check": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1"
+  },
   "devDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "@deepseek-ai/schemastery": "3.18.4",
     "@types/node": "24.10.1",
     "@types/qrcode": "1.5.5",

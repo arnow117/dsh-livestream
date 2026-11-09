@@ -46,6 +46,7 @@ export interface ShowHooks {
   /** 合成一句话的语音（mp3）和逐字时间；没配密钥或失败返回 null（只有字幕，按字数走） */
   /** voice：嘉宾用自己的音色；不给就是她的 */
   synthesize(text: string, signal: AbortSignal, voice?: string): Promise<{ audio: Uint8Array; timeline: Array<{ chars: number; atMs: number }> } | null>;
+  synthTimeoutMs?: () => number;
   /** 下播后提炼观众记忆用的模型 */
   distill?: DistillLlm;
   log?(level: 'info' | 'warn', message: string): void;
@@ -817,7 +818,7 @@ export class LiveShow {
         // 合成一段平时不到 2 秒：一次最多等 SYNTH_TIMEOUT_MS，卡住了马上再试一次（实测豆包偶尔一个请求一直不回，等满两分钟直播就冷场了）
         for (let attempt = 1; attempt <= 2 && !speech && !signal.aborted; attempt++) {
           try {
-            speech = await this.hooks.synthesize(text, AbortSignal.any([signal, AbortSignal.timeout(SYNTH_TIMEOUT_MS)]));
+            speech = await this.hooks.synthesize(text, AbortSignal.any([signal, AbortSignal.timeout(this.hooks.synthTimeoutMs?.() ?? SYNTH_TIMEOUT_MS)]));
           } catch (err) {
             this.hooks.log?.('warn', `语音合成失败（第 ${attempt} 次）：${(err as Error).message}`);
           }
@@ -859,7 +860,7 @@ export class LiveShow {
         const start = Date.now();
         let speech: Awaited<ReturnType<ShowHooks['synthesize']>> = null;
         for (let attempt = 1; attempt <= 2 && !speech && !signal.aborted; attempt++) {
-          speech = await this.hooks.synthesize(text, AbortSignal.any([signal, AbortSignal.timeout(SYNTH_TIMEOUT_MS)]), voice).catch((err) => {
+          speech = await this.hooks.synthesize(text, AbortSignal.any([signal, AbortSignal.timeout(this.hooks.synthTimeoutMs?.() ?? SYNTH_TIMEOUT_MS)]), voice).catch((err) => {
             this.hooks.log?.('warn', `嘉宾的语音合成失败（第 ${attempt} 次）：${(err as Error).message}`);
             return null;
           });

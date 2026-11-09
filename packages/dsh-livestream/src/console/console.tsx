@@ -89,6 +89,7 @@ interface HostState {
   ok: boolean;
   show: ShowStatus;
   broadcast: BroadcastStatus;
+  runtime?: { localRehearsal: boolean; ttsBackend: 'macos' | 'yovoice' | 'doubao' };
   settings: { roomId: number | null; character: string; template: string; voice: string; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
   stageUrl: string;
   characters: PackEntry[];
@@ -284,6 +285,9 @@ export function Console() {
 
   const show = status ?? host?.show ?? null;
   const settings = host?.settings;
+  const localRehearsal = host?.runtime?.localRehearsal === true;
+  const localVoice = host?.runtime?.ttsBackend === 'macos' || host?.runtime?.ttsBackend === 'yovoice';
+  const localVoiceLabel = host?.runtime?.ttsBackend === 'yovoice' ? 'yovoice / VoxCPM2' : 'Mac 本地语音';
 
   const goLive = () => run(async () => {
     if (!svc) throw new Error('插件还没准备好，刷新一下页面再试。');
@@ -294,7 +298,7 @@ export function Console() {
     }
     const sessionId = await createBrainSession(svc);
     // 游戏线：没装 dsh-game（预设里没有游戏工具）也开得出来，只是用不上
-    const gameSessionId = await createBrainSession(svc, 'game').catch(() => undefined);
+    const gameSessionId = localRehearsal ? undefined : await createBrainSession(svc, 'game').catch(() => undefined);
     await api('onair', { sessionId, gameSessionId });
     await refresh();
   });
@@ -329,7 +333,10 @@ export function Console() {
   const character = settings?.character ?? '';
 
   // 开播前准备：缺什么一眼看到，点一下打开设置
-  const steps = [
+  const steps = localRehearsal ? [
+    { key: 'localVoice', done: localVoice, text: localVoiceLabel, hint: localVoice ? '已选择；合成时检查语音服务' : '启动时选择本地语音后端' },
+    { key: 'stage', done: !!show?.stageWatchers, text: '打开本地舞台', hint: '在浏览器打开下面的舞台地址' },
+  ] : [
     { key: 'tts', done: secrets.tts === true, text: '豆包语音 Key', hint: '她要出声' },
     { key: 'obs', done: !!show?.stageWatchers, text: 'OBS 打开舞台', hint: '复制下面的舞台地址' },
     { key: 'room', done: conn === 'connected', text: '连上直播间', hint: '不连也能用模拟观众彩排' },
@@ -349,22 +356,32 @@ export function Console() {
               <h1>大肥鱼直播{show?.onAir ? <span className="dl-onair"><i />LIVE</span> : <span className="dl-offair">未开播</span>}</h1>
               <div className="dl-pills">
                 <span className="dl-pill"><Dot tone={brainTone} />{brainText}</span>
-                <span className="dl-pill"><Dot tone={connTone} />直播间{CONN_TEXT[conn] ?? conn}{show?.live.room?.title ? ` · ${show.live.room.title}` : ''}</span>
-                <span className="dl-pill"><Dot tone={show?.stageWatchers ? 'ok' : 'idle'} />{show?.stageWatchers ? `OBS 已连上 ${show.stageWatchers} 个` : 'OBS 还没打开舞台'}</span>
+                {localRehearsal
+                  ? <span className="dl-pill"><Dot tone="ok" />本地模拟互动</span>
+                  : <span className="dl-pill"><Dot tone={connTone} />直播间{CONN_TEXT[conn] ?? conn}{show?.live.room?.title ? ` · ${show.live.room.title}` : ''}</span>}
+                {localRehearsal && (
+                  <span className="dl-pill">
+                    <Dot tone={localVoice ? 'ok' : 'warn'} />
+                    {localVoice ? `已选择 ${localVoiceLabel}` : '未选择本地语音'}
+                  </span>
+                )}
+                <span className="dl-pill"><Dot tone={show?.stageWatchers ? 'ok' : 'idle'} />{localRehearsal
+                  ? (show?.stageWatchers ? `本地舞台已连接 ${show.stageWatchers} 个` : '本地舞台尚未打开')
+                  : (show?.stageWatchers ? `OBS 已连上 ${show.stageWatchers} 个` : 'OBS 还没打开舞台')}</span>
                 {bc && bc.phase !== 'idle' && <BroadcastPill bc={bc} />}
               </div>
             </div>
           </div>
           <div className="dl-top-actions">
             <button className="dl-icon-btn" title="设置" onClick={() => setDrawer(true)}><GearGlyph /><span>设置</span></button>
-            {!show?.onAir && (
+            {!show?.onAir && !localRehearsal && (
               <button className={`dl-switch${settings?.broadcast ? ' dl-on' : ''}`} disabled={busy} title="关着：只在本地彩排（OBS 不推流）；开着：开播时真的推流到 B 站" onClick={() => choose({ broadcast: !settings?.broadcast })}>
                 <i /><span>{settings?.broadcast ? '推流到 B 站' : '本地彩排'}</span>
               </button>
             )}
             {show?.onAir
               ? <button className="dl-btn dl-danger" disabled={busy} onClick={endLive}>下播（先让她道别）</button>
-              : <button className="dl-btn dl-primary" disabled={busy || bc?.phase === 'preparing' || bc?.phase === 'face'} onClick={goLive}><i className="dl-go-dot" />{settings?.broadcast ? '开播' : '开始彩排'}</button>}
+              : <button className="dl-btn dl-primary" disabled={!host || busy || bc?.phase === 'preparing' || bc?.phase === 'face'} onClick={goLive}><i className="dl-go-dot" />{settings?.broadcast ? '开播' : '开始彩排'}</button>}
           </div>
         </header>
         {error && <p className="dl-error dl-banner">{error}</p>}
@@ -373,9 +390,9 @@ export function Console() {
 
         {!show?.onAir && doneCount < steps.length && (
           <div className="dl-checklist">
-            <b>开播前准备 <em>{doneCount}/{steps.length}</em></b>
+            <b>{localRehearsal ? '彩排准备' : '开播前准备'} <em>{doneCount}/{steps.length}</em></b>
             {steps.map((s) => (
-              <button key={s.key} className={s.done ? 'dl-step dl-step-done' : 'dl-step'} onClick={() => { if (s.key === 'obs') copyUrl(); else setDrawer(true); }}>
+              <button key={s.key} className={s.done ? 'dl-step dl-step-done' : 'dl-step'} onClick={() => { if (s.key === 'obs' || s.key === 'stage') copyUrl(); else if (s.key !== 'localVoice') setDrawer(true); }}>
                 <i>{s.done ? '✓' : ''}</i><span>{s.text}</span><small>{s.hint}</small>
               </button>
             ))}
@@ -388,11 +405,13 @@ export function Console() {
               <div className="dl-preview" ref={previewRef}>
                 {previewUrl && <iframe src={previewUrl} title="舞台预览" />}
                 <button className="dl-fullscreen" title="全屏看舞台（Esc 退出）" onClick={() => void previewRef.current?.requestFullscreen?.()}><FullscreenGlyph /><span>全屏</span></button>
-                <span className={`dl-preview-tag${show?.onAir ? ' dl-preview-live' : ''}`}><i />{show?.onAir ? '直播中 · 和 OBS 里一样（静音）' : '预览：开播后的样子 · OBS 里现在是「马上开始」的等待画面'}</span>
+                <span className={`dl-preview-tag${show?.onAir ? ' dl-preview-live' : ''}`}><i />{localRehearsal
+                  ? (show?.onAir ? '彩排中 · 预览静音' : '彩排预览 · 打开本地舞台可听到声音')
+                  : (show?.onAir ? '直播中 · 和 OBS 里一样（静音）' : '预览：开播后的样子 · OBS 里现在是「马上开始」的等待画面')}</span>
               </div>
               <div className="dl-monitor-bar">
                 <div className="dl-obs">
-                  <span className="dl-label">OBS 浏览器源</span>
+                  <span className="dl-label">{localRehearsal ? '本地舞台地址' : 'OBS 浏览器源'}</span>
                   <code onClick={copyUrl} title="点一下复制">{host?.stageUrl ?? ''}</code>
                   <button className={copied ? 'dl-done' : ''} onClick={copyUrl}>{copied ? '已复制' : '复制'}</button>
                   <span className="dl-meta">1920 × 1080</span>
@@ -542,7 +561,7 @@ export function Console() {
             <SecretField label="B 站 Cookie（不想扫码时手填）" ref_={SECRET_REFS.cookie} configured={secrets.cookie} hint="浏览器里登录 B 站后复制的 Cookie；扫码登录会自动填这一项" />
             <h3>舞台</h3>
             <div className="dl-field">
-              <label>OBS 舞台地址（来源 → 浏览器 → 粘贴，宽 1920 高 1080）</label>
+              <label>{localRehearsal ? '本地舞台地址（在浏览器打开）' : 'OBS 舞台地址（来源 → 浏览器 → 粘贴，宽 1920 高 1080）'}</label>
               <div className="dl-row">
                 <input readOnly value={host?.stageUrl ?? ''} onFocus={(e) => e.currentTarget.select()} />
                 <button className={copied ? 'dl-done' : ''} onClick={copyUrl}>{copied ? '已复制' : '复制'}</button>

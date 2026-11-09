@@ -18,7 +18,7 @@ import { lookupProblem } from '../core/viewerLookup';
 import { splitByMood } from '../core/moodText';
 import { orderTags } from '../core/orders';
 import { ttsYuan, turnYuan } from '../core/cost';
-import { asr, cookie, currentMoods, dm, hooks, library, markAgentReady, settings, show, social, videos } from './runtime';
+import { asr, cookie, currentMoods, dm, hooks, library, localRehearsal, markAgentReady, settings, show, social, videos } from './runtime';
 import { BiliRoom } from '../body/biliRoom';
 import { screenshot } from '../body/obs';
 import { whoIs } from '../body/biliLogin';
@@ -192,7 +192,10 @@ async function push(ctx: AgentContext, sessionId: string, text: string, now = fa
   const agent = found?.followup ? found : found?.agent;
   if (!agent?.followup) return false;
   // 和 DSH 自己的 createUserMessage 一样：带 id、role，冻结（消息进会话后不能再改）
-  const message = Object.freeze({ id: randomUUID(), role: 'user', content: [{ type: 'text', text }], source: { kind: 'dsh-livestream' } });
+  const prompt = localRehearsal
+    ? `当前是本机彩排，没有连接 B 站或 OBS。只能与主人和模拟观众互动，并可用 show_stats 查看本场数据；视频、游戏、账号和社交工具均不可用。不要主动宣传或承诺这些不可用的功能。\n\n${text}`
+    : text;
+  const message = Object.freeze({ id: randomUUID(), role: 'user', content: [{ type: 'text', text: prompt }], source: { kind: 'dsh-livestream' } });
   if (now && agent.steer) await agent.steer(message);
   else await agent.followup(message);
   return true;
@@ -320,6 +323,37 @@ export function apply(ctx: AgentContext): void {
     const timer = setInterval(() => void watch(ctx).catch((err) => hooks.log('warn', `盯会话出错：${(err as Error).message}`)), 300);
     return () => clearInterval(timer);
   }, 'dsh-livestream session watch');
+
+  const text = (value: string) => [{ type: 'text' as const, text: value }];
+  const stringOut = { schema: { type: 'string' as const }, render: (_args: unknown, value: string) => text(value) };
+
+  // 这场的数据：播了多久、用了多少 token、大概花了多少钱
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'show_stats',
+    description: '看这场直播的数据：播了多久、你用了多少 token、大概花了多少钱（模型和配音）、念了多少字。',
+    parameters: {},
+    output: stringOut,
+    async execute() {
+      show.toolCall('show_stats', '', '在看这场的账');
+      const s = show.stats();
+      const tts = ttsYuan(s.spokenChars);
+      const minutes = Math.round(s.liveMs / 60_000);
+      const lines = [
+        `这场播了 ${minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`}。`,
+        `你用了 ${usage.tokens.toLocaleString('en-US')} token（缓存命中 ${usage.cacheRead.toLocaleString('en-US')}，没命中的输入 ${usage.input.toLocaleString('en-US')}，输出 ${usage.output.toLocaleString('en-US')}）。`,
+        usage.priced
+          ? `模型大概花了 ${money(usage.yuan)}（缓存命中很便宜；工作日白天高峰价，其余时间半价）。`
+          : '这个模型的价钱这里不知道，只能报 token。',
+        ['macos', 'yovoice'].includes(process.env.DSH_LIVESTREAM_TTS_BACKEND ?? '')
+          ? `念了大约 ${s.spokenChars} 个字，使用本地语音。`
+          : `念了大约 ${s.spokenChars} 个字，配音大概 ${money(tts)}（3 元一万字）。`,
+      ];
+      return lines.join('\n');
+    },
+  })), 'show_stats tool');
+
+  // Rehearsal can use the conversation and stage without exposing account or network tools.
+  if (localRehearsal) return;
 
   // 看观众的 B 站主页（公开信息）
   ctx.effect(() => ctx.tools.register(defineTool({
@@ -481,9 +515,6 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
     },
   })), 'read_dm tool');
 
-  const text = (value: string) => [{ type: 'text' as const, text: value }];
-  const stringOut = { schema: { type: 'string' as const }, render: (_args: unknown, value: string) => text(value) };
-
   // 看一眼直播画面：OBS 截一张观众看到的画面，作为图片给她（DSH 存进附件，下一步她就能看）
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'look',
@@ -538,29 +569,6 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       };
     },
   })), 'look tool');
-
-  // 这场的数据：播了多久、用了多少 token、大概花了多少钱
-  ctx.effect(() => ctx.tools.register(defineTool({
-    name: 'show_stats',
-    description: '看这场直播的数据：播了多久、你用了多少 token、大概花了多少钱（模型和配音）、念了多少字。',
-    parameters: {},
-    output: stringOut,
-    async execute() {
-      show.toolCall('show_stats', '', '在看这场的账');
-      const s = show.stats();
-      const tts = ttsYuan(s.spokenChars);
-      const minutes = Math.round(s.liveMs / 60_000);
-      const lines = [
-        `这场播了 ${minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`}。`,
-        `你用了 ${usage.tokens.toLocaleString('en-US')} token（缓存命中 ${usage.cacheRead.toLocaleString('en-US')}，没命中的输入 ${usage.input.toLocaleString('en-US')}，输出 ${usage.output.toLocaleString('en-US')}）。`,
-        usage.priced
-          ? `模型大概花了 ${money(usage.yuan)}（缓存命中很便宜；工作日白天高峰价，其余时间半价）。`
-          : '这个模型的价钱这里不知道，只能报 token。',
-        `念了大约 ${s.spokenChars} 个字，配音大概 ${money(tts)}（3 元一万字）。`,
-      ];
-      return lines.join('\n');
-    },
-  })), 'show_stats tool');
 
   // 关注、取关
   ctx.effect(() => ctx.tools.register(defineTool({

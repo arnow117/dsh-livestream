@@ -20,7 +20,7 @@ import type { GameSource, StageEvent } from '../stage/protocol';
 import { splitByMood } from '../core/moodText';
 import { speakable } from '../core/speakable';
 import { GUEST_VOICE } from '../body/voices';
-import { agentReady, asr, broadcast, cookie, DEFAULT_BOARD, hooks, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { agentReady, asr, broadcast, cookie, DEFAULT_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
@@ -46,7 +46,8 @@ function state() {
     ok: true,
     show: show.status(),
     broadcast: broadcast.status(),
-    settings: { ...settings, stageToken: undefined },
+    settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined },
+    runtime: { localRehearsal, ttsBackend: ['macos', 'yovoice'].includes(process.env.DSH_LIVESTREAM_TTS_BACKEND ?? '') ? process.env.DSH_LIVESTREAM_TTS_BACKEND : 'doubao' },
     stageUrl: server.url,
     characters: packs.list('characters'),
     templates: packs.list('templates'),
@@ -120,6 +121,7 @@ const RESUME_WITHIN_MS = 10 * 60_000;
  * 她的 agent 起来以后推消息、念话的那套也就接上了）、重连直播间、接上还在推的 OBS，告诉她断了多久。
  */
 async function resumeLive(ctx: HostContext, stopped: () => boolean): Promise<void> {
+  if (localRehearsal) return;
   const saved = takeLive();
   if (!saved) return;
   if (Date.now() - saved.at > RESUME_WITHIN_MS) {
@@ -241,6 +243,7 @@ export function apply(ctx: HostContext): void {
   }, 'settings');
 
   route('/api/dsh-livestream/connect', ['POST'], async () => {
+    if (localRehearsal) return fail('本地彩排模式不连接 B 站');
     if (!settings.roomId) return fail('先填直播间房间号');
     show.connect(settings.roomId, await cookie(), settings.ownRooms.includes(settings.roomId));
     return json(state());
@@ -254,7 +257,7 @@ export function apply(ctx: HostContext): void {
   route('/api/dsh-livestream/onair', ['POST'], async (request) => {
     const { sessionId, gameSessionId } = await body<{ sessionId?: string; gameSessionId?: string }>(request);
     if (!sessionId) return fail('缺她直播用的会话');
-    show.goLive(sessionId, gameSessionId || undefined);
+    show.goLive(sessionId, localRehearsal ? undefined : gameSessionId || undefined);
     // 先推上流、后开播的：这一场一开始就不是彩排
     if (broadcast.streaming) show.markBroadcast();
     dm.newShow();
@@ -278,17 +281,20 @@ export function apply(ctx: HostContext): void {
 
   // 推流到 B 站：开播拿推流码、OBS 推流（在后台跑，进度看 state().broadcast）
   route('/api/dsh-livestream/broadcast/start', ['POST'], () => {
+    if (localRehearsal) return fail('本地彩排模式不推流');
     broadcast.start();
     return json(state());
   }, 'broadcast start');
 
   route('/api/dsh-livestream/broadcast/stop', ['POST'], async () => {
+    if (localRehearsal) return fail('本地彩排模式不使用 OBS');
     await broadcast.stop();
     return json(state());
   }, 'broadcast stop');
 
   // 检查 OBS：没开就打开（在 DSH 所在的桌面会话里），设好专用配置和场景，回一帧节目画面；不推流
   route('/api/dsh-livestream/obs/check', ['POST'], async () => {
+    if (localRehearsal) return fail('本地彩排模式不使用 OBS');
     try {
       const obs = await connectObs(true);
       try {
@@ -302,8 +308,9 @@ export function apply(ctx: HostContext): void {
   }, 'obs check');
 
   // 开播账号：现在登的是谁；扫码登录（拿到的 Cookie 直接存进 DSH 凭据，不经过网页）
-  route('/api/dsh-livestream/account', ['GET'], async () => json({ ok: true, account: await whoIs(await cookie()) }), 'account');
+  route('/api/dsh-livestream/account', ['GET'], async () => json({ ok: true, account: localRehearsal ? null : await whoIs(await cookie()) }), 'account');
   route('/api/dsh-livestream/login/start', ['POST'], async () => {
+    if (localRehearsal) return fail('本地彩排模式不登录 B 站');
     try {
       return json({ ok: true, ...(await startQrLogin()) });
     } catch (err) {
@@ -311,6 +318,7 @@ export function apply(ctx: HostContext): void {
     }
   }, 'login start');
   route('/api/dsh-livestream/login/poll', ['POST'], async (request) => {
+    if (localRehearsal) return fail('本地彩排模式不登录 B 站');
     const { key } = await body<{ key?: string }>(request);
     if (!key) return fail('缺 key');
     try {

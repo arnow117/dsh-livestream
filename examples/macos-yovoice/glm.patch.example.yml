@@ -1,0 +1,20 @@
+- id: llm-pi-ai
+  config:
+    providers:
+      glm-coding-plan:
+        displayName: GLM Coding Plan
+        apiKeyEnv: GLM_CODING_PLAN_API_KEY
+        api: anthropic-messages
+        baseURL: https://open.bigmodel.cn/api/anthropic
+        models:
+          - id: glm-5.3-flash
+            name: GLM-5.3-Flash (1M)
+            contextWindow: 1000000
+            maxTokens: 32768
+            input:
+              - text
+              - image
+- id: agent-default-model
+  config:
+    provider: glm-coding-plan
+    model: glm-5.3-flash

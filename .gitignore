@@ -3,6 +3,7 @@ tools/node/
 .dsh-home-spike/
 .runtime/
 node_modules/
+/.pnpm-store/
 packages/*/lib/
 *.log
 .env
