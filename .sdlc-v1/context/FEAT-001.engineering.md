@@ -326,12 +326,28 @@ git diff --check
 
 **产物与资源：** 报告、JUnit、6 trace、截图和本轮 Vitest/E2E 日志归档于 `packages/dsh-livestream/.e2e/archive/validate-b05ceff-20261109-203115/`；原有报告事先复制至 `.e2e/archive/validate-prior-20261109-2032/`。测试 fixture 端口 60668/60669，结束后 `lsof` 无监听、未发现 fixture 进程或 `dsh-voice-e2e-*` 临时目录；共享 yovoice PID 25480 仍在 3081 监听，3080/7390 仍未监听。无真实部署、云端、GLM、真人听感结论；主 Agent 另负责最终真实 UI / Mac 有界交付检查。
 
+### 主 Agent 最终集成与使用证据
+
+- 业务实现 `b05ceff0e63014b772562c86f99248597cb03c99`；正式 validation 记录指向 `42929de3c440dcd9a596b47f9e6482a29ce9dc7e`。后者只增加 `.sdlc-v1/**`，主 Agent 已用 `git diff --quiet b05ceff0e63014b772562c86f99248597cb03c99 HEAD -- . ':(exclude).sdlc-v1/**'`（exit 0）核对业务一致；state 纳入 Git 后 record-validation 成功，不为纯元数据重复运行业务测试。
+- 本机通过原有 `npm start` 加载 Validate 构建的 lib；Harness profile 的 `dsh-livestream` 仍链接本仓库包。PID 99911，3080 控制台与 7390 舞台恢复，3081 yovoice PID 25480 保持运行；当前未开播。实际 bundle SHA-256、脱敏 API 结果保存在父工作区 `smoke/voice-settings/final-delivery.json`。
+- Chrome 实际打开「直播 → 设置 → 声音」：Mac 草稿试听返回 2.413515 秒、无解码错误的音频；点击原生播放器后观察到 paused=false / currentTime>0。切换到豆包、无密钥时显示“未配置该音色所需的凭据”；未调用云端。草稿试听前后 settings SHA 一致。
+- 主 Agent 确认保存值仍为自己的测试 B 后，通过控制台恢复原 yovoice 描述 A。保存前后 PID 一致，刷新后仍为 A、q8、yovoice，显示“已生效”；未改变 GLM、本地彩排、节奏或其他设置。最终截图 `../smoke/voice-settings/final-console.png`，试听本身无需开播或会话，最终检查无 GLM 调用。
+- 授权 HTTP 检查 exit 0：owner GET state=200，未认证 GET state=401，空文本 POST preview=400；正式部署的 owner 登录与新增路由可用。真实豆包声音未测，BF16 未安装/未测；该范围不外推为云端听感或正式推流通过。
+
 ## 评审记录（实际）
 
-- **状态**：NOT_RUN；尚未产生实现候选，不是独立代码评审结果。
-- **范围、发现与处理**：当前未产生代码 diff；后续按实际 diff 加载 architect/client-dev/server-dev/design/security/qa。
+- **决定**：独立只读 Review approved；主 Agent 接受，执行者 `voice_settings_review`，配置 reviewer 角色，实际模型元数据不可见。
+- **范围**：基线 `66034dc55e370fedb2268733b7162d1cb6403b5e` 至 validation commit 的累计业务改动，加载 architect/client-dev/server-dev/design/security/qa。业务工作树干净，validation commit 至 HEAD 仅 SDLC 元数据。
+- **结论**：无必须修复项或可操作的非阻塞缺陷；本次 diff 未发现有证据支持的重复实现或可避免工程债。
+- **依据**：核对同步原子保存、每请求配置/speaker 快照、已消费预合成隔离、唯一 yovoice 队列与未知终态阻断、私有试听/取消/清理/保存锁、根 credentials 实例身份清理，以及上游 exact route owner 与断连取消。读取正式 Validate 原始日志、coverage、6 条 Web 报告（modelTokens=0），最终本机 API/截图和 README 使用路径，未重复运行套件或 provider。
+- **局限**：真实豆包声音未测；当前提交未重跑真实 yovoice 合成，早期增量不当作当前提交独立证据。最终真实 Mac、保存/刷新、同 PID 证据已记录于上节；未声明正式推流或云端听感通过。
 
 ## 发布与观察记录（实际）
 
 - **产品观察计划引用**：`REQ-001.product.md` 的“发布后观察计划”。
-- **技术发布准备、实际结果、反馈证据与缺口**：NOT_RUN；既有共享服务保持原状。后续只向已授权本地维护环境交付，按当前集成 commit 和实际服务版本记录证据。
+- **目标与版本**：本机已授权维护环境和可复用源码制品；正式 validation commit `42929de3c440dcd9a596b47f9e6482a29ce9dc7e`，业务源码 `b05ceff0e63014b772562c86f99248597cb03c99`，二者业务文件无差异；Feature reviewed，主 Agent 已将维护分支推至 fork，最终 metadata 由主 Agent 处理。无公网发布、npm 上传或 main 合并。
+- **实际加载与观测**：本机 Harness PID 99911 使用上述业务构建，3080/7390 监听，未开播；yovoice PID 25480 保持 3081。实际 UI/owner 200、未认证 401、非法试听 400、真实 Mac 草稿解码和原生播放、保存刷新及同 PID 结果见上方“主 Agent 最终集成与使用证据”和 `../smoke/voice-settings/final-delivery.json`。交付后未配置持续监控；下一技术检查为首次实际彩排时复核控制台状态、错误与语音效果，产品观察计划仍引用上项。
+- **打包与内容核对**（2026-11-09 20:42–20:45 +08，Node 26.13.0、npm 11.20.0）：包目录执行 `npm_config_cache=/private/tmp/dsh-ship-npm-cache-20261109 npm pack --ignore-scripts --json --pack-destination /Users/mac/hansen_agent_team/workspace/20261109-deepseek-harness/reuse/20261109-voice-settings`，exit 0；归档 SHA-256 `d9fbbc15d35fe5a6d2563a93208ff1315eb248ffa49e6dcd7f2f16a631540946`，51 文件，npm 清单在制品目录 `pack.json`。新解包全部 5 个 JS 哈希与当前 lib 及真实加载证据中的哈希逐项一致；全部非 lib 文件与 Git 跟踪源码逐项一致；检查路径、归档链接、敏感文件名/常见密钥内容及 sourcemap 无绝对路径，未发现私有凭据、模型权重、测试音频、会话或日志。包未包含仓库根 README/LICENSE，随包提供根 `LICENSE` 原样副本及制品 `README.md` 的使用指南链接；应保留这些配套文件。
+- **新解包 health/smoke/业务探测**：制品目录 `node artifact-smoke.mjs` exit 0；使用全新临时 DSH_HOME、无共享监听端口、只注入假 credentials/provider；真实包 root 注册 state/settings/preview，GET state 正常且 off-air、空试听 400、草稿试听返回模拟音频且文件哈希不变、保存后下一次请求使用新速率、stage 事件为零；新进程重新读取保存值。`smoke.log` 与可复查脚本同目录。入口补查将本机现有 `@deepseek-ai/dsh-tools@0.2.2-rc.1` 临时链接到解包目录后用 `env -i ... node --input-type=module` 导入 host 和 agent，exit 0，链接随后删除；该 peer 为部署前置，控制台 React 由宿主提供。初次入口补查中两入口已成功导入，但收尾脚本误用 zsh 只读变量 `status` 导致 shell exit 1、留下专属临时目录和链接；识别并删除后以新临时目录和 EXIT trap 修正重跑 exit 0。不是产品缺陷。
+- **资源与回滚**：探测不启动服务/浏览器或真实 provider，专属临时目录、链接和 npm 缓存已清理；最终仅检查共享 PID/端口，未停止或改动服务。last-good `66034dc55e370fedb2268733b7162d1cb6403b5e` 对应保留的 `../reuse/20261109-local-tts/dsh-livestream-0.0.1.tgz`，SHA-256 `3d40a997c1d8139276ad68f21eb768beb86cdda546dab84b4a66406716dd7b84`；无失败需要回滚，若未来需要由负责人协调加载旧包并保留 settings/credentials。
+- **范围与缺口**：制品 smoke 为假 provider 及合成身份，不能替代实际部署、生产鉴权、云端听感或真人试听；真实豆包和本候选的真实 yovoice 合成未运行，BF16 未测。当前实际本机证据独立记录于主 Agent 最终集成节。

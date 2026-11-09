@@ -6,17 +6,17 @@
       "engineering_context_ref": ".sdlc-v1/context/FEAT-001.engineering.md",
       "id": "FEAT-001",
       "release": {
-        "at": null,
-        "commit": null,
-        "status": "pending"
+        "at": "2026-11-09T12:47:29Z",
+        "commit": "42929de3c440dcd9a596b47f9e6482a29ce9dc7e",
+        "status": "released"
       },
       "requirement_id": "REQ-001",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-09T12:41:57Z",
+        "by": "voice_settings_review",
+        "decision": "approved"
       },
-      "status": "in_progress",
+      "status": "released",
       "tasks": {
         "TASK-001": {
           "depends_on": [],
@@ -26,12 +26,12 @@
           "updated_at": "2026-11-09T12:27:39Z"
         }
       },
-      "updated_at": "2026-11-09T12:27:39Z",
+      "updated_at": "2026-11-09T12:47:29Z",
       "validation": {
-        "at": null,
-        "command": null,
-        "commit": null,
-        "result": "pending"
+        "at": "2026-11-09T12:35:33Z",
+        "command": "npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage",
+        "commit": "42929de3c440dcd9a596b47f9e6482a29ce9dc7e",
+        "result": "pass"
       }
     }
   },
@@ -45,9 +45,9 @@
       "id": "REQ-001",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-001.product.md",
-      "status": "in_delivery",
+      "status": "released",
       "title": "直播语音配置热更新与私有试听",
-      "updated_at": "2026-11-09T12:27:39Z"
+      "updated_at": "2026-11-09T12:47:29Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
