@@ -18,7 +18,8 @@ import { lookupProblem } from '../core/viewerLookup';
 import { splitByMood } from '../core/moodText';
 import { orderTags } from '../core/orders';
 import { ttsYuan, turnYuan } from '../core/cost';
-import { asr, cookie, currentMoods, dm, hooks, library, localRehearsal, markAgentReady, settings, show, social, videos } from './runtime';
+import { assertBiliCurrent, beginBiliOperation, inBiliOperation } from '../shared/biliOperations';
+import { asr, cookie, currentMoods, dm, hooks, library, localRehearsal, markAgentReady, onPlatformChange, settings, show, social, videos } from './runtime';
 import { BiliRoom } from '../body/biliRoom';
 import { screenshot } from '../body/obs';
 import { whoIs } from '../body/biliLogin';
@@ -192,7 +193,9 @@ async function push(ctx: AgentContext, sessionId: string, text: string, now = fa
   const agent = found?.followup ? found : found?.agent;
   if (!agent?.followup) return false;
   // 和 DSH 自己的 createUserMessage 一样：带 id、role，冻结（消息进会话后不能再改）
-  const prompt = localRehearsal
+  const prompt = settings.livePlatform === 'douyin'
+    ? `当前是抖音只读接入 / 本地舞台，只提供 show_stats；不发送抖音消息，不使用 B 站、账号、社交、视频、游戏或 OBS 工具。\n\n${text}`
+    : localRehearsal
     ? `当前是本机彩排，没有连接 B 站或 OBS。只能与主人和模拟观众互动，并可用 show_stats 查看本场数据；视频、游戏、账号和社交工具均不可用。不要主动宣传或承诺这些不可用的功能。\n\n${text}`
     : text;
   const message = Object.freeze({ id: randomUUID(), role: 'user', content: [{ type: 'text', text: prompt }], source: { kind: 'dsh-livestream' } });
@@ -221,6 +224,7 @@ function seconds(value: unknown): number {
 
 /** 她说的一个人：私信过她的人、直播间里的观众（名字或 UID），或者任何 UID；认不出时返回告诉她怎么改的话 */
 function person(who: string): { uid: string; name: string } | string {
+  if (!show.canLookupBiliViewer) return '请先连接 B 站直播间，再查询观众。';
   const w = who.trim();
   const talker = social.findTalker(w);
   if (talker) return talker;
@@ -342,11 +346,43 @@ export function apply(ctx: AgentContext): void {
     },
   })), 'show_stats tool');
 
+  // Existing tool objects can outlive a platform change, so check at execution time.
+  function guardTool<T extends { execute: (...args: any[]) => Promise<any> }>(tool: T): T {
+    const execute = tool.execute.bind(tool);
+    return {
+      ...tool,
+      async execute(...args: any[]) {
+        if (localRehearsal || settings.livePlatform !== 'bilibili') return '当前抖音只读接入 / 本地舞台不提供此工具。';
+        const lease = beginBiliOperation();
+        try {
+          const result = await inBiliOperation(lease, () => execute(...args));
+          lease.assertCurrent();
+          return result;
+        } finally {
+          lease.release();
+        }
+      },
+    };
+  }
+
   // Rehearsal can use the conversation and stage without exposing account or network tools.
   if (localRehearsal) return;
 
+  // Register Bilibili-only tools only while that platform is selected.
+  const platformTool = (register: () => () => void, label: string) => ctx.effect(() => {
+    let dispose: (() => void) | undefined;
+    const update = () => {
+      dispose?.();
+      dispose = settings.livePlatform === 'bilibili' ? register() : undefined;
+    };
+    const unsubscribe = onPlatformChange(update);
+    update();
+    return () => { unsubscribe(); dispose?.(); };
+  }, label);
+
+
   // 看观众的 B 站主页（公开信息）
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'view_profile',
     description: '看一个 B 站个人主页：等级、签名、粉丝和关注数、最近投稿、置顶视频、代表作、空间公告、有没有直播间、头像图片的网址。'
       + '可以看观众的，也可以看你自己开播账号的。只看得到主页上公开的东西。要几秒钟。',
@@ -381,10 +417,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       const note = viewer.how === 'partial' ? `（按「${who}」找到的是 ${profile.name}；不是他的话，用 UID 再查）\n` : '';
       return note + profileText(profile, marks || undefined);
     },
-  })), 'view_profile tool');
+  }))), 'view_profile tool');
 
   // 私信观众（开播账号发）
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'send_dm',
     description: '用开播账号给一个人发一条 B 站私信（文字）：直播间里的观众、私信过你的人，或者任何 B 站用户（填 UID）。'
       + 'B 站规定：对方没关注开播账号、也没回过私信时，只能发一条，要等他关注或回复才能再发；结果里会告诉你他关注了没有。',
@@ -403,10 +439,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (result.ok) show.noteDm(who.name, String(args.text ?? ''));
       return result.text;
     },
-  })), 'send_dm tool');
+  }))), 'send_dm tool');
 
   // 点赞：视频或者一条评论
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'like',
     description: '用开播账号点赞：给一个 B 站视频（video），或者给一条评论（comment，read_comments / check_inbox 里方括号的编号）。',
     parameters: {
@@ -425,10 +461,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('like', `「${found.info.title.slice(0, 16)}」`, '在点赞');
       return social.likeVideo(found.info.aid, found.info.title);
     },
-  })), 'like tool');
+  }))), 'like tool');
 
   // 看评论区
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'read_comments',
     description: '看一个 B 站视频的评论区：每条带编号（回复、点赞用）、名字、点赞数、楼里的几条回复。可以按热门或最新，可以翻页。',
     parameters: {
@@ -444,10 +480,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('read_comments', `「${info.title.slice(0, 16)}」`, `在看「${info.title.slice(0, 16)}」的评论区`);
       return social.readComments({ type: 1, oid: String(info.aid), title: info.title }, args.sort === 'new' ? 'new' : 'hot', Math.max(1, Math.floor(Number(args.page) || 1)));
     },
-  })), 'read_comments tool');
+  }))), 'read_comments tool');
 
   // 发评论
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'post_comment',
     description: '用开播账号发一条 B 站评论：发在视频下面（video），或者回复某一条评论（reply_to，read_comments / check_inbox 里方括号的编号）。'
       + `评论公开挂在那里，大家都看得到是这个账号发的。两条之间隔 ${COMMENT_GAP_MS / 1000} 秒（发太快 B 站会风控）。`,
@@ -470,10 +506,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (result.ok) show.noteComment(String(args.text ?? ''), thread?.title ?? replyTo ?? '');
       return result.text;
     },
-  })), 'post_comment tool');
+  }))), 'post_comment tool');
 
   // 收件箱
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'check_inbox',
     description: '看开播账号的收件箱：最近的私信会话（谁、未读几条、最后一句），和别人在评论区回复你、@ 你的。',
     parameters: {},
@@ -482,9 +518,9 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('check_inbox', '', '在看私信和评论回复');
       return social.inbox();
     },
-  })), 'check_inbox tool');
+  }))), 'check_inbox tool');
 
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'read_dm',
     description: '看你和一个人最近的私信往来（他说了什么、你回了什么）。他发来的图片会带着图片网址，游戏里的 picture 能用。',
     parameters: {
@@ -493,6 +529,7 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text' as const, text: value }] },
     async execute(args) {
       const who = String(args.who ?? '').trim();
+      if (!show.canLookupBiliViewer) return '请先连接 B 站直播间，再查询观众。';
       const talker = social.findTalker(who) ?? (/^\d{1,20}$/.test(who) ? { uid: who, name: `UID ${who}` } : null);
       if (!talker) {
         const viewer = show.lookupViewer(who);
@@ -503,10 +540,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('read_dm', talker.name, `在看和${talker.name}的私信`);
       return social.conversation(talker.uid, talker.name);
     },
-  })), 'read_dm tool');
+  }))), 'read_dm tool');
 
   // 看一眼直播画面：OBS 截一张观众看到的画面，作为图片给她（DSH 存进附件，下一步她就能看）
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'look',
     description: '看一眼直播画面：截一张观众现在看到的直播画面给你。',
     parameters: {},
@@ -551,6 +588,7 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
         hooks.log('warn', `look 截图失败：${(err as Error).message}`);
         return { text: '画面没截到（直播电脑上的 OBS 没连上），过一会儿再看。' };
       }
+      assertBiliCurrent();
       const ref = await attachments.saveImage({ data, mediaType: 'image/jpeg', name: 'look.jpg' });
       const at = new Date(Date.now() + 8 * 3600_000).toISOString().slice(11, 19);
       return {
@@ -558,10 +596,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
         image: { attachmentId: String(ref.attachmentId), mediaType: ref.mediaType, bytes: ref.bytes, width: ref.width, height: ref.height, ...(ref.name ? { name: ref.name } : {}) },
       };
     },
-  })), 'look tool');
+  }))), 'look tool');
 
   // 关注、取关
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'follow',
     description: '用开播账号关注一个人（比如回关新粉丝），或者取关。',
     parameters: {
@@ -576,9 +614,9 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('follow', `${follow ? '' : '取关 '}${who.name}`, follow ? `在关注${who.name}` : `在取关${who.name}`);
       return social.follow(who.uid, who.name, follow);
     },
-  })), 'follow tool');
+  }))), 'follow tool');
 
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'my_fans',
     description: '看开播账号最新的粉丝：谁、什么时候关注的、你回关了没有。',
     parameters: { page: { type: 'number', description: '第几页，默认 1' } },
@@ -587,10 +625,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('my_fans', '', '在看新粉丝');
       return social.fans(Math.max(1, Math.floor(Number(args.page) || 1)));
     },
-  })), 'my_fans tool');
+  }))), 'my_fans tool');
 
   // 删评论（自己发的，或者自己视频下面别人的）
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'delete_comment',
     description: '删掉一条评论：你自己发的（post_comment 给的编号），或者开播账号自己视频下面别人的（read_comments / check_inbox 里的编号）。',
     parameters: { comment: { type: 'string', required: true, description: '评论编号' } },
@@ -600,10 +638,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('delete_comment', rpid, '在删评论');
       return social.deleteComment(rpid);
     },
-  })), 'delete_comment tool');
+  }))), 'delete_comment tool');
 
   // 发动态
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'post_dynamic',
     description: '用开播账号发一条 B 站文字动态（标注为 AI 生成），关注这个账号的人首页都看得到。',
     parameters: { text: { type: 'string', required: true, description: '动态内容' } },
@@ -614,10 +652,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (result.ok) show.noteDynamic(String(args.text ?? ''));
       return result.text;
     },
-  })), 'post_dynamic tool');
+  }))), 'post_dynamic tool');
 
   // 收藏、投币
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'favorite',
     description: `把一个 B 站视频收进你自己的收藏夹「${FAVORITE_FOLDER}」（开播账号上，主人原有的收藏夹不动）。`,
     parameters: { video: { type: 'string', required: true, description: 'BV 号、av 号或视频链接' } },
@@ -628,9 +666,9 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('favorite', `「${found.info.title.slice(0, 16)}」`, '在收藏');
       return social.favorite(found.info.aid, found.info.title);
     },
-  })), 'favorite tool');
+  }))), 'favorite tool');
 
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'coin',
     description: '用开播账号给一个 B 站视频投币（1 个或 2 个，一个视频最多投 2 个），可以顺便点赞。硬币是账号自己的。',
     parameters: {
@@ -646,10 +684,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('coin', `「${found.info.title.slice(0, 16)}」×${count}`, '在投币');
       return social.coin(found.info.aid, found.info.title, count, args.like !== false);
     },
-  })), 'coin tool');
+  }))), 'coin tool');
 
   // 直播间：禁言、解禁、改标题
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'mute',
     description: '在你的直播间禁言一个人（这段时间他发不了弹幕）。',
     parameters: {
@@ -666,9 +704,9 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('mute', `${who.name} ${hours}h`, `在禁言${who.name}`);
       return social.mute(roomId, who.uid, who.name, hours);
     },
-  })), 'mute tool');
+  }))), 'mute tool');
 
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'unmute',
     description: '解开直播间里一个人的禁言（名字或 UID）；名字对不上时会列出现在被禁言的人。',
     parameters: { who: { type: 'string', required: true, description: '名字或 UID' } },
@@ -679,9 +717,9 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       show.toolCall('unmute', String(args.who ?? ''), '在解禁言');
       return social.unmute(roomId, String(args.who ?? ''));
     },
-  })), 'unmute tool');
+  }))), 'unmute tool');
 
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'set_live_title',
     description: '改你直播间的标题（40 字以内），推荐页和搜索里显示的就是它。',
     parameters: { title: { type: 'string', required: true, description: '新标题' } },
@@ -699,10 +737,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
         return `改标题没成功：${(err as Error).message}`;
       }
     },
-  })), 'set_live_title tool');
+  }))), 'set_live_title tool');
 
   // 搜 B 站视频
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'search_videos',
     description: '搜 B 站视频，返回一页候选（BV 号、标题、UP 主、时长、播放量、发布日期、标签、简介、封面图网址）。封面图网址游戏里的 picture 也能用：观众要画某个角色、某样东西时，可以搜它的视频、挑一张封面就是它的。'
       + '可以只搜某位 UP 主的投稿（up），可以按最新或播放最多排（order），可以翻页（page）。',
@@ -725,10 +763,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (!result) return 'B 站搜索没返回（可能是网络问题或者被限流了），过一会儿再搜。';
       return searchText(query, result, options);
     },
-  })), 'search_videos tool');
+  }))), 'search_videos tool');
 
   // 看一个视频：详情和字幕
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'watch_video',
     description: '看一个 B 站视频：详情（标题、UP 主、时长、播放点赞投币收藏、标签、简介、分 P）和带时间的字幕。'
       + '字幕一次给一段，长的用 from 接着往后看；视频没有字幕时会听一遍、把说的话写下来（要几秒到十几秒）。',
@@ -753,10 +791,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (from > 0) return `「${info.title}」${part.page > 1 ? `P${part.page} ` : ''}从 ${clock(from)} 起：\n${subtitle}${noLogin}`;
       return `${infoText(info, part)}\n\n${subtitle}${noLogin}`;
     },
-  })), 'watch_video tool');
+  }))), 'watch_video tool');
 
   // 在舞台上放视频
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'play_video',
     description: '在直播间的舞台上放一个 B 站视频给大家看：舞台换成看视频的布局，放完换回来，放完了会告诉你。'
       + '默认从头放到结尾，可以指定从哪里开始、放多久。'
@@ -804,9 +842,9 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (!show.stage.watchers) lines.push('（现在没有出声的舞台页开着：观众看不到画面，按时长算放完）');
       return lines.join('\n');
     },
-  })), 'play_video tool');
+  }))), 'play_video tool');
 
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'stop_video',
     description: '停下舞台上正在放的视频，舞台换回聊天的布局。',
     parameters: {},
@@ -817,10 +855,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (!stopped) return '现在没在放视频。';
       return `停了「${stopped.video.title}」（放了 ${clock(stopped.playedSec)}），舞台换回了聊天的布局。`;
     },
-  })), 'stop_video tool');
+  }))), 'stop_video tool');
 
   // 游戏线：另一个会话里的她专门玩游戏，这条线把话交给她
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'game_side',
     description: '观众或主人想让你在游戏里做什么、或者你要答应游戏里的事：写下怎么做，交给游戏里的你。他们的原话会一起交过去，由游戏里的你点名回他、再去做；从调这个工具的那条消息起，这一轮你写的话都不会念出来（调之前写的会念）。',
     parameters: {
@@ -835,10 +873,10 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       if (!show.toGameLine(message, typeof args.who === 'string' ? args.who : '')) return '这场直播没开游戏（开播时没准备游戏），玩不了。';
       return '交过去了：游戏里的你会回他、去做。这一轮接下来写的话不会念出来。';
     },
-  })), 'game_side tool');
+  }))), 'game_side tool');
 
   // 查游戏里现在的完整情况（游戏线最近一个时刻的全文）
-  ctx.effect(() => ctx.tools.register(defineTool({
+  platformTool(() => ctx.tools.register(guardTool(defineTool({
     name: 'game_state',
     description: '查你在游戏里现在的完整情况：位置、血量、饥饿、完整背包、身体在做什么、刚发生了什么。观众问游戏里的细节时先查一下再回。',
     parameters: {},
@@ -848,5 +886,5 @@ ${profileText(profile)}` : '没打开自己的主页（B 站没返回，可能�
       const state = show.gameState();
       return state ? `（${state.ageSec} 秒前，游戏里最近一个时刻）\n${state.text}` : '游戏现在没开。';
     },
-  })), 'game_state tool');
+  }))), 'game_state tool');
 }

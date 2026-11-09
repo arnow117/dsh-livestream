@@ -435,7 +435,7 @@ export class LiveAttention {
 
   private giftsCandidate(heat: RoomHeat, now: number): { priority: number; build: () => TopicBody } | null {
     // 免费礼物只在冷清的时候谢
-    const ready = [...this.smallGifts.values()].filter((g) => this.settled(g, now) && (g.valueYuan > 0 || heat === 'quiet'));
+    const ready = [...this.smallGifts.values()].filter((g) => this.settled(g, now) && (g.valueKnown === false || g.valueYuan > 0 || heat === 'quiet'));
     if (!ready.length) return null;
     if (now - (this.lastSaid.gifts ?? -Infinity) < (this.owner.thanksGapMs ?? TUNING.giftsIntervalMs[heat])) return null;
     const oldest = Math.min(...ready.map((g) => g.ts));

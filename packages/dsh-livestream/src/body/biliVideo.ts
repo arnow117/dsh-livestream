@@ -10,6 +10,7 @@
  * B 站的分区认不出时政（外交部的剪辑在「娱乐粉丝创作」里），这里不判断，标签照给。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { inflateRawSync } from 'node:zlib';
 import { createBiliSession, signWbi, type BiliSession } from '../core/platforms/bilibili/biliApi';
 import { biliImageUrl } from './biliProfile';
@@ -153,6 +154,7 @@ export class BiliVideos {
     const run = async () => {
       try {
         const headers = { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Cookie: (await this.auth()).cookie };
+        assertBiliCurrent();
         const res = await fetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
         if (!res.ok) return null;
         return (await res.json()) as { code: number; message?: string; data?: T };
@@ -180,6 +182,7 @@ export class BiliVideos {
     const short = /(?:https?:\/\/)?b23\.tv\/[\w-]+/.exec(text)?.[0];
     if (!short) return null;
     try {
+      assertBiliCurrent();
       const res = await fetch(short.startsWith('http') ? short : `https://${short}`, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(TIMEOUT_MS) });
       return parseVideoRef(res.headers.get('location') ?? '');
     } catch {
@@ -277,6 +280,7 @@ export class BiliVideos {
     if (!pick?.subtitle_url) return null;
     try {
       const url = pick.subtitle_url.startsWith('//') ? `https:${pick.subtitle_url}` : pick.subtitle_url.replace(/^http:/, 'https:');
+      assertBiliCurrent();
       const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(TIMEOUT_MS) });
       const json = (await res.json()) as { body?: Array<{ from?: number; to?: number; content?: string }> };
       const lines = (json.body ?? []).map((l) => ({ from: Number(l.from) || 0, to: Number(l.to) || 0, text: clean(l.content, 200) })).filter((l) => l.text);
@@ -302,6 +306,7 @@ export class BiliVideos {
   /** 这个视频地址真的能取到（取头两个字节） */
   private async reachable(url: string): Promise<boolean> {
     try {
+      assertBiliCurrent();
       const res = await fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Range: 'bytes=0-1' }, signal: AbortSignal.timeout(8_000) });
       void res.body?.cancel();
       return res.ok;
@@ -313,8 +318,10 @@ export class BiliVideos {
   /** 视频的弹幕（以前看过的人发的；B 站给的是抽样，热门视频几百到几千条），按视频里的时间排好 */
   async danmaku(cid: number): Promise<VideoDanmaku[]> {
     try {
+      const session = await this.auth();
+      assertBiliCurrent();
       const res = await fetch(`https://api.bilibili.com/x/v1/dm/list.so?oid=${cid}`, {
-        headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Cookie: (await this.auth()).cookie },
+        headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Cookie: session.cookie },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (!res.ok) return [];

@@ -96,6 +96,12 @@ DOUBAO_TTS_ACCESS_KEY=...
 - **大肥鱼的动画片段**（`packages/dsh-livestream/assets/characters/dafeiyu/`）：CC BY-NC-SA 4.0，是社区作品的衍生作品，署名和来源见那个目录里的 [`LICENSE.md`](packages/dsh-livestream/assets/characters/dafeiyu/LICENSE.md)。只能非商业使用；商业用途请自备角色素材，或向原作者申请许可。
 - `docs/` 里的截图来自演示视频的录制，其中 B 站视频的画面做了模糊处理。
 
+<a id="LIVE-DOUYIN-CONNECT"></a>
+<a id="LIVE-DOUYIN-DISCONNECT"></a>
+## 抖音只读接入与断开
+
+在已有「直播」控制台保存抖音房间并显式连接，用现有声音在本地舞台互动。首次连接可能启动独立采集器；断开订阅后采集仍运行，需到采集控制台停止。安装、部署参数、恢复步骤与验证边界见 [抖音接入说明](examples/douyin/README.md)。
+
 ## macOS 本地彩排
 
 在启动 Harness 的进程环境中设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL=1` 和 `DSH_LIVESTREAM_TTS_BACKEND=macos`。本地语音调用系统 `say`、PATH 中的 `ffmpeg` 和 `ffprobe`，不需要豆包密钥；默认使用 `Tingting`，可通过 `DSH_LIVESTREAM_MACOS_VOICE` 指定已安装的系统音色。语音转换需要能够访问 macOS 的语音服务；某些沙箱会让 `say` 输出空音频。字幕时间按实际音频时长均分估算，并非逐字强制对齐。文字通过临时文件传递，不经过 shell；取消或超时后清理文件。

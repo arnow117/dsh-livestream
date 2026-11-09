@@ -43,6 +43,8 @@ globalThis.fetch = async (input, init = {}) => {
 };
 const host = await import('../../src/dsh/index');
 const runtime = await import('../../src/dsh/runtime');
+Object.defineProperty(runtime.server, 'url', { get: () => `http://127.0.0.1:${port}/__stage?token=fixture` });
+let stageRequests = 0;
 let stageEvents = 0;
 let failNextProvider = false;
 let failNextState = false;
@@ -62,6 +64,12 @@ const http = createServer(async (req, res) => {
   if (url.pathname === '/') {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script src="/client.js"></script></body></html>');
+    return;
+  }
+  if (url.pathname === '/__stage') {
+    stageRequests++;
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><title>本地测试舞台</title>');
     return;
   }
   if (url.pathname === '/client.js') {
@@ -88,7 +96,7 @@ const http = createServer(async (req, res) => {
   }
   if (url.pathname === '/__fixture') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ calls: providerCalls, settings: runtime.settings.tts, stageEvents, onAir: runtime.show.isOnAir }));
+    res.end(JSON.stringify({ calls: providerCalls, settings: runtime.settings.tts, stageEvents, stageRequests, stageUrl: runtime.server.url, onAir: runtime.show.isOnAir }));
     return;
   }
   if (url.pathname === '/api/dsh-livestream/state' && failNextState) { failNextState = false; res.writeHead(503); res.end(); return; }

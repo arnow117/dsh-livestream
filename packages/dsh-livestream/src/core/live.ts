@@ -3,7 +3,7 @@
  * 下游（注意力、记忆、舞台、控制台）只认这一套，不关心来自哪个平台。
  */
 
-export type LivePlatform = 'bilibili';
+export type LivePlatform = 'bilibili' | 'douyin';
 
 export interface LiveUser {
   /** 平台内的用户 id；平台隐藏身份时为空串 */
@@ -46,6 +46,7 @@ export interface LiveGiftEvent extends LiveEventBase {
   count: number;
   /** 折合人民币（元）；免费礼物为 0 */
   valueYuan: number;
+  valueKnown?: boolean;
 }
 
 export interface LiveSuperChatEvent extends LiveEventBase {
@@ -94,7 +95,7 @@ export type LiveConnectionState = 'idle' | 'connecting' | 'connected' | 'reconne
 export interface LiveRoomInfo {
   platform: LivePlatform;
   /** 用户填写的房间号（可能是短号） */
-  roomId: number;
+  roomId: number | string;
   /** 平台的真实房间号 */
   realRoomId?: number;
   title?: string;
@@ -121,9 +122,6 @@ export interface LiveUpdate {
 }
 
 /** 连一个直播间要的参数 */
-export interface LiveConnection {
-  platform: LivePlatform;
-  roomId: number;
-  /** 平台登录 Cookie；不填则匿名连接（B 站匿名时部分观众名字会打码） */
-  cookie: string;
-}
+export type LiveConnection =
+  | { platform: 'bilibili'; roomId: number; cookie: string }
+  | { platform: 'douyin'; roomId: string; bridgeUrl: string };

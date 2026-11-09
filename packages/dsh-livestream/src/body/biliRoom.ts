@@ -13,6 +13,7 @@
  * 60043 是另一种风控验证（要伪造浏览器行为指纹才能走通），这里不做：请主播用官方直播姬或 B 站 App 开播一次过掉它。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { createHash } from 'node:crypto';
 
 /** 直播姬（PC）的 appkey / appsec 和版本号（StartLive 2026-10 用的值） */
@@ -101,6 +102,7 @@ export class BiliRoom {
   }
 
   private async call<T>(url: string, form?: Record<string, string | number>): Promise<{ code: number; message: string; data: T }> {
+    assertBiliCurrent();
     const res = await fetch(url, {
       method: form ? 'POST' : 'GET',
       headers: {
@@ -172,6 +174,7 @@ export class BiliRoom {
     form.append('bucket', 'live');
     form.append('dir', 'new_room_cover');
     form.append('file', new Blob([new Uint8Array(data)], { type: mime }), 'blob');
+    assertBiliCurrent();
     const res = await fetch(`https://api.bilibili.com/x/upload/web/image?csrf=${this.csrf}`, {
       method: 'POST',
       headers: { 'User-Agent': UA, Referer: 'https://link.bilibili.com/', Origin: 'https://link.bilibili.com', Cookie: this.cookie },

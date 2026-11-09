@@ -8,6 +8,7 @@
  * 21020 / 21046 发太快；-101 没登录。一条最多 2000 字节。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { randomUUID } from 'node:crypto';
 import { createBiliSession, signWbi, type BiliSession } from '../core/platforms/bilibili/biliApi';
 
@@ -58,6 +59,7 @@ export class BiliAccount implements DmAccount {
   }
 
   private async getJson<T>(url: string, cookie: string): Promise<{ code: number; message?: string; data?: T }> {
+    assertBiliCurrent();
     const res = await fetch(url, {
       headers: { 'User-Agent': UA, Referer: 'https://message.bilibili.com/', Origin: 'https://message.bilibili.com', Cookie: cookie },
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -109,6 +111,7 @@ export class BiliAccount implements DmAccount {
       build: 0,
       mobi_app: 'web',
     };
+    assertBiliCurrent();
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'User-Agent': UA, Referer: 'https://message.bilibili.com/', Origin: 'https://message.bilibili.com', Cookie: s.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },

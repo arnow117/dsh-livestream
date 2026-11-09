@@ -8,6 +8,7 @@
  */
 
 import crypto from 'crypto';
+import { assertBiliCurrent } from '../../../shared/biliOperations';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const TIMEOUT_MS = 10_000;
@@ -44,6 +45,7 @@ export interface DanmuServer {
 }
 
 async function getJson<T>(url: string, cookie?: string): Promise<T> {
+  assertBiliCurrent();
   const res = await fetch(url, {
     headers: {
       'User-Agent': UA,

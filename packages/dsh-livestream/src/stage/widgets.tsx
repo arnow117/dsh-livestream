@@ -577,7 +577,7 @@ export function Orders({ options }: { options?: Record<string, unknown> }) {
 function eventText(e: StageLiveEvent): string {
   switch (e.kind) {
     case 'chat': case 'superchat': return e.text;
-    case 'gift': return `送出 ${e.gift} ×${e.count}`;
+    case 'gift': return `送出 ${e.gift} ×${e.count}${e.valueKnown === false ? '（金额未知）' : ''}`;
     case 'membership': return `开通了${e.level}`;
     case 'follow': return '关注了直播间';
     case 'enter': return '进入直播间';
@@ -677,7 +677,7 @@ function AlertCard({ alert }: { alert: Alert }) {
         <div className={`ls-alert ls-gift ls-gift-${size}${size !== 'small' ? ' ls-big' : ''}${out}`}>
           {size === 'huge' && <i className="ls-rays" />}
           <Avatar user={e.user} />
-          <div className="ls-gift-text"><b>{e.user.name}</b><span>送出 <strong>{e.gift}</strong></span></div>
+          <div className="ls-gift-text"><b>{e.user.name}</b><span>送出 <strong>{e.gift}</strong>{e.valueKnown === false ? '（金额未知）' : null}</span></div>
           <span className="ls-gift-icon"><GiftIcon /></span>
           <em className="ls-combo" key={e.count}>×{e.count}</em>
           {size !== 'small' && giftArt && <ArtImg className="ls-alert-art" src={giftArt} />}

@@ -7,6 +7,7 @@
  * 评论、私信内容都是别人写的：包在标签里给她看。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { SocialError, type Comment, type DmMessage, type DmSession, type Mention } from './biliSocial';
 
 export const COMMENT_GAP_MS = 15_000;
@@ -124,6 +125,7 @@ export class SocialManager {
     } catch (err) {
       return errorText(err, '看评论');
     }
+    assertBiliCurrent();
     const remember = (c: Comment) => this.known.set(c.rpid, { ...thread, root: c.root, name: c.name });
     const lines = [`「${thread.title}」的评论区（${sort === 'new' ? '最新' : '热门'}，一共 ${result.count} 条），第 ${page} 页：`];
     if (!result.items.length) lines.push(page > 1 ? '这一页没有了。' : '还没有评论。');
@@ -159,6 +161,7 @@ export class SocialManager {
     this.lastCommentAt = this.now();
     try {
       const rpid = await this.api.comment(target.type, target.oid, text, target.root, target.parent);
+      assertBiliCurrent();
       if (rpid) this.known.set(rpid, { type: target.type, oid: target.oid, title: target.title, root: target.root ?? rpid, name: '你' });
       const where = target.name ? `回复了 ${target.name}（在「${target.title}」下）` : `在「${target.title}」下发了评论`;
       return { ok: true, text: `用开播账号${where}，大家都看得到。${rpid ? `这条评论的编号是 ${rpid}（想删掉用 delete_comment）。` : ''}` };
@@ -176,9 +179,11 @@ export class SocialManager {
     } catch (err) {
       return errorText(err, '看收件箱');
     }
+    assertBiliCurrent();
     sessions = sessions.slice(0, 10);
     mentions = mentions.slice(0, 10);
     const names = await this.api.names(sessions.map((s) => s.uid));
+    assertBiliCurrent();
     const lines = ['开播账号的私信（最近的会话，只有你看得到）：'];
     if (!sessions.length) lines.push('（没有）');
     for (const s of sessions) {
@@ -205,6 +210,7 @@ export class SocialManager {
     } catch (err) {
       return errorText(err, '看私信');
     }
+    assertBiliCurrent();
     if (!messages.length) return `和 ${name} 还没有私信往来。`;
     this.talkers.set(uid, name);
     // 她看过了：标成已读（主人那边就不会一直显示未读）
@@ -315,6 +321,7 @@ export class SocialManager {
   /** 这场开播以后新来的私信、回复、@（第一次调用只记下现有的，返回空） */
   async newSince(): Promise<string[]> {
     const [sessions, mentions] = await Promise.all([this.api.dmSessions(), this.api.mentions()]);
+    assertBiliCurrent();
     const keys = [
       ...sessions.filter((s) => s.last && !s.last.fromMe).map((s) => ({ key: `dm-${s.uid}-${s.last!.at}`, dm: s })),
       ...mentions.map((m) => ({ key: m.id, m })),
@@ -327,6 +334,7 @@ export class SocialManager {
     for (const k of fresh) this.seen.add(k.key);
     if (!fresh.length) return [];
     const names = await this.api.names(fresh.flatMap((k) => ('dm' in k && k.dm ? [k.dm.uid] : [])));
+    assertBiliCurrent();
     return fresh.map((k) => {
       if ('dm' in k && k.dm) {
         const name = names.get(k.dm.uid) ?? `UID ${k.dm.uid}`;

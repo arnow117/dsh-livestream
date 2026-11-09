@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 const base = process.argv[2];
 if (!base) {
-  console.error('Usage: node test/coverage-diff.mjs <baseline-commit>');
+  console.error('Usage: node test/coverage-diff.mjs <baseline-commit> [coverage-report]');
   process.exit(1);
 }
 const baseCommit = execFileSync('git', ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`], { cwd: root, encoding: 'utf8' }).trim();
@@ -30,7 +30,8 @@ for (const relative of untracked.split('\n').filter(Boolean)) {
   const path = resolve(root, relative);
   changed.set(path, new Set(readFileSync(path, 'utf8').split('\n').map((_, index) => index + 1)));
 }
-const coverage = JSON.parse(readFileSync(resolve(root, 'packages/dsh-livestream/coverage/feat-001/coverage-final.json'), 'utf8'));
+const report = process.argv[3] ?? 'packages/dsh-livestream/coverage/feat-001/coverage-final.json';
+const coverage = JSON.parse(readFileSync(resolve(root, report), 'utf8'));
 let linesTotal = 0;
 let linesCovered = 0;
 let branchesTotal = 0;

@@ -8,6 +8,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import QRCode from 'qrcode';
 import type { TtsSettings } from '../shared/ttsSettings';
+import { parseDouyinRoomId } from '../shared/liveTarget';
 import { usesNewConsole } from '../body/voices';
 
 // ── DSH 服务 ──────────────────────────────────────────
@@ -62,6 +63,7 @@ function useServices(): ConsoleServices | null {
 const PRESET_ID = 'dsh-livestream';
 /** 游戏线（另一个会话里的她，专门玩游戏）用的预设 */
 const GAME_PRESET_ID = 'dsh-livestream-game';
+const DOUYIN_PRESET_ID = 'dsh-livestream-douyin';
 const SECRET_REFS = { cookie: 'BILIBILI_COOKIE', tts: 'DOUBAO_TTS_API_KEY', appId: 'DOUBAO_TTS_APP_ID', accessKey: 'DOUBAO_TTS_ACCESS_KEY' } as const;
 
 interface PackEntry { id: string; name: string; builtin: boolean }
@@ -86,18 +88,21 @@ interface BroadcastStatus {
   error: string | null;
   health: { active: boolean; timecode: string; skipped: number; total: number; renderSkipped: number; outputSkipped: number; kbps: number } | null;
   startedAt: number | null;
+  ownedActivity?: boolean;
 }
 interface HostState {
   ok: boolean;
   show: ShowStatus;
   broadcast: BroadcastStatus;
   runtime?: { localRehearsal: boolean; ttsBackend: 'macos' | 'yovoice' | 'doubao' };
-  settings: { roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
+  douyinBridgeUrl?: string;
+  settings: { livePlatform: 'bilibili' | 'douyin'; douyinRoomId: string; roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
   stageUrl: string;
   characters: PackEntry[];
   templates: PackEntry[];
   asr: { available: boolean };
   defaultBoard: string;
+  douyinDefaultBoard?: string;
 }
 
 async function api<T = HostState>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -142,7 +147,7 @@ function connectFeed(): void {
       const ev = e.event;
       if (e.isUpdate && ev.kind !== 'gift') return;
       const text = ev.kind === 'chat' || ev.kind === 'superchat' ? ev.text
-        : ev.kind === 'gift' ? `送出 ${ev.gift} ×${ev.count}`
+        : ev.kind === 'gift' ? `送出 ${ev.gift} ×${ev.count}${ev.valueKnown === false ? '（金额未知）' : ''}`
           : ev.kind === 'membership' ? `开通了${ev.level}`
             : ev.kind === 'enter' ? '进入直播间' : '关注了直播间';
       setLive((l) => {
@@ -153,6 +158,8 @@ function connectFeed(): void {
       });
     } else if (e.type === 'say') {
       setLive((l) => ({ ...l, feed: [...l.feed, { key: `say-${++feedSeq}`, kind: 'her', uid: '', name: '她', text: e.text, at: Date.now() }].slice(-200) }));
+    } else if (e.type === 'reload' && e.scope === 'target') {
+      setLive((l) => ({ ...l, feed: [], focus: new Set() }));
     } else if (e.type === 'focus') {
       setLive((l) => ({ ...l, focus: new Set(e.userIds) }));
     } else if (e.type === 'brain') {
@@ -169,11 +176,12 @@ function useLive(): Live {
 // ── 开播：会话 ────────────────────────────────────────
 
 /** 开一个用「大肥鱼直播」预设的会话（她直播用） */
-async function createBrainSession(svc: ConsoleServices, line: 'live' | 'game' = 'live'): Promise<string> {
+export async function createBrainSession(svc: ConsoleServices, line: 'live' | 'game' = 'live', platform: 'bilibili' | 'douyin' = 'bilibili'): Promise<string> {
   const workspace = svc.workspaces.list.getSnapshot().items[0];
   if (!workspace) throw new Error('先在 DSH 里打开一个工作区。');
   const sessionId = await svc.sessions.create({ workspaceId: workspace.workspaceId });
-  const selected = await svc.remote.agentPresets.select(sessionId, line === 'game' ? GAME_PRESET_ID : PRESET_ID);
+  const preset = line === 'game' ? GAME_PRESET_ID : platform === 'douyin' ? DOUYIN_PRESET_ID : PRESET_ID;
+  const selected = await svc.remote.agentPresets.select(sessionId, preset);
   if (!selected.ok) throw new Error(selected.error?.message ?? `没能用上「${line === 'game' ? '大肥鱼直播·游戏线' : '大肥鱼直播'}」预设。`);
   // 让会话就绪（agent 起来），身体才能往里推
   // 会话列表里一眼认得出是哪一场（不然叫「未命名」）
@@ -221,15 +229,15 @@ function bumpSecrets(): void {
   for (const l of secretListeners) l();
 }
 
-function useSecrets(): Record<string, boolean | null> {
+function useSecrets(includeBili: boolean): Record<string, boolean | null> {
   const creds = useCredentials();
   const version = useSyncExternalStore((l) => { secretListeners.add(l); return () => secretListeners.delete(l); }, () => secretVersion);
   const [state, setState] = useState<Record<string, boolean | null>>({ cookie: null, tts: null });
   useEffect(() => {
     if (!creds) return;
-    const refs = Object.values(SECRET_REFS);
+    const refs = includeBili ? Object.values(SECRET_REFS) : [SECRET_REFS.tts, SECRET_REFS.appId, SECRET_REFS.accessKey];
     void creds.describe(refs).then((r) => setState({ cookie: !!r.value?.[SECRET_REFS.cookie]?.configured, tts: !!r.value?.[SECRET_REFS.tts]?.configured, appId: !!r.value?.[SECRET_REFS.appId]?.configured, accessKey: !!r.value?.[SECRET_REFS.accessKey]?.configured })).catch(() => {});
-  }, [creds, version]);
+  }, [creds, version, includeBili]);
   return state;
 }
 
@@ -437,9 +445,9 @@ export function Console() {
   const [voiceReload, setVoiceReload] = useState(0);
   const [dock, setDock] = useState<'owner' | 'sim'>('owner');
   const previewRef = useRef<HTMLDivElement>(null);
-  const secrets = useSecrets();
+  const secrets = useSecrets(host?.settings.livePlatform === 'bilibili');
 
-  const refresh = () => api('state').then((s) => { setHost(s); setRoom((r) => r || (s.settings.roomId ? String(s.settings.roomId) : '')); });
+  const refresh = () => api('state').then((s) => { setHost(s); setRoom((r) => r || (s.settings.livePlatform === 'douyin' ? s.settings.douyinRoomId : s.settings.roomId ? String(s.settings.roomId) : '')); });
   useEffect(() => { void refresh().catch(() => {}); }, []);
   useEffect(() => {
     if (!drawer) {
@@ -461,6 +469,15 @@ export function Console() {
 
   const show = status ?? host?.show ?? null;
   const settings = host?.settings;
+  const douyin = settings?.livePlatform === 'douyin';
+  const collectorUrl = host?.douyinBridgeUrl && /^http:\/\/(?:127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?$/.test(host.douyinBridgeUrl)
+    ? host.douyinBridgeUrl : undefined;
+  let roomIsSaved = false;
+  try {
+    roomIsSaved = douyin ? parseDouyinRoomId(room) === settings?.douyinRoomId : Number(room) === settings?.roomId && !!settings?.roomId;
+  } catch {
+    roomIsSaved = false;
+  }
   const localRehearsal = host?.runtime?.localRehearsal === true;
   const localVoice = host?.runtime?.ttsBackend === 'macos' || host?.runtime?.ttsBackend === 'yovoice';
   const localVoiceLabel = host?.runtime?.ttsBackend === 'yovoice' ? 'yovoice / VoxCPM2' : 'Mac 本地语音';
@@ -468,13 +485,13 @@ export function Console() {
   const goLive = () => run(async () => {
     if (!svc) throw new Error('插件还没准备好，刷新一下页面再试。');
     // 推流到 B 站：先开播拿推流码、OBS 推上流（可能要扫码人脸认证），推上了她再开口
-    if (settings?.broadcast) {
+    if (!douyin && settings?.broadcast) {
       await api('broadcast/start', {});
       await waitBroadcast();
     }
-    const sessionId = await createBrainSession(svc);
+    const sessionId = await createBrainSession(svc, 'live', douyin ? 'douyin' : 'bilibili');
     // 游戏线：没装 dsh-game（预设里没有游戏工具）也开得出来，只是用不上
-    const gameSessionId = localRehearsal ? undefined : await createBrainSession(svc, 'game').catch(() => undefined);
+    const gameSessionId = localRehearsal || douyin ? undefined : await createBrainSession(svc, 'game').catch(() => undefined);
     await api('onair', { sessionId, gameSessionId });
     await refresh();
   });
@@ -482,8 +499,8 @@ export function Console() {
   const endLive = () => run(async () => { await api('offair', {}); await refresh(); });
 
   const saveRoom = () => run(async () => {
-    setHost(await api('settings', { roomId: Number(room) }));
-    setHost(await api('connect', {}));
+    const target = douyin ? { douyinRoomId: parseDouyinRoomId(room) } : { roomId: Number(room) };
+    setHost(await api('settings', target));
   });
 
   const choose = (patch: Record<string, unknown>) => run(async () => setHost(await api('settings', patch)));
@@ -509,7 +526,7 @@ export function Console() {
   const character = settings?.character ?? '';
 
   // 开播前准备：缺什么一眼看到，点一下打开设置
-  const steps = localRehearsal ? [
+  const steps = localRehearsal || douyin ? [
     { key: 'localVoice', done: localVoice, text: localVoiceLabel, hint: localVoice ? '已选择；合成时检查语音服务' : '启动时选择本地语音后端' },
     { key: 'stage', done: !!show?.stageWatchers, text: '打开本地舞台', hint: '在浏览器打开下面的舞台地址' },
   ] : [
@@ -532,7 +549,9 @@ export function Console() {
               <h1>大肥鱼直播{show?.onAir ? <span className="dl-onair"><i />LIVE</span> : <span className="dl-offair">未开播</span>}</h1>
               <div className="dl-pills">
                 <span className="dl-pill"><Dot tone={brainTone} />{brainText}</span>
-                {localRehearsal
+                {douyin
+                  ? <span className="dl-pill"><Dot tone={connTone} />抖音只读接入 · {CONN_TEXT[conn] ?? conn}</span>
+                  : localRehearsal
                   ? <span className="dl-pill"><Dot tone="ok" />本地模拟互动</span>
                   : <span className="dl-pill"><Dot tone={connTone} />直播间{CONN_TEXT[conn] ?? conn}{show?.live.room?.title ? ` · ${show.live.room.title}` : ''}</span>}
                 {localRehearsal && (
@@ -541,7 +560,7 @@ export function Console() {
                     {localVoice ? `已选择 ${localVoiceLabel}` : '未选择本地语音'}
                   </span>
                 )}
-                <span className="dl-pill"><Dot tone={show?.stageWatchers ? 'ok' : 'idle'} />{localRehearsal
+                <span className="dl-pill"><Dot tone={show?.stageWatchers ? 'ok' : 'idle'} />{localRehearsal || douyin
                   ? (show?.stageWatchers ? `本地舞台已连接 ${show.stageWatchers} 个` : '本地舞台尚未打开')
                   : (show?.stageWatchers ? `OBS 已连上 ${show.stageWatchers} 个` : 'OBS 还没打开舞台')}</span>
                 {bc && bc.phase !== 'idle' && <BroadcastPill bc={bc} />}
@@ -550,18 +569,21 @@ export function Console() {
           </div>
           <div className="dl-top-actions">
             <button className="dl-icon-btn" title="设置" onClick={() => setDrawer(true)}><GearGlyph /><span>设置</span></button>
-            {!show?.onAir && !localRehearsal && (
+            {!show?.onAir && !localRehearsal && !douyin && (
               <button className={`dl-switch${settings?.broadcast ? ' dl-on' : ''}`} disabled={busy} title="关着：只在本地彩排（OBS 不推流）；开着：开播时真的推流到 B 站" onClick={() => choose({ broadcast: !settings?.broadcast })}>
                 <i /><span>{settings?.broadcast ? '推流到 B 站' : '本地彩排'}</span>
               </button>
             )}
             {show?.onAir
               ? <button className="dl-btn dl-danger" disabled={busy} onClick={endLive}>下播（先让她道别）</button>
-              : <button className="dl-btn dl-primary" disabled={!host || busy || bc?.phase === 'preparing' || bc?.phase === 'face'} onClick={goLive}><i className="dl-go-dot" />{settings?.broadcast ? '开播' : '开始彩排'}</button>}
+              : <button className="dl-btn dl-primary" disabled={!host || busy || bc?.phase === 'preparing' || bc?.phase === 'face' || (bc?.phase === 'error' && bc.ownedActivity)} onClick={goLive}><i className="dl-go-dot" />{douyin ? '开始本地舞台' : settings?.broadcast ? '开播' : '开始彩排'}</button>}
           </div>
         </header>
         {error && <p className="dl-error dl-banner">{error}</p>}
         {bc?.phase === 'error' && bc.error && error !== bc.error && <p className="dl-error dl-banner">{bc.error}</p>}
+        {!douyin && !localRehearsal && bc?.phase === 'error' && bc.ownedActivity && (
+          <button className="dl-btn" disabled={busy} onClick={() => run(async () => { await api('broadcast/stop', {}); await refresh(); })}>重试停止推流</button>
+        )}
         {bc?.phase === 'face' && bc.faceQr && <FaceModal qr={bc.faceQr} onCancel={() => run(async () => { await api('broadcast/stop', {}); await refresh(); })} />}
 
         {!show?.onAir && doneCount < steps.length && (
@@ -581,13 +603,13 @@ export function Console() {
               <div className="dl-preview" ref={previewRef}>
                 {previewUrl && <iframe src={previewUrl} title="舞台预览" />}
                 <button className="dl-fullscreen" title="全屏看舞台（Esc 退出）" onClick={() => void previewRef.current?.requestFullscreen?.()}><FullscreenGlyph /><span>全屏</span></button>
-                <span className={`dl-preview-tag${show?.onAir ? ' dl-preview-live' : ''}`}><i />{localRehearsal
+                <span className={`dl-preview-tag${show?.onAir ? ' dl-preview-live' : ''}`}><i />{localRehearsal || douyin
                   ? (show?.onAir ? '彩排中 · 预览静音' : '彩排预览 · 打开本地舞台可听到声音')
                   : (show?.onAir ? '直播中 · 和 OBS 里一样（静音）' : '预览：开播后的样子 · OBS 里现在是「马上开始」的等待画面')}</span>
               </div>
               <div className="dl-monitor-bar">
                 <div className="dl-obs">
-                  <span className="dl-label">{localRehearsal ? '本地舞台地址' : 'OBS 浏览器源'}</span>
+                  <span className="dl-label">{localRehearsal || douyin ? '本地舞台地址' : 'OBS 浏览器源'}</span>
                   <code onClick={copyUrl} title="点一下复制">{host?.stageUrl ?? ''}</code>
                   <button className={copied ? 'dl-done' : ''} onClick={copyUrl}>{copied ? '已复制' : '复制'}</button>
                   <span className="dl-meta">1920 × 1080</span>
@@ -618,9 +640,9 @@ export function Console() {
               <nav className="dl-tabs">
                 <button className={dock === 'owner' ? 'dl-on' : ''} onClick={() => setDock('owner')}>跟她说话</button>
                 <button className={dock === 'sim' ? 'dl-on' : ''} onClick={() => setDock('sim')}>模拟观众</button>
-                <span className="dl-meta">{dock === 'owner' ? '观众也会听到她的回答' : '不开直播间也能彩排'}</span>
+                <span className="dl-meta">{dock === 'owner' ? (douyin ? '本地舞台会播放她的回答' : '观众也会听到她的回答') : '不开直播间也能彩排'}</span>
               </nav>
-              {dock === 'owner' ? <OwnerSay onAir={!!show?.onAir} /> : <Simulator />}
+              {dock === 'owner' ? <OwnerSay onAir={!!show?.onAir} /> : <Simulator douyin={!!douyin} />}
             </section>
           </main>
 
@@ -656,19 +678,36 @@ export function Console() {
                 : <p role="status">正在读取声音设置</p>}</section>}
             <h3>直播间</h3>
             <div className="dl-field">
-              <label>B 站直播间房间号</label>
+              <label htmlFor="live-platform">平台</label>
+              <select id="live-platform" value={settings?.livePlatform ?? 'bilibili'} disabled={busy} onChange={(event) => {
+                const platform = event.target.value as 'bilibili' | 'douyin';
+                run(async () => {
+                  const updated = await api('settings', { livePlatform: platform });
+                  setHost(updated);
+                  setRoom(platform === 'douyin' ? updated.settings.douyinRoomId : String(updated.settings.roomId ?? ''));
+                });
+              }}>
+                <option value="bilibili">B 站</option>
+                <option value="douyin">抖音只读接入 / 本地舞台</option>
+              </select>
+              <label htmlFor="live-room">{douyin ? '抖音房间号或完整直播间地址' : 'B 站直播间房间号'}</label>
               <div className="dl-row">
-                <input value={room} inputMode="numeric" placeholder="直播间网址最后那串数字" onChange={(e) => setRoom(e.target.value.replace(/\D/g, ''))} />
-                {conn === 'idle' || conn === 'error'
-                  ? <button disabled={busy || !room} onClick={saveRoom}>连接</button>
-                  : <button disabled={busy} onClick={() => run(async () => setHost(await api('disconnect', {})))}>断开</button>}
+                <input id="live-room" value={room} placeholder={douyin ? '数字房间号或 https://live.douyin.com/数字' : '直播间网址最后那串数字'} onChange={(event) => setRoom(douyin ? event.target.value : event.target.value.replace(/\D/g, ''))} />
+                <button disabled={busy || !room} onClick={saveRoom}>保存</button>
+                {conn === 'idle'
+                  ? <button disabled={busy || !roomIsSaved} onClick={() => run(async () => setHost(await api('connect', {})))}>连接</button>
+                  : <button disabled={busy} onClick={() => run(async () => setHost(await api('disconnect', {})))}>断开订阅</button>}
               </div>
-              {settings?.roomId ? (
-                <label className="dl-check"><input type="checkbox" checked={settings.ownRooms.includes(settings.roomId)} onChange={(e) => choose({ ownRoom: e.target.checked })} /> 这是我自己的直播间：记住常来的观众（别人的直播间只旁观，不记）</label>
+              <p className="dl-hint" aria-live="polite">连接状态：{CONN_TEXT[conn] ?? conn}</p>
+              {!roomIsSaved && <p className="dl-hint">请先保存房间，再连接。</p>}
+              {douyin && <p className="dl-hint">采集器：{host?.douyinBridgeUrl}。{collectorUrl && <a href={collectorUrl} target="_blank" rel="noreferrer">打开采集控制台</a>} 首次连接可能启动采集；断开只停止本插件订阅，采集仍运行，请到采集控制台停止。出错请先断开订阅，再显式连接；上游已结束或出错时先在采集控制台恢复或停止后重开。<a href="https://github.com/ymstar/dyhub" target="_blank" rel="noreferrer">采集器说明</a></p>}
+              {!douyin && settings?.roomId ? (
+                <label className="dl-check"><input type="checkbox" checked={settings.ownRooms.includes(settings.roomId)} onChange={(event) => choose({ ownRoom: event.target.checked })} /> 这是我自己的直播间：记住常来的观众（别人的直播间只旁观，不记）</label>
               ) : null}
-              {show?.live.state === 'connected' && !show.live.loggedIn && <p className="dl-hint">匿名连接：部分观众的名字会被 B 站打码。填上 Cookie 就能看到完整名字。</p>}
-              {show?.live.lastError && <p className="dl-error">{show.live.lastError}</p>}
+              {!douyin && show?.live.state === 'connected' && !show.live.loggedIn && <p className="dl-hint">匿名连接：部分观众的名字会被 B 站打码。</p>}
+              {show?.live.lastError && <p role="alert" className="dl-error">{show.live.lastError}</p>}
             </div>
+            {!douyin && <>
             <h3>推流到 B 站</h3>
             <ObsCheck />
             <div className="dl-field">
@@ -688,8 +727,13 @@ export function Console() {
               </div>
               <p className="dl-hint">开播时：没有直播间会自动开通；B 站要人脸认证时这里弹出二维码，用 B 站 App 扫一下；推流码自动填进 OBS（专用配置「dsh-livestream」，1080p30、NVENC、CBR，RTMP 网络堵时自动降码率），不用手动配 OBS。推流时上面会显示码率和丢帧，丢帧多就换 SRT 或调低码率。</p>
             </div>
+            </>}
             <h3>告示板</h3>
-            <BoardField value={settings?.boardText ?? ''} fallback={host?.defaultBoard ?? ''} onSave={(boardText) => choose({ boardText })} />
+            <BoardField
+              value={douyin && settings?.boardText === host?.defaultBoard ? host?.douyinDefaultBoard ?? '' : settings?.boardText ?? ''}
+              fallback={douyin ? host?.douyinDefaultBoard ?? '' : host?.defaultBoard ?? ''}
+              onSave={(boardText) => choose({ boardText: douyin && boardText === host?.douyinDefaultBoard ? host.defaultBoard : boardText })}
+            />
             <h3>滚动通知</h3>
             <div className="dl-field">
               <div className="dl-row">
@@ -704,10 +748,10 @@ export function Console() {
                 <input defaultValue={settings?.idleAfterSec ?? 45} inputMode="numeric" title="找话说（秒）" onBlur={(e) => choose({ idleAfterSec: Number(e.target.value.replace(/\D/g, '')) || 45 })} />
                 <span className="dl-meta">秒：直播间没动静这么久，她自己找话说</span>
               </div>
-              <div className="dl-row">
+              {!douyin && <div className="dl-row">
                 <input defaultValue={settings?.gameChatGapSec ?? 15} inputMode="numeric" title="弹幕间隔（秒）" onBlur={(e) => choose({ gameChatGapSec: Number(e.target.value.replace(/\D/g, '')) || 15 })} />
                 <span className="dl-meta">秒：玩游戏时弹幕至少隔这么久推给她一次</span>
-              </div>
+              </div>}
               <div className="dl-pace">
                 {PACE_FIELDS.map(([key, label]) => (
                   <label key={key}>
@@ -718,14 +762,17 @@ export function Console() {
                   </label>
                 ))}
               </div>
-              <p className="dl-hint">都是改了马上生效，不用重启。留空就按直播间热闹程度自动（人少时回得勤、人多时攒一攒）；现场不合适就直接填：间隔填秒数，「欢迎」填 off 就不欢迎新进来的观众。大礼物、醒目留言、上舰不受这些间隔限制。</p>
+              <p className="dl-hint">都是改了马上生效，不用重启。留空就按直播间热闹程度自动（人少时回得勤、人多时攒一攒）；现场不合适就直接填：间隔填秒数，「欢迎」填 off 就不欢迎新进来的观众。{douyin ? '礼物金额未知时仍按节奏安排感谢。' : '大礼物、醒目留言、上舰不受这些间隔限制。'}</p>
             </div>
+            {!douyin && <>
             <h3>黑名单</h3>
             <div className="dl-field">
               <textarea key={blockedText(settings?.blocked)} defaultValue={blockedText(settings?.blocked)} rows={3} placeholder="一行一位：UID 名字 原因"
                 onBlur={(e) => { if (e.target.value.trim() !== blockedText(settings?.blocked)) choose({ blocked: parseBlocked(e.target.value, settings?.blocked ?? []) }); }} />
               <p className="dl-hint">一行一位：UID、名字、原因，空格隔开。名单上的人进直播间、发弹幕、送礼物她都看不到，不欢迎、不回、不记、不私信；改了马上生效。</p>
             </div>
+            </>}
+            {!douyin && <>
             <h3>看视频</h3>
             <div className="dl-field">
               <label>语音识别用的 Python {host?.asr.available ? <span className="dl-tag dl-ok-tag">能用</span> : <span className="dl-tag">没配好</span>}</label>
@@ -739,9 +786,10 @@ export function Console() {
             <h3>密钥</h3>
             <LoginField />
             <SecretField label="B 站 Cookie（不想扫码时手填）" ref_={SECRET_REFS.cookie} configured={secrets.cookie} hint="浏览器里登录 B 站后复制的 Cookie；扫码登录会自动填这一项" />
+            </>}
             <h3>舞台</h3>
             <div className="dl-field">
-              <label>{localRehearsal ? '本地舞台地址（在浏览器打开）' : 'OBS 舞台地址（来源 → 浏览器 → 粘贴，宽 1920 高 1080）'}</label>
+              <label>{localRehearsal || douyin ? '本地舞台地址（在浏览器打开）' : 'OBS 舞台地址（来源 → 浏览器 → 粘贴，宽 1920 高 1080）'}</label>
               <div className="dl-row">
                 <input readOnly value={host?.stageUrl ?? ''} onFocus={(e) => e.currentTarget.select()} />
                 <button className={copied ? 'dl-done' : ''} onClick={copyUrl}>{copied ? '已复制' : '复制'}</button>
@@ -995,7 +1043,7 @@ function Feed({ feed, focus, sleep }: { feed: FeedRow[]; focus: Set<string>; sle
   );
 }
 
-function Simulator() {
+function Simulator({ douyin }: { douyin: boolean }) {
   const [name, setName] = useState('测试观众');
   const [text, setText] = useState('');
   const [busy, error, run] = useBusy();
@@ -1010,21 +1058,27 @@ function Simulator() {
       <div className="dl-sim">
         <span>礼物</span>
         <div className="dl-chips">
-          <button className="dl-chip-gift" onClick={() => send('gift', { gift: '小花花', count: 5, yuan: 0.5 })}>小花花 ×5</button>
-          <button className="dl-chip-gift" onClick={() => send('gift', { gift: '情书', count: 1, yuan: 5.2 })}>情书 ¥5.2</button>
-          <button className="dl-chip-gift dl-chip-big" onClick={() => send('gift', { gift: '小电视飞船', count: 1, yuan: 1245 })}>小电视飞船 ¥1245</button>
+          {douyin ? (
+            <button className="dl-chip-gift" onClick={() => send('gift', { gift: '小花', count: 5 })}>小花 ×5</button>
+          ) : <>
+            <button className="dl-chip-gift" onClick={() => send('gift', { gift: '小花花', count: 5, yuan: 0.5 })}>小花花 ×5</button>
+            <button className="dl-chip-gift" onClick={() => send('gift', { gift: '情书', count: 1, yuan: 5.2 })}>情书 ¥5.2</button>
+            <button className="dl-chip-gift dl-chip-big" onClick={() => send('gift', { gift: '小电视飞船', count: 1, yuan: 1245 })}>小电视飞船 ¥1245</button>
+          </>}
         </div>
+        {!douyin && <>
         <span>醒目留言</span>
         <div className="dl-chips">
           {[30, 100, 500, 2000].map((yuan) => (
             <button key={yuan} className={`dl-chip-sc dl-sc-${scTier(yuan)}`} disabled={!text.trim()} title={text.trim() ? '' : '先在上面写留言内容'} onClick={() => send('superchat', { yuan })}>¥{yuan}</button>
           ))}
         </div>
+        </>}
         <span>其他</span>
         <div className="dl-chips">
           <button onClick={() => send('enter')}>进场</button>
           <button onClick={() => send('follow')}>关注</button>
-          <button className="dl-chip-guard" onClick={() => send('membership', { guard: 3 })}>上舰</button>
+          {!douyin && <button className="dl-chip-guard" onClick={() => send('membership', { guard: 3 })}>上舰</button>}
         </div>
       </div>
       {error && <p className="dl-error">{error}</p>}
@@ -1213,7 +1267,7 @@ export const CONSOLE_CSS = `
 .dl-voice .dl-field > label{align-items:stretch;flex-direction:column}
 .dl-voice .dl-field > label > input,.dl-voice .dl-field > label > select,.dl-voice .dl-field > label > textarea{box-sizing:border-box;width:100%;min-width:0}
 .dl-voice .dl-row{flex-wrap:wrap}
-.dl-voice :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
+.dl-room :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
 .dl-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dl-dim);margin:8px 0 2px}
 .dl-check input{flex:none}
 .dl-tag{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--dl-line);color:var(--dl-faint)}

@@ -8,6 +8,7 @@
  * 不碰 DSH：推消息、TTS、提炼用的模型、记录目录都由插件从外面给（ShowHooks）。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -15,7 +16,7 @@ import { LiveAttention, type OwnerPace } from '../core/attention/attention';
 import { setHerNames } from '../core/attention/features';
 import type { Topic, TopicBody } from '../core/attention/topics';
 import { LiveHub } from '../core/hub';
-import type { LiveEvent, LiveStatus, LiveUser } from '../core/live';
+import type { LiveConnection, LiveEvent, LivePlatform, LiveStatus, LiveUser } from '../core/live';
 import { distillStream, type DistillLlm } from '../core/memory/distill';
 import { LiveMemory } from '../core/memory/memory';
 import { LiveMemoryStore } from '../core/memory/store';
@@ -59,7 +60,8 @@ export interface ShowHooks {
 /** 正在播的一场：插件重启后接着播要的东西 */
 export interface LiveSnapshot {
   sessionId: string;
-  roomId: number | null;
+  platform?: LivePlatform;
+  roomId: number | string | null;
   /** 观众记忆里这一场的 id（不记的房间为 null） */
   streamId: number | null;
   logFile: string | null;
@@ -115,7 +117,7 @@ export interface ShowStatus {
   lines: SpokenLine[];
   stageWatchers: number;
   /** 当前连着的房间号（没连为 null） */
-  roomId: number | null;
+  roomId: number | string | null;
 }
 
 const TICK_MS = 200;
@@ -246,7 +248,9 @@ export class LiveShow {
   private logFile: string | null = null;
   private roomTimer: NodeJS.Timeout | null = null;
   private lastRoom = '';
-  private roomId: number | null = null;
+  private roomId: number | string | null = null;
+  private platform: LivePlatform = 'bilibili';
+  private awaitingBiliConnection = false;
   private unsubscribe: (() => void) | null = null;
   /** 记住这个直播间的观众：只有主人说这是自己的直播间才记（连别人的直播间旁观时不建档） */
   rememberViewers = false;
@@ -274,10 +278,16 @@ export class LiveShow {
   // ── 直播间连接 ─────────────────────────────────────
 
   connect(roomId: number, cookie: string, rememberViewers = false): LiveStatus {
-    this.rememberViewers = rememberViewers;
+    return this.connectTarget({ platform: 'bilibili', roomId, cookie }, rememberViewers);
+  }
+
+  connectTarget(config: LiveConnection, rememberViewers = false): LiveStatus {
+    this.rememberViewers = config.platform === 'bilibili' && rememberViewers;
+    if (config.platform === 'bilibili') this.awaitingBiliConnection = false;
+    this.platform = config.platform;
     this.unsubscribe?.();
-    const status = this.hub.connect({ platform: 'bilibili', roomId, cookie });
-    this.roomId = roomId;
+    const status = this.hub.connect(config);
+    this.roomId = config.roomId;
     this.unsubscribe = this.hub.subscribe((event, isUpdate) => this.observe(event, isUpdate));
     if (!this.roomTimer) this.roomTimer = setInterval(() => this.syncRoom(), 1000);
     return status;
@@ -288,8 +298,22 @@ export class LiveShow {
     this.unsubscribe = null;
     this.hub.disconnect();
     this.roomId = null;
+    this.rememberViewers = false;
+    this.attention = this.freshAttention();
+    this.lastTopic = null;
+    this.lastRoom = '';
+    this.inbox = [];
+    this.stage.broadcast({ type: 'focus', userIds: [] });
+    this.stage.broadcast({ type: 'room', onAir: this.onAir });
+    this.stage.broadcast({ type: 'reload', scope: 'target' });
     if (this.roomTimer) clearInterval(this.roomTimer);
     this.roomTimer = null;
+  }
+
+  setPlatform(platform: LivePlatform): void {
+    if (this.platform === 'douyin' && platform === 'bilibili') this.awaitingBiliConnection = true;
+    this.disconnect();
+    this.platform = platform;
   }
 
   /** 测试用：不连直播间也能往里塞事件（控制台的「模拟观众」） */
@@ -317,11 +341,15 @@ export class LiveShow {
   private recordViewer(event: LiveEvent, isUpdate: boolean): void {
     const who = { uid: event.user.id, user: cleanName(event.user.name) };
     if (event.kind === 'gift') {
-      if (event.valueYuan > 0) this.record({ type: 'event', kind: 'gift', id: event.id, ...who, gift: cleanName(event.giftName), count: event.count, yuan: event.valueYuan });
+      if (event.valueKnown === false) {
+        this.record({ type: 'event', kind: 'gift', platform: event.platform, id: event.id, ...who, gift: cleanName(event.giftName), count: event.count, valueKnown: false });
+      } else if (event.valueYuan > 0) {
+        this.record({ type: 'event', kind: 'gift', id: event.id, ...who, gift: cleanName(event.giftName), count: event.count, yuan: event.valueYuan });
+      }
       return;
     }
     if (isUpdate) return;
-    if (event.kind === 'chat') this.record({ type: 'event', kind: 'chat', ...who, text: cleanText(event.text) });
+    if (event.kind === 'chat') this.record({ type: 'event', kind: 'chat', platform: event.platform, ...who, text: cleanText(event.text) });
     else if (event.kind === 'superchat') this.record({ type: 'event', kind: 'superchat', ...who, yuan: event.valueYuan, text: cleanText(event.text) });
     else if (event.kind === 'membership') this.record({ type: 'event', kind: 'membership', ...who, level: event.levelName, count: event.count, yuan: event.valueYuan });
   }
@@ -419,7 +447,7 @@ export class LiveShow {
   private persistLive(now = Date.now()): void {
     if (!this.onAir || !this.brainSession) return;
     this.persistedAt = now;
-    this.hooks.persist?.({ sessionId: this.brainSession, roomId: this.roomId, streamId: this.memoryStream ? this.memory.currentStream : null, logFile: this.logFile, at: now, startedAt: this.liveSince, spokenChars: this.spoken, ...(this.gameOn || this.resumingGame ? { playing: true } : {}), ...(this.gameSession ? { gameSessionId: this.gameSession } : {}), ...(this.orders.open().length || this.orders.shown().length ? { orders: this.orders.toJSON() } : {}) });
+    this.hooks.persist?.({ sessionId: this.brainSession, platform: this.platform, roomId: this.roomId, streamId: this.memoryStream ? this.memory.currentStream : null, logFile: this.logFile, at: now, startedAt: this.liveSince, spokenChars: this.spoken, ...(this.gameOn || this.resumingGame ? { playing: true } : {}), ...(this.gameSession ? { gameSessionId: this.gameSession } : {}), ...(this.orders.open().length || this.orders.shown().length ? { orders: this.orders.toJSON() } : {}) });
   }
 
   private liveSince = 0;
@@ -481,6 +509,7 @@ export class LiveShow {
 
   /** 直播线把话交给游戏线（开游戏、观众给游戏出的主意、让它收手）；没开游戏线返回 false */
   toGameLine(text: string, who = '', now = Date.now()): boolean {
+    assertBiliCurrent();
     if (!this.onAir || !this.gameSession || !text.trim()) return false;
     // 直播线交接的那条消息不念：由游戏里的她点名回观众（原话由程序附上，不靠直播线转述），再去做
     const said = originalWords(this.lastTopic);
@@ -691,8 +720,9 @@ export class LiveShow {
     this.record({ type: 'topic', seq: this.seq, kind: topic.kind, ...(focus.length ? { to: focus } : {}) });
     this.lastTopic = topic;
     const d = new Date(now);
-    const text = topicText(topic, {
-      viewerCard: (u: LiveUser) => this.memory.viewerCard(u, now),
+    const prompt = topicText(topic, {
+      platform: this.platform,
+      viewerCard: (u: LiveUser) => this.platform === 'bilibili' ? this.memory.viewerCard(u, now) : '',
       lastRecap: topic.kind === 'opening' && this.memoryStream ? this.memory.lastRecap() : undefined,
       today: topic.kind === 'opening' || topic.kind === 'ending' ? whenNow(d) : undefined,
       justSaid: topic.kind === 'ending' ? this.lines.filter((l) => now - l.at < JUST_SAID_MS).slice(-JUST_SAID_LINES).map((l) => l.text) : undefined,
@@ -705,6 +735,7 @@ export class LiveShow {
       gameOff: !!this.gameSession && !this.gameOn && !this.resumingGame && topic.kind === 'owner',
       orders: this.gameSession ? this.orders.summary() || undefined : undefined,
     });
+    const text = this.platform === 'douyin' ? `当前是抖音只读接入 / 本地舞台，不向抖音发送消息。\n${prompt}` : prompt;
     this.pushing = true;
     this.setBrain('thinking', topicLabel(topic));
     try {
@@ -889,8 +920,13 @@ export class LiveShow {
 
   // ── 她的工具用到的 ──────────────────────────────────
 
+  get canLookupBiliViewer(): boolean {
+    return this.platform === 'bilibili' && !this.awaitingBiliConnection;
+  }
+
   /** 按她看到的名字（或 UID）在这场直播最近的事件里找观众；找不到、对不上好几位时带着候选（见 core/viewerLookup） */
   lookupViewer(who: string): ViewerLookup {
+    if (!this.canLookupBiliViewer) return { kind: 'missing', suggestions: [] };
     return lookupViewer(who, this.hub.recentEvents(), { simulatedPrefix: SIMULATED_PREFIX });
   }
 
@@ -929,26 +965,28 @@ export class LiveShow {
 
   /** 这位观众认不认识：这场里出现过，或者观众记忆里有他（私信只发给认识的人） */
   knowsViewer(uid: string): boolean {
-    return this.hub.recentEvents().some((e) => e.user.id === uid) || !!this.memory.store.getViewer('bilibili', uid);
+    return this.canLookupBiliViewer && (this.hub.recentEvents().some((e) => e.platform === 'bilibili' && e.user.id === uid) || !!this.memory.store.getViewer('bilibili', uid));
   }
 
   /** 这位观众说过「忘了我」：不看、不记 */
   optedOut(uid: string): boolean {
-    return this.memory.store.isOptedOut('bilibili', uid);
+    return this.platform === 'bilibili' && this.memory.store.isOptedOut('bilibili', uid);
   }
 
   /** 主人拉黑了这位观众：不欢迎、不回、不记、不看主页、不私信 */
   isBlocked(uid: string): boolean {
-    return !!uid && !!this.options.blocked?.(uid);
+    return this.platform === 'bilibili' && !!uid && !!this.options.blocked?.(uid);
   }
 
   /** 她看了这位观众的主页：自己的直播间里记一句，下次见到他卡片里会提 */
   rememberProfile(uid: string, summary: string): void {
+    assertBiliCurrent();
     if (this.memoryStream && this.memory.store.getViewer('bilibili', uid)) this.memory.store.setAppraisal('bilibili', uid, { summary, at: Date.now() });
   }
 
   /** 停下正在放的视频（她让停的、下播），不再听写后面的 */
   stopVideo(how = 'stopped') {
+    assertBiliCurrent();
     this.endWatch(how);
     return this.player.stop();
   }
@@ -958,6 +996,7 @@ export class LiveShow {
    * done：不放了的时候（放完、停下、换掉、下播）告诉调用的人放了多久、这期间她说了什么
    */
   playVideo(request: PlayRequest, notes?: VideoNotes, done?: (end: VideoEnd) => void) {
+    assertBiliCurrent();
     const replaced = this.player.current;
     this.endWatch('replaced');
     const video = this.player.play(request);
@@ -972,6 +1011,7 @@ export class LiveShow {
    * doing 写在提示符上（她正在干什么）
    */
   toolCall(name: string, detail: string, doing?: string): void {
+    assertBiliCurrent();
     if (!this.onAir) return;
     this.brain = 'thinking';
     this.stage.broadcast({ type: 'tool', name, detail, doing });
@@ -984,6 +1024,7 @@ export class LiveShow {
 
   /** 终端里记一行身体自己在做的事（后台听写视频之类）：不是她调的工具，不改她的状态 */
   note(tag: string, text: string): void {
+    assertBiliCurrent();
     if (this.onAir) this.stage.broadcast({ type: 'note', tag, text });
   }
 
@@ -1058,10 +1099,11 @@ export class LiveShow {
     mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.logFile = join(dir, `${stamp}.jsonl`);
-    this.record({ type: 'begin', roomId: this.roomId });
+    this.record({ type: 'begin', platform: this.platform, roomId: this.roomId });
   }
 
   private record(entry: Record<string, unknown>): void {
+    assertBiliCurrent();
     if (!this.logFile) return;
     try {
       appendFileSync(this.logFile, JSON.stringify({ t: Date.now(), ...entry }) + '\n');
@@ -1127,12 +1169,13 @@ function stageUser(user: LiveUser): StageUser {
 /** 直播事件 → 舞台显示用（清洗过的名字和文字；点赞不上舞台） */
 function toStage(event: LiveEvent): StageLiveEvent | null {
   const user = stageUser(event.user);
+  const platform = event.platform;
   switch (event.kind) {
-    case 'chat': return { kind: 'chat', id: event.id, user, text: cleanText(event.text), ...(event.stickerUrl ? { sticker: event.stickerUrl } : {}) };
-    case 'gift': return { kind: 'gift', id: event.id, user, gift: cleanName(event.giftName), count: event.count, yuan: event.valueYuan };
-    case 'superchat': return { kind: 'superchat', id: event.id, user, text: cleanText(event.text), yuan: event.valueYuan };
-    case 'membership': return { kind: 'membership', id: event.id, user, level: cleanName(event.levelName), count: event.count };
-    case 'enter': case 'follow': return { kind: event.kind, id: event.id, user };
+    case 'chat': return { kind: 'chat', id: event.id, user, platform, text: cleanText(event.text), ...(event.stickerUrl ? { sticker: event.stickerUrl } : {}) };
+    case 'gift': return { kind: 'gift', id: event.id, user, platform, gift: cleanName(event.giftName), count: event.count, yuan: event.valueYuan, valueKnown: event.valueKnown };
+    case 'superchat': return { kind: 'superchat', id: event.id, user, platform, text: cleanText(event.text), yuan: event.valueYuan };
+    case 'membership': return { kind: 'membership', id: event.id, user, platform, level: cleanName(event.levelName), count: event.count };
+    case 'enter': case 'follow': return { kind: event.kind, id: event.id, user, platform };
     default: return null;
   }
 }

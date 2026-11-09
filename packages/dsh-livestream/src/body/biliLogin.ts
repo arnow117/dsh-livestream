@@ -7,6 +7,8 @@
  *   设备  api.bilibili.com/x/frontend/finger/spi → buvid3 / buvid4（弹幕连接、部分接口要）
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
+
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 const TIMEOUT_MS = 10_000;
 const HEADERS = { 'User-Agent': UA, Referer: 'https://www.bilibili.com/' };
@@ -41,6 +43,7 @@ export async function pollQrLogin(key: string): Promise<LoginPoll> {
   if (!jar.get('SESSDATA') || !jar.get('bili_jct')) return { state: 'error', message: '登录成功了，但 B 站没给 SESSDATA / bili_jct' };
   // 设备号：直播弹幕连接和一些接口会看
   try {
+    assertBiliCurrent();
     const spi = await fetch('https://api.bilibili.com/x/frontend/finger/spi', { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
     const d = ((await spi.json()) as { data?: { b_3?: string; b_4?: string } }).data;
     if (d?.b_3) jar.set('buvid3', d.b_3);

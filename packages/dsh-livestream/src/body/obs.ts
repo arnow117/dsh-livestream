@@ -11,6 +11,7 @@
  * 只动自己这套配置和场景集合，不碰用户别的 OBS 配置。WebSocket 密码从 OBS 自己的配置里读，不打印。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -75,6 +76,7 @@ function websocketConfig(): { port: number; password: string; enabled: boolean }
 }
 
 function connectOnce(): Promise<Obs> {
+  assertBiliCurrent();
   const { port, password } = websocketConfig();
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
@@ -82,6 +84,14 @@ function connectOnce(): Promise<Obs> {
     const timer = setTimeout(() => { ws.close(); reject(new Error('连 OBS 超时')); }, 5000);
     ws.onerror = () => { clearTimeout(timer); reject(new Error('连不上 OBS')); };
     ws.onmessage = (msg) => {
+      try {
+        assertBiliCurrent();
+      } catch (error) {
+        clearTimeout(timer);
+        ws.close();
+        reject(error);
+        return;
+      }
       const { op, d } = JSON.parse(String(msg.data));
       if (op === 0) {
         const identify: Record<string, unknown> = { rpcVersion: 1 };
@@ -94,6 +104,7 @@ function connectOnce(): Promise<Obs> {
         clearTimeout(timer);
         resolve({
           call: (requestType, requestData = {}) => {
+            assertBiliCurrent();
             const requestId = randomUUID();
             ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
             return new Promise((res, rej) => pending.set(requestId, { res, rej, requestType }));
@@ -116,6 +127,7 @@ export async function connectObs(launch = true): Promise<Obs> {
   try {
     return await connectOnce();
   } catch (err) {
+    assertBiliCurrent();
     if (!launch) throw err;
     if (!websocketConfig().enabled) throw new Error('OBS 的 WebSocket 服务器没启用：OBS → 工具 → WebSocket 服务器设置 → 启用');
     const exe = findObsExe();
@@ -123,6 +135,7 @@ export async function connectObs(launch = true): Promise<Obs> {
     spawn(exe, ['--disable-shutdown-check', '--disable-updater'], { cwd: join(exe, '..'), detached: true, stdio: 'ignore' }).unref();
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 1000));
+      assertBiliCurrent();
       try {
         return await connectOnce();
       } catch {

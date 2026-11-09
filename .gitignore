@@ -15,3 +15,8 @@ tools/*.mjs
 # Local browser and coverage artifacts
 packages/dsh-livestream/.e2e/
 packages/dsh-livestream/coverage/
+
+# Provenance-backed synthetic DyHub wire fixtures are part of the test suite.
+!packages/dsh-livestream/test/fixtures/
+packages/dsh-livestream/test/fixtures/*
+!packages/dsh-livestream/test/fixtures/dyhub-normalized-defaults.json

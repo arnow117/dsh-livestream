@@ -153,12 +153,13 @@ export interface StageUser {
   admin?: boolean;
 }
 
-export type StageLiveEvent =
+export type StageLiveEvent = (
   | { kind: 'chat'; id: string; user: StageUser; text: string; sticker?: string }
   | { kind: 'gift'; id: string; user: StageUser; gift: string; count: number; yuan: number }
   | { kind: 'superchat'; id: string; user: StageUser; text: string; yuan: number }
   | { kind: 'membership'; id: string; user: StageUser; level: string; count: number }
-  | { kind: 'enter' | 'follow'; id: string; user: StageUser };
+  | { kind: 'enter' | 'follow'; id: string; user: StageUser }
+) & { platform?: 'bilibili' | 'douyin'; valueKnown?: boolean };
 
 /** 大脑现在在干什么：舞台上「正在想…」的提示用 */
 export type BrainState = 'off' | 'listening' | 'thinking' | 'speaking' | 'away';
@@ -199,4 +200,4 @@ export type StageEvent =
   /** 游戏画面上那一行「她在干嘛」（身体在做的事、血量、白天黑夜）；null：没在玩 */
   | { v: 1; type: 'gameStatus'; status: GameStatus | null; at: number }
   /** 模板或角色换了：舞台重新加载 */
-  | { v: 1; type: 'reload'; at: number };
+  | { v: 1; type: 'reload'; scope?: 'target'; at: number };

@@ -9,6 +9,7 @@
  *   - 一条最多 2000 字节（留点余量 MAX_BYTES）。条数不设上限：主人把账号交给她了。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DmError, type DmAccount } from './biliAccount';
 
@@ -80,10 +81,13 @@ export class DmManager {
 
     if (!(await this.account.me())) return { ok: false, text: '开播账号没登录（Cookie 失效了），私信发不出去：告诉主人重新登录 B 站。' };
 
+    assertBiliCurrent();
     let follows = await this.account.followsMe(viewer.uid).catch(() => null);
+    assertBiliCurrent();
     const waiting = this.state.waiting[viewer.uid];
     if (waiting) {
       const replied = follows ? false : await this.account.replied(viewer.uid, waiting.sentAt).catch(() => null);
+      assertBiliCurrent();
       if (follows || replied) {
         delete this.state.waiting[viewer.uid];
         this.persist();
@@ -98,10 +102,12 @@ export class DmManager {
 
     const wait = this.lastSentAt + SEND_GAP_MS - this.now();
     if (wait > 0) await this.sleep(wait);
+    assertBiliCurrent();
     this.lastSentAt = this.now();
     try {
       await this.account.send(viewer.uid, text);
     } catch (err) {
+      assertBiliCurrent();
       const code = err instanceof DmError ? err.code : 0;
       if (code === 21047) {
         this.state.waiting[viewer.uid] = { name, sentAt: this.now() };
@@ -118,7 +124,9 @@ export class DmManager {
       return { ok: false, text: `没发出去：B 站返回 ${code || '错误'} ${(err as Error).message}`.trim() };
     }
 
+    assertBiliCurrent();
     if (follows === null) follows = await this.account.followsMe(viewer.uid).catch(() => null);
+    assertBiliCurrent();
     if (follows) return { ok: true, text: `已经私信给 ${name} 了。他关注了你，之后还可以继续私信他。` };
     this.state.waiting[viewer.uid] = { name, sentAt: this.now() };
     this.persist();

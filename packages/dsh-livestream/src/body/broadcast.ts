@@ -8,6 +8,7 @@
  * 状态给控制台看：哪一步、二维码、OBS 的码率和丢帧。
  */
 
+import { assertBiliCurrent, beginBiliCleanup, beginBiliOperation, inBiliOperation } from '../shared/biliOperations';
 import { BiliRoom, sameCover, type Stream } from './biliRoom';
 import { connectObs, prepareObs, startStreaming, stopStreaming, streamHealth, type Obs, type StreamHealth } from './obs';
 
@@ -25,6 +26,8 @@ export interface BroadcastStatus {
   startedAt: number | null;
   /** 这次用的推流协议 */
   protocol?: 'rtmp' | 'srt';
+  /** 此实例仍有准备、流或等待确认的清理。 */
+  ownedActivity?: boolean;
 }
 
 export interface BroadcastOptions {
@@ -53,11 +56,21 @@ export class Broadcast {
   private obs: Obs | null = null;
   private healthTimer: NodeJS.Timeout | null = null;
   private cancelled = false;
+  private pending = 0;
+  private runPromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
+  private mayOwnRoom = false;
+  private mayOwnStream = false;
 
   constructor(private readonly options: BroadcastOptions) {}
 
   status(): BroadcastStatus {
-    return { ...this.state };
+    return { ...this.state, ownedActivity: this.hasActivity };
+  }
+
+  get hasActivity(): boolean {
+    return this.pending > 0 || this.obs !== null || this.healthTimer !== null || this.mayOwnRoom || this.mayOwnStream
+      || ['preparing', 'face', 'streaming', 'stopping'].includes(this.state.phase);
   }
 
   get streaming(): boolean {
@@ -73,44 +86,66 @@ export class Broadcast {
 
   /** 开播并推流；在后台跑，进度看 status()。已经在跑就什么也不做 */
   start(): void {
-    if (this.state.phase === 'preparing' || this.state.phase === 'face' || this.state.phase === 'streaming') return;
+    if (this.hasActivity) return;
     this.cancelled = false;
     this.set({ phase: 'preparing', step: '检查 B 站登录', faceQr: null, error: null, health: null });
-    void this.run().catch((err) => {
+    const lease = beginBiliOperation();
+    this.pending++;
+    const running = inBiliOperation(lease, () => this.run()).catch((err) => {
+      if (this.cancelled) return;
       this.set({ phase: 'error', step: '', faceQr: null, error: (err as Error).message });
       this.options.log?.('warn', `推流失败：${(err as Error).message}`);
+    }).finally(() => {
+      this.pending--;
+      lease.release();
+      if (this.runPromise === running) this.runPromise = null;
     });
+    this.runPromise = running;
+  }
+
+  private assertRunning(): void {
+    assertBiliCurrent();
+    if (this.cancelled) throw new Error('推流准备已取消');
   }
 
   private async run(): Promise<void> {
     const cookie = await this.options.cookie();
+    this.assertRunning();
     if (!cookie) throw new Error('还没有 B 站 Cookie：在设置里填上开播账号的 Cookie');
     const room = new BiliRoom(cookie);
     const me = await room.whoami();
+    this.assertRunning();
     if (!me.loggedIn) throw new Error('B 站 Cookie 失效了：重新登录 B 站，复制新的 Cookie 填到设置里');
 
     this.set({ step: '准备直播间' });
     const roomId = await room.ensureRoom();
+    this.assertRunning();
     this.set({ roomId });
     this.options.onRoom(roomId);
 
     const pre = await room.preLive();
+    this.assertRunning();
     const areaId = this.options.areaId() ?? pre.areaId;
     if (!areaId) throw new Error('还没选直播分区');
     const title = this.options.title();
     if (title) await room.update(roomId, { title });
+    this.assertRunning();
     const cover = this.options.cover();
     if (cover && !sameCover(pre.coverUrl, cover.data)) {
       this.set({ step: '换直播间封面' });
       await room.setCover(cover.data, cover.mime);
     }
 
+    this.assertRunning();
     this.set({ step: '向 B 站申请开播' });
     let stream: Stream | null = null;
     const deadline = Date.now() + FACE_TIMEOUT_MS;
     while (!stream) {
       if (this.cancelled) return;
+      this.mayOwnRoom = true;
       const result = await room.start(roomId, areaId);
+      if (result.kind !== 'live') this.mayOwnRoom = false;
+      this.assertRunning();
       if (result.kind === 'live') stream = this.options.protocol() === 'srt' && result.srt ? result.srt : result.stream;
       else if (result.kind === 'verify') throw new Error(`B 站要求先过一次风控验证（${result.message}）：用官方直播姬或 B 站 App 开播一次，之后这里就能开了`);
       else {
@@ -121,6 +156,7 @@ export class Broadcast {
           if (Date.now() > deadline) throw new Error('人脸认证等了 5 分钟还没完成，重新点开播再试');
           await new Promise((r) => setTimeout(r, 2000));
         }
+        this.assertRunning();
         this.set({ phase: 'preparing', step: '认证通过，再申请开播', faceQr: null });
       }
     }
@@ -128,23 +164,31 @@ export class Broadcast {
     // 开播会把标题换回直播姬里存的那个（10-28 实测：开播前改了、开播后又是上一场的）：开上了再改一次
     if (title) await room.update(roomId, { title }).catch((err) => this.options.log?.('warn', `开播后改标题没成：${(err as Error).message}`));
 
+    this.assertRunning();
     this.set({ step: '打开 OBS、设好画质' });
     this.obs = await connectObs(true);
+    this.assertRunning();
     await prepareObs(this.obs, this.options.stageUrl(), this.options.kbps());
+    this.assertRunning();
     this.set({ step: `开始推流（${stream.protocol.toUpperCase()}，${this.options.kbps()} kbps）`, protocol: stream.protocol });
+    this.mayOwnStream = true;
     await startStreaming(this.obs, stream.addr, stream.code);
+    this.assertRunning();
     this.set({ phase: 'streaming', step: '推流中', startedAt: Date.now() });
     this.healthTimer = setInterval(() => void this.poll(), 2000);
   }
 
   private async poll(): Promise<void> {
     if (!this.obs) return;
+    this.pending++;
     try {
       const health = await streamHealth(this.obs);
       this.set({ health });
       if (!health.active && this.state.phase === 'streaming') this.set({ phase: 'error', error: 'OBS 停止推流了（看 OBS 的日志）' });
     } catch (err) {
       this.set({ error: `读不到 OBS 状态：${(err as Error).message}` });
+    } finally {
+      this.pending--;
     }
   }
 
@@ -154,45 +198,87 @@ export class Broadcast {
    */
   async adopt(roomId: number): Promise<boolean> {
     if (this.state.phase === 'streaming') return true;
+    const lease = beginBiliOperation();
+    this.pending++;
+    let obs: Obs | null = null;
     try {
-      const obs = await connectObs(false);
-      const health = await streamHealth(obs);
-      if (!health.active) { obs.close(); return false; }
-      this.obs = obs;
-      this.cancelled = false;
-      this.set({ phase: 'streaming', step: '推流中（插件重启后接上）', roomId, faceQr: null, error: null, health, startedAt: Date.now() });
-      if (this.healthTimer) clearInterval(this.healthTimer);
-      this.healthTimer = setInterval(() => void this.poll(), 2000);
-      return true;
+      return await inBiliOperation(lease, async () => {
+        obs = await connectObs(false);
+        lease.assertCurrent();
+        const health = await streamHealth(obs);
+        lease.assertCurrent();
+        if (!health.active) return false;
+        this.obs = obs;
+        this.mayOwnStream = true;
+        this.mayOwnRoom = true;
+        obs = null;
+        this.cancelled = false;
+        this.set({ phase: 'streaming', step: '推流中（插件重启后接上）', roomId, faceQr: null, error: null, health, startedAt: Date.now() });
+        if (this.healthTimer) clearInterval(this.healthTimer);
+        this.healthTimer = setInterval(() => void this.poll(), 2000);
+        return true;
+      });
     } catch {
       return false;
+    } finally {
+      (obs as Obs | null)?.close();
+      this.pending--;
+      lease.release();
     }
   }
 
-  /** 停推、下播 */
-  async stop(): Promise<void> {
+  /** 停推、下播；不确定的所属资源保持锁定，直到显式重试成功。 */
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
     this.cancelled = true;
-    if (this.healthTimer) clearInterval(this.healthTimer);
-    this.healthTimer = null;
-    const roomId = this.state.roomId;
-    this.set({ phase: 'stopping', step: '停止推流、下播', faceQr: null });
-    const errors: string[] = [];
-    try {
-      const obs = this.obs ?? await connectObs(false);
-      await stopStreaming(obs);
-      obs.close();
-    } catch (err) {
-      errors.push(`OBS：${(err as Error).message}`);
-    }
-    this.obs = null;
-    if (roomId) {
-      try {
-        const cookie = await this.options.cookie();
-        await new BiliRoom(cookie).stop(roomId);
-      } catch (err) {
-        errors.push(`B 站：${(err as Error).message}`);
-      }
-    }
-    this.set({ phase: errors.length ? 'error' : 'idle', step: '', error: errors.length ? `下播时出错：${errors.join('；')}` : null, health: null, startedAt: null });
+    const stopping = this.stopOwned().finally(() => {
+      if (this.stopPromise === stopping) this.stopPromise = null;
+    });
+    this.stopPromise = stopping;
+    return stopping;
   }
+
+  private async stopOwned(): Promise<void> {
+    this.pending++;
+    try {
+      if (this.healthTimer) clearInterval(this.healthTimer);
+      this.healthTimer = null;
+      this.set({ phase: 'stopping', step: '停止推流、下播', faceQr: null });
+      await this.runPromise;
+      const cleanupLease = beginBiliCleanup();
+      try {
+        await inBiliOperation(cleanupLease, async () => {
+          const errors: string[] = [];
+          let obs = this.obs;
+          try {
+            if (this.mayOwnStream) {
+              obs ??= await connectObs(false);
+              await stopStreaming(obs);
+              this.mayOwnStream = false;
+            }
+          } catch (err) {
+            errors.push(`OBS：${(err as Error).message}`);
+          } finally {
+            obs?.close();
+            this.obs = null;
+          }
+          if (this.mayOwnRoom && this.state.roomId) {
+            try {
+              const cookie = await this.options.cookie();
+              await new BiliRoom(cookie).stop(this.state.roomId);
+              this.mayOwnRoom = false;
+            } catch (err) {
+              errors.push(`B 站：${(err as Error).message}`);
+            }
+          }
+          this.set({ phase: errors.length ? 'error' : 'idle', step: '', error: errors.length ? `下播时出错：${errors.join('；')}` : null, health: null, startedAt: null });
+        });
+      } finally {
+        cleanupLease.release();
+      }
+    } finally {
+      this.pending--;
+    }
+  }
+
 }

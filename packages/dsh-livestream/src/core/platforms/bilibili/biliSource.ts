@@ -6,6 +6,7 @@
  */
 
 import WebSocket from 'ws';
+import { beginBiliOperation, inBiliOperation } from '../../../shared/biliOperations';
 import type { LiveRoomInfo } from '../../live';
 import type { LiveSource, LiveSourceListener } from '../source';
 import { createBiliSession, getDanmuInfo, getRoom, type DanmuServer } from './biliApi';
@@ -24,6 +25,7 @@ export class BiliLiveSource implements LiveSource {
   readonly platform = 'bilibili' as const;
   private listener: LiveSourceListener | null = null;
   private ws: WebSocket | null = null;
+  private pendingSocket: WebSocket | null = null;
   private heartbeat: NodeJS.Timeout | null = null;
   private watchdog: NodeJS.Timeout | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
@@ -43,6 +45,7 @@ export class BiliLiveSource implements LiveSource {
     this.stopped = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
+    this.pendingSocket?.terminate();
     this.closeSocket();
     this.listener?.state('idle');
     this.listener = null;
@@ -52,44 +55,57 @@ export class BiliLiveSource implements LiveSource {
     const listener = this.listener;
     if (this.stopped || !listener) return;
     listener.state(this.backoffMs > 1000 ? 'reconnecting' : 'connecting');
+    const lease = beginBiliOperation();
     try {
-      const session = await createBiliSession(this.cookie);
-      const room = await getRoom(session, this.roomId);
-      const { token, servers } = await getDanmuInfo(session, room.realRoomId);
-      if (this.stopped) return;
-
-      const info: LiveRoomInfo = {
-        platform: 'bilibili',
-        roomId: this.roomId,
-        realRoomId: room.realRoomId,
-        title: room.title,
-        anchorId: room.anchorId,
-        anchorName: room.anchorName,
-      };
-      listener.room(info);
-      listener.stats({ live: room.live });
-
-      const ctx: BiliRoomContext = { realRoomId: room.realRoomId, anchorId: room.anchorId };
-      const auth = makeAuthPacket({ roomId: room.realRoomId, uid: session.uid, buvid: session.buvid, token });
-      let lastError: Error | null = null;
-      for (const server of [...servers, FALLBACK_SERVER]) {
+      await inBiliOperation(lease, async () => {
+        const session = await createBiliSession(this.cookie);
+        lease.assertCurrent();
         if (this.stopped) return;
-        try {
-          await this.open(`wss://${server.host}:${server.wss_port}/sub`, auth, ctx);
-          this.backoffMs = 1000;
-          listener.state('connected', {
-            loggedIn: session.loggedIn,
-            error: session.cookieRejected ? 'Cookie 已失效，按未登录连接（观众名字会被打码）' : undefined,
-          });
-          return;
-        } catch (err) {
-          lastError = err as Error;
-          console.warn(`[BiliLive] ${server.host} 连接失败：${lastError.message}`);
+        const room = await getRoom(session, this.roomId);
+        lease.assertCurrent();
+        if (this.stopped) return;
+        const { token, servers } = await getDanmuInfo(session, room.realRoomId);
+        lease.assertCurrent();
+        if (this.stopped) return;
+
+        const info: LiveRoomInfo = {
+          platform: 'bilibili',
+          roomId: this.roomId,
+          realRoomId: room.realRoomId,
+          title: room.title,
+          anchorId: room.anchorId,
+          anchorName: room.anchorName,
+        };
+        listener.room(info);
+        listener.stats({ live: room.live });
+
+        const ctx: BiliRoomContext = { realRoomId: room.realRoomId, anchorId: room.anchorId };
+        const auth = makeAuthPacket({ roomId: room.realRoomId, uid: session.uid, buvid: session.buvid, token });
+        let lastError: Error | null = null;
+        for (const server of [...servers, FALLBACK_SERVER]) {
+          if (this.stopped) return;
+          try {
+            await this.open(`wss://${server.host}:${server.wss_port}/sub`, auth, ctx);
+            lease.assertCurrent();
+            if (this.stopped) { this.closeSocket(); return; }
+            this.backoffMs = 1000;
+            listener.state('connected', {
+              loggedIn: session.loggedIn,
+              error: session.cookieRejected ? 'Cookie 已失效，按未登录连接（观众名字会被打码）' : undefined,
+            });
+            return;
+          } catch (err) {
+            lastError = err as Error;
+            console.warn(`[BiliLive] ${server.host} 连接失败：${lastError.message}`);
+          }
         }
-      }
-      throw lastError ?? new Error('没有可用的弹幕服务器');
+        throw lastError ?? new Error('没有可用的弹幕服务器');
+      });
     } catch (err) {
       this.scheduleRetry((err as Error).message);
+    } finally {
+      if (this.stopped) this.closeSocket();
+      lease.release();
     }
   }
 
@@ -97,13 +113,18 @@ export class BiliLiveSource implements LiveSource {
   private open(url: string, auth: Buffer, ctx: BiliRoomContext): Promise<void> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, { headers: { 'User-Agent': 'Mozilla/5.0', Origin: 'https://live.bilibili.com' } });
+      this.pendingSocket = ws;
       let authed = false;
+      let pendingError: Error | null = null;
       const timer = setTimeout(() => {
+        pendingError = new Error('连接或认证超时');
         ws.terminate();
-        reject(new Error('连接或认证超时'));
       }, CONNECT_TIMEOUT_MS);
 
-      ws.on('open', () => ws.send(auth));
+      ws.on('open', () => {
+        if (this.stopped) ws.terminate();
+        else ws.send(auth);
+      });
       ws.on('message', (data: Buffer) => {
         this.lastDataAt = Date.now();
         let packets;
@@ -115,13 +136,18 @@ export class BiliLiveSource implements LiveSource {
         }
         for (const p of packets) {
           if (p.op === OP.AUTH_REPLY) {
+            if (this.stopped) {
+              ws.terminate();
+              return;
+            }
             clearTimeout(timer);
             if (!p.ok) {
+              pendingError = new Error(`认证被拒绝（code=${String(p.code)}）`);
               ws.terminate();
-              reject(new Error(`认证被拒绝（code=${String(p.code)}）`));
               return;
             }
             authed = true;
+            this.pendingSocket = null;
             this.ws = ws;
             this.startKeepAlive();
             resolve();
@@ -132,14 +158,15 @@ export class BiliLiveSource implements LiveSource {
       });
       ws.on('error', (err) => {
         if (!authed) {
-          clearTimeout(timer);
-          reject(err);
+          pendingError = err;
+          ws.terminate();
         }
       });
       ws.on('close', (code) => {
         clearTimeout(timer);
         if (!authed) {
-          reject(new Error(`认证前连接关闭（${code}）`));
+          if (this.pendingSocket === ws) this.pendingSocket = null;
+          reject(pendingError ?? new Error(`认证前连接关闭（${code}）`));
         } else if (this.ws === ws) {
           this.ws = null;
           this.stopKeepAlive();

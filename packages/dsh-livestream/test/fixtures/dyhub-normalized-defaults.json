@@ -1,0 +1,139 @@
+{
+  "provenance": {
+    "repository": "https://github.com/ymstar/dyhub",
+    "commit": "3a79c57d85c59289db3b77211b3ec01fae47d42c",
+    "method": "compiled normalize with protobuf-encoded synthetic messages",
+    "inputs": [
+      [
+        "WebcastLikeMessage",
+        "LikeMessage",
+        {
+          "user": {
+            "idStr": "12",
+            "nickName": "测试"
+          },
+          "count": 1
+        }
+      ],
+      [
+        "WebcastRoomUserSeqMessage",
+        "RoomUserSeqMessage",
+        {}
+      ],
+      [
+        "WebcastGiftMessage",
+        "GiftMessage",
+        {
+          "user": {
+            "idStr": "12",
+            "nickName": "测试"
+          },
+          "giftId": "5",
+          "repeatCount": 1,
+          "gift": {
+            "name": "花",
+            "combo": true
+          }
+        }
+      ],
+      [
+        "WebcastGiftMessage",
+        "GiftMessage",
+        {
+          "user": {
+            "idStr": "12",
+            "nickName": "测试"
+          },
+          "repeatCount": 1,
+          "gift": {
+            "name": "花",
+            "combo": true
+          }
+        }
+      ]
+    ]
+  },
+  "frames": [
+    {
+      "id": "1",
+      "roomId": "123",
+      "platform": "douyin",
+      "ts": 1794231879051,
+      "receivedAt": 1794231879051,
+      "user": {
+        "id": "12",
+        "nickname": "测试"
+      },
+      "rawMethod": "WebcastLikeMessage",
+      "type": "like",
+      "data": {
+        "count": 1,
+        "total": 0
+      }
+    },
+    {
+      "id": "2",
+      "roomId": "123",
+      "platform": "douyin",
+      "ts": 1794231879051,
+      "receivedAt": 1794231879051,
+      "rawMethod": "WebcastRoomUserSeqMessage",
+      "type": "room",
+      "data": {
+        "total": 0,
+        "popularity": 0,
+        "totalUser": 0
+      }
+    },
+    {
+      "id": "3",
+      "roomId": "123",
+      "platform": "douyin",
+      "ts": 1794231879052,
+      "receivedAt": 1794231879052,
+      "user": {
+        "id": "12",
+        "nickname": "测试"
+      },
+      "rawMethod": "WebcastGiftMessage",
+      "type": "gift",
+      "data": {
+        "giftId": "5",
+        "giftName": "花",
+        "diamondCount": 0,
+        "repeatCount": 1,
+        "comboCount": 0,
+        "groupCount": 0,
+        "repeatEnd": false,
+        "groupId": "0",
+        "combo": true,
+        "sendType": 0
+      }
+    },
+    {
+      "id": "4",
+      "roomId": "123",
+      "platform": "douyin",
+      "ts": 1794231879052,
+      "receivedAt": 1794231879052,
+      "user": {
+        "id": "12",
+        "nickname": "测试"
+      },
+      "rawMethod": "WebcastGiftMessage",
+      "type": "gift",
+      "data": {
+        "giftId": "0",
+        "giftName": "花",
+        "diamondCount": 0,
+        "repeatCount": 1,
+        "comboCount": 0,
+        "groupCount": 0,
+        "repeatEnd": false,
+        "groupId": "0",
+        "combo": true,
+        "sendType": 0
+      }
+    }
+  ]
+}

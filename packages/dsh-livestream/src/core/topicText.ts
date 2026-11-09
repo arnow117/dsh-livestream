@@ -12,6 +12,7 @@ import type { LastRecap } from './memory/memory';
 import { cleanName, cleanOwnerText, cleanText } from './safety';
 
 export interface TopicContext {
+  platform?: 'bilibili' | 'douyin';
   /** 直播记忆：她记得这位观众什么（没有返回 null） */
   viewerCard?: (user: LiveUser) => string | null;
   /** 开场白用：上一场的回顾 */
@@ -94,7 +95,10 @@ function body(topic: Topic, ctx: TopicContext): Body {
           ? `- ${who(e.user)} 开通了${e.levelName}${e.count > 1 ? ` ×${e.count}个月` : ''}`
           : `- ${who(e.user)} 送了 ${cleanName(e.giftName)} ×${e.count}`,
       );
-      return { what: ['刚刚有人支持了直播间：', ...lines, ...cardLines(topic.events.map((e) => e.user), ctx)], how: '逐个点名真诚地感谢，开心但不夸张，价格留在心里。', maxChars: 70 };
+      const how = topic.events.some((event) => event.kind === 'gift' && event.valueKnown === false)
+        ? '逐个点名真诚地感谢；礼物金额未知，不要猜价格。'
+        : '逐个点名真诚地感谢，开心但不夸张，价格留在心里。';
+      return { what: ['刚刚有人支持了直播间：', ...lines, ...cardLines(topic.events.map((e) => e.user), ctx)], how, maxChars: 70 };
     }
     case 'gifts': {
       const byUser = new Map<string, { user: LiveUser; gifts: string[] }>();
@@ -106,7 +110,12 @@ function body(topic: Topic, ctx: TopicContext): Body {
       }
       const lines = [...byUser.values()].map((e) => `- ${who(e.user)}：${e.gifts.join('、')}`);
       if (topic.more) lines.push(`- 还有另外 ${topic.more} 位也送了小礼物`);
-      return { what: ['这段时间收到的小礼物：', ...lines], how: '用一句轻快的话一起谢谢大家，上面列出名字的每一位都点到名。', maxChars: 90 };
+      const unknownValue = topic.events.some((gift) => gift.valueKnown === false);
+      return {
+        what: [unknownValue ? '这段时间收到的小礼物（金额未知）：' : '这段时间收到的小礼物：', ...lines],
+        how: '用一句轻快的话一起谢谢大家，上面列出名字的每一位都点到名。',
+        maxChars: 90,
+      };
     }
     case 'trend':
       return {
@@ -197,7 +206,7 @@ function body(topic: Topic, ctx: TopicContext): Body {
       };
     }
     case 'idle':
-      return { what: ['直播间这会儿没人发弹幕。'], how: '自己找点话说：讲一件你作为 AI 的真实小事，问观众一个具体、好回答的问题，或者找个 B 站视频放给大家一起看。', maxChars: 70 };
+      return { what: ['直播间这会儿没人发弹幕。'], how: ctx.platform === 'douyin' ? '自己找点话说：讲一件你作为 AI 的真实小事，问观众一个具体、好回答的问题。' : '自己找点话说：讲一件你作为 AI 的真实小事，问观众一个具体、好回答的问题，或者找个 B 站视频放给大家一起看。', maxChars: 70 };
   }
 }
 

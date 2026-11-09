@@ -9,6 +9,7 @@
  * 评论返回码：12015 要验证码、12051 重复评论、12002 / 12009 评论区关了、12025 太长、-509 / 12019 太快、-101 没登录。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { createBiliSession, type BiliSession } from '../core/platforms/bilibili/biliApi';
 import { biliImageUrl } from './biliProfile';
 
@@ -116,6 +117,7 @@ export class BiliSocial {
 
   private async get<T>(url: string, referer = 'https://www.bilibili.com/'): Promise<T> {
     const s = await this.auth();
+    assertBiliCurrent();
     const res = await fetch(url, { headers: { 'User-Agent': UA, Referer: referer, Origin: referer.replace(/\/$/, ''), Cookie: s.cookie }, signal: AbortSignal.timeout(TIMEOUT_MS) });
     const body = (await res.json()) as { code: number; message?: string; data?: T };
     if (body.code !== 0) throw new SocialError(body.code, body.message ?? '');
@@ -126,6 +128,7 @@ export class BiliSocial {
     const s = await this.auth();
     const csrf = cookieValue(s.cookie, 'bili_jct');
     if (!s.loggedIn || !csrf) throw new SocialError(-101, '没登录');
+    assertBiliCurrent();
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Origin: 'https://www.bilibili.com', Cookie: s.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -252,6 +255,7 @@ export class BiliSocial {
     if (!data.max_seqno) return;
     const s = await this.auth();
     const csrf = cookieValue(s.cookie, 'bili_jct') ?? '';
+    assertBiliCurrent();
     const res = await fetch('https://api.vc.bilibili.com/session_svr/v1/session_svr/update_ack', {
       method: 'POST',
       headers: { 'User-Agent': UA, Referer: 'https://message.bilibili.com/', Origin: 'https://message.bilibili.com', Cookie: s.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -276,10 +280,12 @@ export class BiliSocial {
       option: { aigc: 2, private_pub: 0 },
     };
     const headers = { 'User-Agent': UA, Referer: 'https://t.bilibili.com/', Origin: 'https://t.bilibili.com', Cookie: s.cookie, 'Content-Type': 'application/json' };
+    assertBiliCurrent();
     const check = (await (await fetch(`https://api.bilibili.com/x/dynamic/feed/create/submit_check?csrf=${encodeURIComponent(csrf)}`, {
       method: 'POST', headers, body: JSON.stringify({ content: dynReq.content, pics: dynReq.pics, scene: dynReq.scene, create_option: dynReq.option }), signal: AbortSignal.timeout(TIMEOUT_MS),
     })).json()) as { code: number; message?: string };
     if (check.code !== 0) throw new SocialError(check.code, check.message ?? '');
+    assertBiliCurrent();
     const res = (await (await fetch(`https://api.bilibili.com/x/dynamic/feed/create/dyn?platform=web&csrf=${encodeURIComponent(csrf)}`, {
       method: 'POST', headers, body: JSON.stringify({ dyn_req: dynReq }), signal: AbortSignal.timeout(TIMEOUT_MS),
     })).json()) as { code: number; message?: string; data?: { dyn_id_str?: string; dyn_id?: number } };
@@ -316,6 +322,7 @@ export class BiliSocial {
     const s = await this.auth();
     const csrf = cookieValue(s.cookie, 'bili_jct');
     if (!s.loggedIn || !csrf) throw new SocialError(-101, '没登录');
+    assertBiliCurrent();
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'User-Agent': UA, Referer: 'https://live.bilibili.com/', Origin: 'https://live.bilibili.com', Cookie: s.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },

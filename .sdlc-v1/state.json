@@ -33,6 +33,40 @@
         "commit": "42929de3c440dcd9a596b47f9e6482a29ce9dc7e",
         "result": "pass"
       }
+    },
+    "FEAT-002": {
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-09T13:28:36Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-002.engineering.md",
+      "id": "FEAT-002",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-002",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "TASK-002": {
+          "depends_on": [],
+          "id": "TASK-002",
+          "status": "done",
+          "title": "集成抖音只读房间事件与本地舞台互动",
+          "updated_at": "2026-11-09T14:40:48Z"
+        }
+      },
+      "updated_at": "2026-11-09T14:40:48Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
     }
   },
   "requirements": {
@@ -48,6 +82,19 @@
       "status": "released",
       "title": "直播语音配置热更新与私有试听",
       "updated_at": "2026-11-09T12:47:29Z"
+    },
+    "REQ-002": {
+      "created_at": "2026-11-09T13:12:47Z",
+      "depends_on": [],
+      "description": "调研并二次验证开源采集方案，将抖音房间事件接入现有 GLM、TTS 和本地舞台，保持 B 站能力隔离与兼容。",
+      "domain": "livestream",
+      "feature_id": "FEAT-002",
+      "id": "REQ-002",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-002.product.md",
+      "status": "in_delivery",
+      "title": "抖音直播间只读接入与本地舞台互动",
+      "updated_at": "2026-11-09T14:40:48Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

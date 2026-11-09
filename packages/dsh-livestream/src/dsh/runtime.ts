@@ -32,9 +32,14 @@ import type { CharacterManifest, GameSource } from '../stage/protocol';
 import { gameRect } from '../stage/layout';
 import { connectObs, showGameSources } from '../body/obs';
 import type { OwnerPace } from '../core/attention/attention';
+import { assertBiliCurrent, beginBiliOperation, inBiliOperation } from '../shared/biliOperations';
+import { parseDouyinRoomId } from '../shared/liveTarget';
+import type { LivePlatform } from '../core/live';
 import { defaultTtsSettings, mergeTtsSettings, type TtsSettings } from '../shared/ttsSettings';
 
 export interface Settings {
+  livePlatform: LivePlatform;
+  douyinRoomId: string;
   roomId: number | null;
   character: string;
   template: string;
@@ -123,6 +128,7 @@ export const DEFAULT_BOARD = [
 ].join('\n');
 
 const LOCAL_BOARD = '本地彩排\n和主人聊天，回应模拟观众的弹幕与礼物';
+export const DOUYIN_BOARD = '抖音只读接入 / 本地舞台\n和主人聊天，回应直播间观众';
 
 /** 机密的名字（DSH 凭据）。豆包的和 dsh-game 共用 */
 export const SECRETS = {
@@ -158,6 +164,8 @@ function loadSettings(): Settings {
     // 第一次用
   }
   const settings: Settings = {
+    livePlatform: 'bilibili',
+    douyinRoomId: '',
     roomId: null,
     character: 'dafeiyu',
     template: 'default',
@@ -183,6 +191,12 @@ function loadSettings(): Settings {
     blocked: [],
     ...saved,
   };
+  if (settings.livePlatform !== 'bilibili' && settings.livePlatform !== 'douyin') settings.livePlatform = 'bilibili';
+  try {
+    settings.douyinRoomId = settings.douyinRoomId ? parseDouyinRoomId(settings.douyinRoomId) : '';
+  } catch {
+    settings.douyinRoomId = '';
+  }
   settings.tts = mergeTtsSettings(defaultTtsSettings(process.env, saved.voice ?? ''), saved.tts ?? {}, { allowInvalidCurrent: true });
   settings.voice = settings.tts.doubaoVoice;
   if (!settings.stageToken) {
@@ -204,6 +218,11 @@ function saveSettings(next: Settings): void {
 }
 
 export const settings: Settings = loadSettings();
+const platformListeners = new Set<() => void>();
+export function onPlatformChange(listener: () => void): () => void {
+  platformListeners.add(listener);
+  return () => platformListeners.delete(listener);
+}
 
 export function updateSettings(patch: Partial<Settings>): Settings {
   let tts = patch.tts ? mergeTtsSettings(settings.tts, patch.tts) : settings.tts;
@@ -213,7 +232,13 @@ export function updateSettings(patch: Partial<Settings>): Settings {
   }
   const next = { ...settings, ...patch, tts, voice: tts.doubaoVoice };
   saveSettings(next);
+  const platformChanged = next.livePlatform !== settings.livePlatform;
   Object.assign(settings, next);
+  if (platformChanged) {
+    for (const listener of platformListeners) {
+      try { listener(); } catch (error) { console.warn('[dsh-livestream] 更新平台工具失败：', error); }
+    }
+  }
   if (patch.tts || patch.voice !== undefined || patch.character !== undefined) {
     for (const entry of prepared.values()) entry.controller.abort();
     prepared.clear();
@@ -293,32 +318,38 @@ export const show = new LiveShow(
   },
   { dataDir, names: currentCharacter()?.names ?? [], idleAfterMs: () => settings.idleAfterSec * 1000, pace: () => ownerPace(settings.pace), board: currentBoard, title: () => settings.liveTitle, gameChatGapMs: () => (settings.gameChatGapSec ?? 15) * 1000, blocked: (uid) => settings.blocked.some((b) => b.uid === uid) },
 );
+show.setPlatform(settings.livePlatform);
 
 /**
  * 游戏画面上 OBS：窗口画面（Minecraft 摄像机客户端）由 OBS 抓，摆在舞台的游戏位上、垫在舞台下面；
  * 网页画面舞台自己放，OBS 里不用加东西。连不上 OBS（没开、只在本机预览）就算了
  */
 export function placeGame(source: GameSource | null): void {
-  if (localRehearsal) return;
+  if (localRehearsal || settings.livePlatform !== 'bilibili') return;
   const template = packs.template(settings.template);
   const windowSource = source && 'window' in source ? source : null;
-  void (async () => {
+  const lease = beginBiliOperation();
+  void inBiliOperation(lease, async () => {
     let obs: Awaited<ReturnType<typeof connectObs>> | null = null;
     try {
       obs = await connectObs(false);
+      assertBiliCurrent();
       await showGameSources(obs, windowSource, template ? gameRect(template) : { x: 0, y: 0, w: 1920, h: 1080 });
       hooks.log('info', windowSource ? `游戏画面上舞台：${windowSource.window}` : '游戏画面撤下');
     } catch (err) {
       hooks.log('warn', `游戏画面没能放进 OBS：${(err as Error).message}`);
     } finally {
       obs?.close();
+      lease.release();
     }
-  })();
+  });
 }
 
 /** 告示板换了：舞台马上换（之后连上的舞台页也拿到最新的） */
 function currentBoard(): string {
-  return localRehearsal && settings.boardText === DEFAULT_BOARD ? LOCAL_BOARD : settings.boardText;
+  if (settings.boardText !== DEFAULT_BOARD) return settings.boardText;
+  if (settings.livePlatform === 'douyin') return DOUYIN_BOARD;
+  return localRehearsal ? LOCAL_BOARD : settings.boardText;
 }
 
 export function publishBoard(): void {
@@ -398,7 +429,11 @@ export const server = new StageServer({
 });
 
 export async function cookie(): Promise<string> {
-  return hooks.secret(SECRETS.cookie);
+  if (localRehearsal || settings.livePlatform !== 'bilibili') throw new Error('当前模式不使用 B 站 Cookie');
+  assertBiliCurrent();
+  const value = await hooks.secret(SECRETS.cookie);
+  assertBiliCurrent();
+  return value;
 }
 
 /** 推流到 B 站：开播拿推流码、OBS 推流、下播 */
@@ -421,7 +456,12 @@ export const broadcast = new Broadcast({
     updateSettings({ roomId, ownRooms: [...new Set([...settings.ownRooms, roomId])] });
     const status = show.status();
     if (status.roomId !== roomId || status.live.state === 'idle' || status.live.state === 'error') {
-      void cookie().then((c) => show.connect(roomId, c, true));
+      const lease = beginBiliOperation();
+      void inBiliOperation(lease, async () => {
+        const currentCookie = await cookie();
+        lease.assertCurrent();
+        show.connect(roomId, currentCookie, true);
+      }).catch(() => {}).finally(() => lease.release());
     } else {
       show.rememberViewers = true;
     }
@@ -470,8 +510,12 @@ export const social = new SocialManager(new BiliSocial(cookie));
 /** 直播时每隔一会儿看一眼收件箱：开播以后新来的私信、回复、@，没别的事时告诉她 */
 const INBOX_EVERY_MS = 90_000;
 setInterval(() => {
-  if (!show.isOnAir || localRehearsal) return;
-  void social.newSince().then((lines) => { if (lines.length) show.notifyInbox(lines); }).catch(() => {});
+  if (!show.isOnAir || localRehearsal || settings.livePlatform !== 'bilibili') return;
+  const lease = beginBiliOperation();
+  void inBiliOperation(lease, () => social.newSince())
+    .then((lines) => { lease.assertCurrent(); if (lines.length) show.notifyInbox(lines); })
+    .catch(() => {})
+    .finally(() => lease.release());
 }, INBOX_EVERY_MS).unref?.();
 
 /** 她搜视频、看视频、在舞台上放视频（开播账号的 Cookie：AI 字幕要登录才给） */

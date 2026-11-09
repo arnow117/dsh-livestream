@@ -1,6 +1,15 @@
 import { test } from '@e2e-dev/web';
 import { expect } from 'e2e';
 
+async function blockShared(browser: any): Promise<string[]> {
+  const blocked: string[] = [];
+  await browser.route(/^https?:\/\/(?:127\.0\.0\.1|localhost):(?:3080|3081|7390|8757)(?:\/|$)/, async (route: any) => {
+    blocked.push(route.request.url);
+    await route.abort();
+  });
+  return blocked;
+}
+
 async function reset(baseUrl: string) {
   await fetch(`${baseUrl}/__reset`, { method: 'POST' });
 }
@@ -9,6 +18,7 @@ async function fixture(baseUrl: string) {
 }
 
 test('draft preview is private and saved voice survives reload', async ({ app, screen, browser }) => {
+  const blocked = await blockShared(browser);
   await reset(app.baseUrl);
   await browser.addInitScript(() => {
     const errors: string[] = [];
@@ -58,10 +68,14 @@ test('draft preview is private and saved voice survives reload', async ({ app, s
   data = await fixture(app.baseUrl);
   expect(data.calls[1]).toMatchObject({ backend: 'yovoice', voiceDescription: '新的温暖声音' });
   expect(await browser.evaluate(() => (window as unknown as { testErrors: string[] }).testErrors)).toEqual([]);
+  await expect.poll(async () => (await fixture(app.baseUrl)).stageRequests).toBeGreaterThan(0);
+  expect((await fixture(app.baseUrl)).stageUrl).toContain(app.baseUrl);
+  expect(blocked).toEqual([]);
   await app.screenshot('voice-saved');
 });
 
-test('switching backends preserves drafts and sends adapter parameters', async ({ app, screen }) => {
+test('switching backends preserves drafts and sends adapter parameters', async ({ app, screen, browser }) => {
+  const blocked = await blockShared(browser);
   await reset(app.baseUrl);
   await app.open('/');
   await screen.getByRole('button', '设置').tap();
@@ -86,10 +100,12 @@ test('switching backends preserves drafts and sends adapter parameters', async (
   const failed = await fixture(app.baseUrl);
   expect(failed.calls).toHaveLength(3);
   expect(failed.calls[2].backend).toBe('yovoice');
+  expect(blocked).toEqual([]);
   await app.screenshot('voice-backends');
 });
 
-test('cancelling and editing aborts the old preview and allows a new one', async ({ app, screen }) => {
+test('cancelling and editing aborts the old preview and allows a new one', async ({ app, screen, browser }) => {
+  const blocked = await blockShared(browser);
   await reset(app.baseUrl);
   await app.open('/');
   await screen.getByRole('button', '设置').tap();
@@ -114,5 +130,6 @@ test('cancelling and editing aborts the old preview and allows a new one', async
   await screen.getByRole('button', '试听', { exact: true }).tap();
   await expect(screen.getByRole('status')).toHaveText('试听已准备好');
   await screen.getByRole('button', '关闭').tap();
+  expect(blocked).toEqual([]);
   await app.screenshot('voice-closed');
 });

@@ -20,6 +20,7 @@ import type {
   LiveUpdate,
 } from './live';
 import { createLiveSource, type LiveSource } from './platforms';
+import { DOUYIN_CACHE_LIMIT, DOUYIN_CACHE_TTL_MS } from './platforms/douyin/douyinSource';
 
 const RECENT_LIMIT = 300;
 const SEEN_LIMIT = 4000;
@@ -46,7 +47,7 @@ export class LiveHub {
   private recent: LiveEvent[] = [];
   private seen = new Set<string>();
   private seenOrder: string[] = [];
-  private gifts = new Map<string, LiveGiftEvent>();
+  private gifts = new Map<string, { event: LiveGiftEvent; observedAt: number }>();
   private timestamps = new Map<LiveEventKind, number[]>();
 
   private listeners = new Set<LiveEventListener>();
@@ -69,11 +70,14 @@ export class LiveHub {
     const same = this.source && this.config
       && this.config.platform === config.platform
       && this.config.roomId === config.roomId
-      && this.config.cookie === config.cookie;
+      && (this.config.platform === 'bilibili' && config.platform === 'bilibili'
+        ? this.config.cookie === config.cookie
+        : this.config.platform === 'douyin' && config.platform === 'douyin'
+          && this.config.bridgeUrl === config.bridgeUrl);
     if (same) return this.status();
 
     this.disconnect();
-    this.config = { platform: config.platform, roomId: config.roomId, cookie: config.cookie };
+    this.config = { ...config };
     this.room = { platform: config.platform, roomId: config.roomId };
     this.stats = {};
     this.recent = [];
@@ -121,6 +125,15 @@ export class LiveHub {
     this.state = 'idle';
     this.connectedAt = undefined;
     this.loggedIn = false;
+    this.room = undefined;
+    this.stats = {};
+    this.lastError = undefined;
+    this.recent = [];
+    this.seen.clear();
+    this.seenOrder = [];
+    this.gifts.clear();
+    this.timestamps.clear();
+    this.pending = [];
     this.scheduleFlush();
     return this.status();
   }
@@ -163,16 +176,22 @@ export class LiveHub {
     let out: LiveEvent = event;
 
     if (event.kind === 'gift') {
-      const prev = this.gifts.get(event.id);
-      if (prev && now - prev.ts <= GIFT_COMBO_MS) {
+      const previous = this.gifts.get(event.id);
+      const prev = previous?.event;
+      const comboWindow = event.platform === 'douyin' ? DOUYIN_CACHE_TTL_MS : GIFT_COMBO_MS;
+      const previousAt = event.platform === 'douyin' ? previous?.observedAt : prev?.ts;
+      if (prev && previousAt !== undefined && now - previousAt <= comboWindow) {
         prev.count += event.count;
         prev.valueYuan = Math.round((prev.valueYuan + event.valueYuan) * 1000) / 1000;
         prev.ts = event.ts;
         out = prev;
         isUpdate = true;
+        this.gifts.delete(event.id);
+        this.gifts.set(event.id, { event: prev, observedAt: now });
       } else {
         out = { ...event, id: prev ? `${event.id}:${now}` : event.id };
-        this.gifts.set(event.id, out as LiveGiftEvent);
+        this.gifts.delete(event.id);
+        this.gifts.set(event.id, { event: out as LiveGiftEvent, observedAt: now });
       }
       this.pruneGifts(now);
     } else {
@@ -212,9 +231,13 @@ export class LiveHub {
   }
 
   private pruneGifts(now: number): void {
-    for (const [id, gift] of this.gifts) {
-      if (now - gift.ts > GIFT_COMBO_MS) this.gifts.delete(id);
+    for (const [id, entry] of this.gifts) {
+      const gift = entry.event;
+      const comboWindow = gift.platform === 'douyin' ? DOUYIN_CACHE_TTL_MS : GIFT_COMBO_MS;
+      const observedAt = gift.platform === 'douyin' ? entry.observedAt : gift.ts;
+      if (now - observedAt > comboWindow) this.gifts.delete(id);
     }
+    while (this.gifts.size > DOUYIN_CACHE_LIMIT) this.gifts.delete(this.gifts.keys().next().value!);
   }
 
   private scheduleFlush(): void {

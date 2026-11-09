@@ -1,0 +1,157 @@
+import { createServer } from 'node:http';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { WebSocketServer } from 'ws';
+
+const port = Number(process.argv[2]);
+const dir = await mkdtemp(join(tmpdir(), 'douyin-ui-'));
+const bridge = createServer((_request, response) => {
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ room: { roomId: room, status: bridgeStatus } }));
+});
+const sockets = new WebSocketServer({ server: bridge });
+let bridgeStatus = 'connecting';
+let room = '';
+let subscriptions = 0;
+let selectedPreset = '';
+const prompts: string[] = [];
+sockets.on('connection', (socket, request) => {
+  subscriptions++;
+  room = new URL(request.url ?? '/', 'http://localhost').searchParams.get('roomId') ?? '';
+  socket.send(JSON.stringify({ type: '__connected', roomId: room, room: { roomId: room, status: bridgeStatus } }));
+});
+await new Promise<void>((resolve) => bridge.listen(0, '127.0.0.1', resolve));
+const address = bridge.address();
+if (!address || typeof address === 'string') throw new Error('missing bridge port');
+process.env.DSH_HOME = dir;
+process.env.DSH_LIVESTREAM_LOCAL_REHEARSAL = '1';
+process.env.DSH_LIVESTREAM_TTS_BACKEND = 'macos';
+process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL = `http://127.0.0.1:${address.port}`;
+const host = await import('../../src/dsh/index');
+const runtime = await import('../../src/dsh/runtime');
+Object.defineProperty(runtime.server, 'url', { get: () => `http://127.0.0.1:${port}/__stage?token=fixture` });
+let stageRequests = 0;
+(runtime.show as any).hooks.push = async (_session: string, prompt: string) => { prompts.push(prompt); return true; };
+(runtime.show as any).hooks.synthesize = async () => null;
+const routes = new Map<string, (request: Request) => Response | Promise<Response>>();
+host.apply({
+  effect(effect: () => unknown, label?: string) {
+    if (['state', 'settings', 'connect', 'disconnect', 'onair', 'offair', 'events', 'simulate'].includes(label ?? '')) effect();
+  },
+  provide() {},
+  connection: { fetch: { register(route: { path: string; fetch: (request: Request) => Response }) { routes.set(route.path, route.fetch); return () => {}; } } },
+});
+function send(frame: unknown): void {
+  for (const socket of sockets.clients) socket.send(JSON.stringify(frame));
+}
+const app = createServer(async (req, res) => {
+  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
+  if (url.pathname === '/') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script src="/client.js"></script></body></html>');
+    return;
+  }
+  if (url.pathname === '/__stage') {
+    stageRequests++;
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><title>本地测试舞台</title>');
+    return;
+  }
+  if (url.pathname === '/client.js') {
+    res.writeHead(200, { 'content-type': 'application/javascript' });
+    res.end(await readFile(new URL('./client.js', import.meta.url)));
+    return;
+  }
+  if (url.pathname === '/__reset') {
+    runtime.show.endLive();
+    runtime.show.dispose();
+    runtime.updateSettings({ livePlatform: 'bilibili', douyinRoomId: '', roomId: null });
+    runtime.show.setPlatform('bilibili');
+    bridgeStatus = 'connecting';
+    room = '';
+    subscriptions = 0;
+    prompts.length = 0;
+    selectedPreset = '';
+    res.end('ok');
+    return;
+  }
+  if (url.pathname === '/__live') {
+    bridgeStatus = 'live';
+    send({ id: 'status-live', type: 'roomStatus', platform: 'douyin', roomId: room, ts: Date.now(), data: { status: 'live' } });
+    res.end('ok');
+    return;
+  }
+  if (url.pathname === '/__error') {
+    bridgeStatus = 'error';
+    send({ type: '__connected', roomId: room, room: { roomId: room, status: 'connecting', progress: { step: 'error', message: '测试故障' } } });
+    res.end('ok');
+    return;
+  }
+  if (url.pathname === '/__rearm') {
+    bridgeStatus = 'connecting';
+    res.end('ok');
+    return;
+  }
+  if (url.pathname === '/__drop') {
+    for (const socket of sockets.clients) socket.terminate();
+    res.end('ok');
+    return;
+  }
+  if (url.pathname === '/__chat') {
+    runtime.show.turnEnded('fake-brain');
+    send({ id: 'chat-1', type: 'chat', platform: 'douyin', roomId: room, ts: Date.now(), user: { id: '42', nickname: '测试观众' }, data: { content: '测试弹幕' } });
+    res.end('ok');
+    return;
+  }
+  if (url.pathname === '/__preset') {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    selectedPreset = Buffer.concat(chunks).toString();
+    res.end('ok');
+    return;
+  }
+  if (url.pathname === '/__fixture') {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ subscriptions, selectedPreset, prompts, stageRequests, stageUrl: runtime.server.url, status: runtime.show.status(), settings: runtime.settings }));
+    return;
+  }
+  const handler = routes.get(url.pathname);
+  if (!handler) { res.writeHead(404); res.end(); return; }
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  const controller = new AbortController();
+  res.on('close', () => controller.abort());
+  try {
+    const response = await handler(new Request(url, {
+      method: req.method,
+      headers: { 'content-type': 'application/json' },
+      ...(req.method === 'POST' ? { body: Buffer.concat(chunks) } : {}),
+      signal: controller.signal,
+    }));
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    if (!response.body) { res.end(); return; }
+    const reader = response.body.getReader();
+    while (!controller.signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(value);
+    }
+    res.end();
+  } catch {
+    if (!res.destroyed) { res.writeHead(500); res.end(); }
+  }
+});
+app.listen(port, '127.0.0.1');
+const shutdown = () => {
+  runtime.show.dispose();
+  for (const socket of sockets.clients) socket.terminate();
+  sockets.close();
+  app.closeAllConnections();
+  bridge.closeAllConnections();
+  app.close();
+  bridge.close();
+  void rm(dir, { recursive: true, force: true }).then(() => process.exit(0));
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

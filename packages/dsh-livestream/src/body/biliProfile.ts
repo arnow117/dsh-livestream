@@ -10,6 +10,7 @@
  * 这些接口不登录也能用，但不带 Cookie 时会随机被风控（412，实测 recArchivesByKeywords 时好时坏）：有开播账号的 Cookie 就带上。
  */
 
+import { assertBiliCurrent } from '../shared/biliOperations';
 import { cleanText } from '../core/safety';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -45,6 +46,7 @@ export interface BiliProfile {
 
 async function get<T>(url: string, uid: string, cookie: string): Promise<T | null> {
   try {
+    assertBiliCurrent();
     const res = await fetch(url, {
       headers: { 'User-Agent': UA, Referer: `https://space.bilibili.com/${uid}`, Origin: 'https://space.bilibili.com', ...(cookie ? { Cookie: cookie } : {}) },
       signal: AbortSignal.timeout(8_000),

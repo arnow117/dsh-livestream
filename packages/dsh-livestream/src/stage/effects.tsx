@@ -66,7 +66,7 @@ const MAX_QUEUE = 3;
 /** 卡片、横幅上那句话：谁、干了什么 */
 function describe(e: FxEvent): { title: string; detail: string } {
   switch (e.kind) {
-    case 'gift': return { title: '感谢投喂', detail: `送出 ${e.gift} ×${e.count}` };
+    case 'gift': return { title: '感谢投喂', detail: `送出 ${e.gift} ×${e.count}${e.valueKnown === false ? '（金额未知）' : ''}` };
     case 'membership': return { title: '欢迎上船', detail: `开通了${e.level}${e.count > 1 ? ` ×${e.count}` : ''}` };
     case 'superchat': return { title: `醒目留言 ¥${e.yuan}`, detail: e.text };
     case 'follow': return { title: '感谢关注', detail: '关注了直播间' };

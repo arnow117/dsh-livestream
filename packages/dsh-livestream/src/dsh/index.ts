@@ -21,7 +21,10 @@ import { splitByMood } from '../core/moodText';
 import { speakable } from '../core/speakable';
 import { GUEST_VOICE } from '../body/voices';
 import { mergeTtsSettings } from '../shared/ttsSettings';
-import { agentReady, asr, broadcast, cookie, DEFAULT_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { parseDouyinRoomId } from '../shared/liveTarget';
+import { assertBiliCurrent, beginBiliOperation, biliOperationsActive, inBiliOperation, invalidateTarget } from '../shared/biliOperations';
+import { normalizeDouyinBridgeUrl } from '../core/platforms/douyin/douyinSource';
+import { agentReady, asr, broadcast, cookie, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
@@ -43,17 +46,25 @@ async function body<T>(request: Request): Promise<T> {
 }
 
 function state() {
+  let douyinBridgeUrl: string;
+  try {
+    douyinBridgeUrl = normalizeDouyinBridgeUrl(process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL ?? 'http://127.0.0.1:8757');
+  } catch {
+    douyinBridgeUrl = '采集地址无效，请检查部署配置';
+  }
   return {
     ok: true,
     show: show.status(),
     broadcast: broadcast.status(),
     settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined },
     runtime: { localRehearsal, ttsBackend: settings.tts.backend },
+    douyinBridgeUrl,
     stageUrl: server.url,
     characters: packs.list('characters'),
     templates: packs.list('templates'),
     asr: { available: asr.available },
     defaultBoard: DEFAULT_BOARD,
+    douyinDefaultBoard: DOUYIN_BOARD,
   };
 }
 
@@ -97,12 +108,12 @@ let simSeq = 0;
 function simulated(input: { kind?: string; name?: string; text?: string; gift?: string; count?: number; yuan?: number; guard?: number }): LiveEvent | null {
   const name = (input.name ?? '').trim() || '模拟观众';
   const user: LiveUser = { id: `${SIMULATED_PREFIX}${name}`, name, ...(input.guard ? { guardLevel: input.guard } : {}) };
-  const base = { id: `sim-${Date.now()}-${++simSeq}`, platform: 'bilibili' as const, ts: Date.now(), user };
+  const base = { id: `sim-${Date.now()}-${++simSeq}`, platform: settings.livePlatform, ts: Date.now(), user };
   switch (input.kind) {
     case 'chat': return input.text?.trim() ? { ...base, kind: 'chat', text: input.text.trim() } : null;
-    case 'gift': return { ...base, kind: 'gift', giftName: input.gift || '小花花', count: input.count ?? 1, valueYuan: input.yuan ?? 0.1 };
-    case 'superchat': return input.text?.trim() ? { ...base, kind: 'superchat', text: input.text.trim(), valueYuan: input.yuan ?? 30 } : null;
-    case 'membership': return { ...base, kind: 'membership', levelName: '舰长', level: 3, count: 1, valueYuan: 138 };
+    case 'gift': return { ...base, kind: 'gift', giftName: input.gift || '小花花', count: input.count ?? 1, valueYuan: settings.livePlatform === 'douyin' ? 0 : input.yuan ?? 0.1, ...(settings.livePlatform === 'douyin' ? { valueKnown: false } : {}) };
+    case 'superchat': return settings.livePlatform === 'bilibili' && input.text?.trim() ? { ...base, kind: 'superchat', text: input.text.trim(), valueYuan: input.yuan ?? 30 } : null;
+    case 'membership': return settings.livePlatform === 'douyin' ? null : { ...base, kind: 'membership', levelName: '舰长', level: 3, count: 1, valueYuan: 138 };
     case 'enter': return { ...base, kind: 'enter' };
     case 'follow': return { ...base, kind: 'follow' };
     default: return null;
@@ -122,47 +133,59 @@ const RESUME_WITHIN_MS = 10 * 60_000;
  * 她的 agent 起来以后推消息、念话的那套也就接上了）、重连直播间、接上还在推的 OBS，告诉她断了多久。
  */
 async function resumeLive(ctx: HostContext, stopped: () => boolean): Promise<void> {
-  if (localRehearsal) return;
-  const saved = takeLive();
-  if (!saved) return;
-  if (Date.now() - saved.at > RESUME_WITHIN_MS) {
-    show.closeStale(saved);
-    return;
+  if (localRehearsal || settings.livePlatform !== 'bilibili') return;
+  const lease = beginBiliOperation();
+  try {
+    await inBiliOperation(lease, async () => {
+      const saved = takeLive();
+      if (!saved || saved.platform === 'douyin' || typeof saved.roomId === 'string') return;
+      if (Date.now() - saved.at > RESUME_WITHIN_MS) {
+        show.closeStale(saved);
+        return;
+      }
+      // DSH 的服务和她的 agent 要一会儿才起来：最多等一分钟
+      const deadline = Date.now() + 60_000;
+      let resumed = false;
+      while (!stopped() && Date.now() < deadline) {
+        assertBiliCurrent();
+        const controller = ctx.get?.('sessionController');
+        if (controller?.agents?.resolveAgent) {
+          const result = await controller.agents.resolveAgent(saved.sessionId).catch((err: Error) => ({ error: err }));
+          if (!('error' in result)) { resumed = true; break; }
+          console.warn(`[dsh-livestream] 恢复她的会话失败：${String(result.error?.message ?? result.error)}`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (!resumed || stopped()) {
+        show.closeStale(saved);
+        return;
+      }
+      // 游戏线的会话也要接回来（不然交给它的话一直送不出去，游戏也开不回来）；接不回来就这场不用游戏线
+      if (saved.gameSessionId) {
+        assertBiliCurrent();
+        const controller = ctx.get?.('sessionController');
+        const result = await controller.agents.resolveAgent(saved.gameSessionId).catch((err: Error) => ({ error: err }));
+        if ('error' in result) {
+          console.warn(`[dsh-livestream] 恢复游戏线的会话失败：${String(result.error?.message ?? result.error)}`);
+          saved.gameSessionId = undefined;
+          saved.playing = undefined;
+        }
+      }
+      // 等 agent 子插件把推消息的钩子装上
+      while (!stopped() && Date.now() < deadline && !agentReady()) await new Promise((r) => setTimeout(r, 500));
+      assertBiliCurrent();
+      if (saved.roomId) show.connect(saved.roomId, await cookie(), settings.ownRooms.includes(saved.roomId));
+      assertBiliCurrent();
+      show.resumeLive(saved);
+      if (saved.broadcasting && saved.roomId) await broadcast.adopt(saved.roomId);
+      assertBiliCurrent();
+      const pushing = saved.broadcasting ? `，推流${broadcast.streaming ? '接上了' : '没接上（OBS 已经不在推了）'}` : '（彩排，没在推流）';
+      console.warn(`[dsh-livestream] 接着播：会话 ${saved.sessionId}，断了 ${Math.round((Date.now() - saved.at) / 1000)} 秒${pushing}`);
+    });
+  } finally {
+    lease.release();
   }
-  // DSH 的服务和她的 agent 要一会儿才起来：最多等一分钟
-  const deadline = Date.now() + 60_000;
-  let resumed = false;
-  while (!stopped() && Date.now() < deadline) {
-    const controller = ctx.get?.('sessionController');
-    if (controller?.agents?.resolveAgent) {
-      const result = await controller.agents.resolveAgent(saved.sessionId).catch((err: Error) => ({ error: err }));
-      if (!('error' in result)) { resumed = true; break; }
-      console.warn(`[dsh-livestream] 恢复她的会话失败：${String(result.error?.message ?? result.error)}`);
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-  if (!resumed || stopped()) {
-    show.closeStale(saved);
-    return;
-  }
-  // 游戏线的会话也要接回来（不然交给它的话一直送不出去，游戏也开不回来）；接不回来就这场不用游戏线
-  if (saved.gameSessionId) {
-    const controller = ctx.get?.('sessionController');
-    const result = await controller.agents.resolveAgent(saved.gameSessionId).catch((err: Error) => ({ error: err }));
-    if ('error' in result) {
-      console.warn(`[dsh-livestream] 恢复游戏线的会话失败：${String(result.error?.message ?? result.error)}`);
-      saved.gameSessionId = undefined;
-      saved.playing = undefined;
-    }
-  }
-  // 等 agent 子插件把推消息的钩子装上
-  while (!stopped() && Date.now() < deadline && !agentReady()) await new Promise((r) => setTimeout(r, 500));
-  if (saved.roomId) show.connect(saved.roomId, await cookie(), settings.ownRooms.includes(saved.roomId));
-  show.resumeLive(saved);
-  if (saved.broadcasting && saved.roomId) await broadcast.adopt(saved.roomId);
-  const pushing = saved.broadcasting ? `，推流${broadcast.streaming ? '接上了' : '没接上（OBS 已经不在推了）'}` : '（彩排，没在推流）';
-  console.warn(`[dsh-livestream] 接着播：会话 ${saved.sessionId}，断了 ${Math.round((Date.now() - saved.at) / 1000)} 秒${pushing}`);
 }
 
 export function apply(ctx: HostContext): void {
@@ -204,8 +227,26 @@ export function apply(ctx: HostContext): void {
   });
   ctx.effect(() => () => show.showGame(null), 'dsh-livestream game screen');
 
-  const route = (path: string, methods: string[], fetch: (request: Request) => Response | Promise<Response>, label: string) =>
-    ctx.effect(() => ctx.connection.fetch.register({ path, methods, requestBody: 'buffered', fetch }), label);
+  const biliRoutes = new Set(['account', 'login start', 'login poll', 'broadcast start', 'broadcast stop', 'obs check']);
+  const route = (path: string, methods: string[], handler: (request: Request) => Response | Promise<Response>, label: string) =>
+    ctx.effect(() => ctx.connection.fetch.register({
+      path, methods, requestBody: 'buffered',
+      fetch: async (request: Request) => {
+        if (!biliRoutes.has(label)) return handler(request);
+        if (settings.livePlatform !== 'bilibili' || localRehearsal) {
+          if (label === 'account') return json({ ok: true, account: null });
+          return fail('当前模式不使用 B 站或 OBS');
+        }
+        const lease = beginBiliOperation();
+        try {
+          const response = await inBiliOperation(lease, () => handler(request));
+          if (label !== 'broadcast stop') lease.assertCurrent();
+          return response;
+        } finally {
+          lease.release();
+        }
+      },
+    }), label);
 
   route('/api/dsh-livestream/state', ['GET'], () => json(state()), 'state');
 
@@ -213,6 +254,14 @@ export function apply(ctx: HostContext): void {
     const patch = await body<Partial<Settings> | null>(request);
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return fail('设置无效');
     const next: Partial<Settings> = {};
+    if (patch.livePlatform !== undefined) {
+      if (patch.livePlatform !== 'bilibili' && patch.livePlatform !== 'douyin') return fail('直播平台无效');
+      next.livePlatform = patch.livePlatform;
+    }
+    if (patch.douyinRoomId !== undefined) {
+      try { next.douyinRoomId = parseDouyinRoomId(patch.douyinRoomId); }
+      catch { return fail('请输入抖音数字房间号或完整直播间地址'); }
+    }
     if (patch.roomId !== undefined) {
       const room = Number(patch.roomId);
       if (!Number.isInteger(room) || room <= 0) return fail('房间号要是正整数');
@@ -257,6 +306,16 @@ export function apply(ctx: HostContext): void {
       if (own) rooms.add(settings.roomId); else rooms.delete(settings.roomId);
       next.ownRooms = [...rooms];
     }
+    const targetChanged = (next.livePlatform !== undefined && next.livePlatform !== settings.livePlatform)
+      || (next.douyinRoomId !== undefined && next.douyinRoomId !== settings.douyinRoomId)
+      || (next.roomId !== undefined && next.roomId !== settings.roomId);
+    if (targetChanged && (show.isOnAir || show.hub.currentConfig || biliOperationsActive() || broadcast.hasActivity)) {
+      return fail('请先停止舞台、断开订阅，并等待旧操作和清理完成', 409);
+    }
+    if ((next.livePlatform ?? settings.livePlatform) === 'douyin'
+      && (patch.blocked !== undefined || own !== undefined || patch.broadcast === true)) {
+      return fail('抖音只读接入不支持 B 站账号或推流设置');
+    }
     const repaint = (next.character && next.character !== settings.character) || (next.template && next.template !== settings.template);
     // 换了 Python 或模型：关掉正在跑的识别进程，下次用新的
     const resetAsr = (next.asrPython !== undefined && next.asrPython !== settings.asrPython) || (next.asrModel !== undefined && next.asrModel !== settings.asrModel);
@@ -264,6 +323,11 @@ export function apply(ctx: HostContext): void {
       updateSettings(next);
     } catch {
       return fail('保存设置失败', 500);
+    }
+    if (targetChanged) {
+      invalidateTarget();
+      show.setPlatform(settings.livePlatform);
+      publishBoard();
     }
     if (resetAsr) asr.close();
     if (own !== undefined && settings.roomId) show.rememberViewers = own && show.status().roomId === settings.roomId;
@@ -303,14 +367,37 @@ export function apply(ctx: HostContext): void {
     }
   }, 'tts preview');
 
+  let connectInFlight = false;
   route('/api/dsh-livestream/connect', ['POST'], async () => {
-    if (localRehearsal) return fail('本地彩排模式不连接 B 站');
-    if (!settings.roomId) return fail('先填直播间房间号');
-    show.connect(settings.roomId, await cookie(), settings.ownRooms.includes(settings.roomId));
+    if (connectInFlight) return fail('连接正在进行，请稍候', 409);
+    if (show.hub.currentConfig) return fail('请先断开当前订阅', 409);
+    if (settings.livePlatform === 'douyin') {
+      if (!settings.douyinRoomId) return fail('先填抖音房间号');
+      try {
+        const bridgeUrl = normalizeDouyinBridgeUrl(process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL ?? 'http://127.0.0.1:8757');
+        show.connectTarget({ platform: 'douyin', roomId: settings.douyinRoomId, bridgeUrl });
+      } catch (error) { return fail((error as Error).message); }
+    } else {
+      if (localRehearsal) return fail('本地彩排模式不连接 B 站');
+      if (!settings.roomId) return fail('先填直播间房间号');
+      const lease = beginBiliOperation();
+      connectInFlight = true;
+      try {
+        const currentCookie = await cookie();
+        lease.assertCurrent();
+        show.connect(settings.roomId, currentCookie, settings.ownRooms.includes(settings.roomId));
+      } catch {
+        return fail('连接已取消，请重新连接', 409);
+      } finally {
+        connectInFlight = false;
+        lease.release();
+      }
+    }
     return json(state());
   }, 'connect');
 
   route('/api/dsh-livestream/disconnect', ['POST'], () => {
+    invalidateTarget();
     show.disconnect();
     return json(state());
   }, 'disconnect');
@@ -318,11 +405,13 @@ export function apply(ctx: HostContext): void {
   route('/api/dsh-livestream/onair', ['POST'], async (request) => {
     const { sessionId, gameSessionId } = await body<{ sessionId?: string; gameSessionId?: string }>(request);
     if (!sessionId) return fail('缺她直播用的会话');
-    show.goLive(sessionId, localRehearsal ? undefined : gameSessionId || undefined);
+    show.goLive(sessionId, localRehearsal || settings.livePlatform === 'douyin' ? undefined : gameSessionId || undefined);
     // 先推上流、后开播的：这一场一开始就不是彩排
     if (broadcast.streaming) show.markBroadcast();
-    dm.newShow();
-    social.newShow();
+    if (settings.livePlatform === 'bilibili') {
+      dm.newShow();
+      social.newShow();
+    }
     return json(state());
   }, 'onair');
 
@@ -342,20 +431,20 @@ export function apply(ctx: HostContext): void {
 
   // 推流到 B 站：开播拿推流码、OBS 推流（在后台跑，进度看 state().broadcast）
   route('/api/dsh-livestream/broadcast/start', ['POST'], () => {
-    if (localRehearsal) return fail('本地彩排模式不推流');
+    if (localRehearsal || settings.livePlatform === 'douyin') return fail('当前模式不推流');
     broadcast.start();
     return json(state());
   }, 'broadcast start');
 
   route('/api/dsh-livestream/broadcast/stop', ['POST'], async () => {
-    if (localRehearsal) return fail('本地彩排模式不使用 OBS');
+    if (localRehearsal || settings.livePlatform === 'douyin') return fail('当前模式不使用 OBS');
     await broadcast.stop();
     return json(state());
   }, 'broadcast stop');
 
   // 检查 OBS：没开就打开（在 DSH 所在的桌面会话里），设好专用配置和场景，回一帧节目画面；不推流
   route('/api/dsh-livestream/obs/check', ['POST'], async () => {
-    if (localRehearsal) return fail('本地彩排模式不使用 OBS');
+    if (localRehearsal || settings.livePlatform === 'douyin') return fail('当前模式不使用 OBS');
     try {
       const obs = await connectObs(true);
       try {
@@ -369,9 +458,9 @@ export function apply(ctx: HostContext): void {
   }, 'obs check');
 
   // 开播账号：现在登的是谁；扫码登录（拿到的 Cookie 直接存进 DSH 凭据，不经过网页）
-  route('/api/dsh-livestream/account', ['GET'], async () => json({ ok: true, account: localRehearsal ? null : await whoIs(await cookie()) }), 'account');
+  route('/api/dsh-livestream/account', ['GET'], async () => json({ ok: true, account: localRehearsal || settings.livePlatform === 'douyin' ? null : await whoIs(await cookie()) }), 'account');
   route('/api/dsh-livestream/login/start', ['POST'], async () => {
-    if (localRehearsal) return fail('本地彩排模式不登录 B 站');
+    if (localRehearsal || settings.livePlatform === 'douyin') return fail('当前模式不登录 B 站');
     try {
       return json({ ok: true, ...(await startQrLogin()) });
     } catch (err) {
@@ -379,7 +468,7 @@ export function apply(ctx: HostContext): void {
     }
   }, 'login start');
   route('/api/dsh-livestream/login/poll', ['POST'], async (request) => {
-    if (localRehearsal) return fail('本地彩排模式不登录 B 站');
+    if (localRehearsal || settings.livePlatform === 'douyin') return fail('当前模式不登录 B 站');
     const { key } = await body<{ key?: string }>(request);
     if (!key) return fail('缺 key');
     try {
@@ -387,6 +476,7 @@ export function apply(ctx: HostContext): void {
       if (result.state !== 'ok') return json({ ok: true, state: result.state, ...(result.state === 'error' ? { message: result.message } : {}) });
       const account = await whoIs(result.cookie);
       if (!account) return json({ ok: true, state: 'error', message: '登录成功了，但用这个 Cookie 查不到账号' });
+      assertBiliCurrent();
       await hooks.setSecret(SECRETS.cookie, result.cookie);
       return json({ ok: true, state: 'ok', account });
     } catch (err) {
