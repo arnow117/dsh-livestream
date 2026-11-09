@@ -8,7 +8,7 @@
 
 **工程上下文**：`.sdlc-v1/context/FEAT-002.engineering.md`
 
-**已确认需求**：产品上下文 NEED-001/002 与其分列的主方案约束；Backlog/Spec 已接受，本轮协议细化由主 Agent 决定，Plan 尚待接受。
+**已确认需求**：产品上下文 NEED-001/002 与其分列的主方案约束；Backlog/Spec 与修正 Plan 已由主 Agent 接受，当前进度以 state.json 为准。
 
 **创建日期**：2026-11-09
 
@@ -296,3 +296,46 @@ TASK-002 为唯一计划 Task；无并行 writer。正式执行由主 Agent 的 
 - 最后 Web 测试的 app 端口 51537/51538 和声音测试端口 51356/51357 的 `lsof -sTCP:LISTEN` 无输出（exit 1），fixture/Vitest 命令行进程只读扫描无匹配（exit 1）。没有停止共享服务。
 
 - **后续发现及修正**：Build 末尾复核发现 `Broadcast.run` 在 Bili `room.start` 或 OBS `startStreaming` 发出后失败/失效时，原 catch 只关闭控制 socket 并释放 lease，不能证明自己发起的直播/推流已经停止。主 Agent 确认按现有 AC-07 修正：跟踪可能已启动的所属房间/流，活动或结果不确定时持续阻止目标变更；显式 stop 等待在途 start 收敛，只清理所属资源，失败保留状态供重试，并发 stop 复用同一清理。cleanup 持有阻止切换的 lease，但不受旧 epoch 取消。`test/broadcastLifecycle.test.ts` 以替身覆盖晚到 start、取消重叠、清理失败和重试、OBS 晚到启动，未调用真实 Bili/OBS。
+
+### 独立 Validate（2026-11-09，本地合成；INCONCLUSIVE）
+
+- 测试 commit `a4c3c68296a7596bbaaf00c99bd6eb1f92eee1b0`，固定基线 `0fa95631550857708e67684b6bbba41e102c34ae`；测试开始业务工作树干净，`TASK-002=done`。实际 agent 模型元数据不可见。macOS arm64，Node 26.13.0，pnpm 12.18.0，HeadlessChrome 156.0.8078.4。身份是 fixture 注入的 owner，不等同生产 Harness 身份验证；模型预算 0，无 agent/model 步骤，TTS 和脑使用替身。
+- 22:42 首次沙箱完整 Vitest 遇到 `listen EPERM`，4 个 source 用例超时；macOS `say` 生成的音频经 ffprobe 判无效，共 5 失败、239 通过、8 跳过、4 个未处理监听错误；收集失败摘要时对该任务发送 Ctrl-C，不能作为完整通过证据。随后在已授权本机临时监听环境重跑；`yovoiceTts.test.ts` 的 3081 字面量在 `vi.stubGlobal('fetch', fakeServer.fetch)` 的内存替身之后，不连接共享服务。
+- 22:42:36 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-validate`：exit 0，52 文件、244 通过、8 跳过；跳过为 2 项 attention / 6 项 decode 的既有缺失录制 fixture，不声称通过。`node packages/dsh-livestream/test/coverage-diff.mjs 0fa95631550857708e67684b6bbba41e102c34ae packages/dsh-livestream/coverage/feat-002-validate/coverage-final.json`：exit 0，变更行 838/999（83.88%）、分支 439/533（82.36%），超过 80%/70%；完整报告 `packages/dsh-livestream/coverage/feat-002-validate/`。`npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check`：exit 0。隔离复制候选的 `src/`、`stage/`、`assets/`、`build.mjs`、`package.json`、`cordis.patch.yml` 至包内 `.e2e/feat-002-validate-build/`，只读引用已安装 node_modules，在该目录 `node build.mjs` exit 0，生成四个 bundle；未在共享 lib 执行构建。
+- 原 Build 输出在本轮运行前复制到 `packages/dsh-livestream/.e2e/archive/feat-002-build-before-independent/`。22:43:24 包内 `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000` exit 0：desktop 1440×900 与 narrow 375×812 各三条，共 6/6，20.05 秒；报告、JUnit、trace、截图在 `.e2e/feat-002/`。22:43:58 相同命令换 `--config e2e-voice-regression.config.ts` exit 0：两视口各三条，共 6/6，9.85 秒；报告在 `.e2e/feat-002-voice/`。原配置 strict/read-only cache、无重试；测试不含 Agent 步骤或 provider。两套首条旅程分别断言自有 stage stub 被访问，所有旅程断言浏览器指向共享 3080/3081/7390/8757 的拦截记录为空。舞台页面是 stub，不把它称为真实舞台 UI 验证。
+- usage：根 README 的 `LIVE-DOUYIN-CONNECT` / `LIVE-DOUYIN-DISCONNECT` 指向 `examples/douyin/README.md`；在隔离目标按参数来源配置 fixture bridge、输入长字符串房间，实际经过保存/刷新、显式连接中、fixture live、测试弹幕进入控制台与假脑、错误/手动恢复、断开及采集仍运行提示。采集器安装和真实上游运行本轮未执行。真实目标房间、真实礼物、长期稳定性、真实模型/语音播放及生产 owner 身份均未验证，不能从合成结果外推。Eval-bench 仅证明预设与 mock 提示/路由行为，不声称模型质量评估通过。
+
+| 当前验收条件 | 结果 | 本轮实际证据或缺口 |
+|---|---|---|
+| AC-01 | COVERED | `liveTarget`、`douyinRoutes`、`douyinConsole` 和 Web 保存/刷新：合法长字符串/URL、无效输入、保留设置。 |
+| AC-02 | PARTIAL | `douyinSource`、`douyinState`、连接路由与 Web 覆盖 connecting/live、旧状态、closed/error、断网及显式恢复；本轮没有直接运行采集器不可达、超时及离线分支，不能把它们推断为通过。 |
+| AC-03 | PARTIAL（合成） | `douyinSource` 真实 Source→Hub→Show、假 push/voice；Web 真控制台/路由与隔离 WS 断言聊天进入假脑，礼物/点赞在 adapter 测试；未直接运行抖音 member/follow 经 adapter 的事件断言，无真实 provider。 |
+| AC-04 | PARTIAL | `douyinState`、`douyinSource`、`douyinRoutes` 覆盖畸形/异房间、同代旧 GET、身份与切换；未直接运行重订阅后的旧代响应，不能将该情景标为通过。 |
+| AC-05 | COVERED | `douyinSource` 正增量与结束帧；额外内存探针以 `node --input-type=module` 接收 `.e2e/archive/feat-002-independent-keyboard/gift-sequence.mjs` 的 stdin，真实 adapter 对 `1,3,3,2,3(结束)` 输出增量 `[1,2]`、总数 3，exit 0；首次以 external ws 载入 data URL 因模块解析失败、尚未执行断言，修正测试装置用未调用的 ws stub 后通过。`douyinCache` 用户/组/去重及 TTL/淘汰、`douyinAttention` 未来时间按本地成熟过期、`douyinStage` 未知金额；固定上游 normalizer fixture 记录 commit `3a79c57d85c59289db3b77211b3ec01fae47d42c`、protobuf 合成输入及编译方法，`douyinFixture` 验证全零 gift/group sentinel。 |
+| AC-06 | COVERED | 同 fixture 经真实 adapter 验证缺失统计变 0 后 unknown；`douyinState` 单次聚合、终态；无真实零的区分承诺。 |
+| AC-07 | COVERED | `douyinRoutes`、`biliConnectLease`、`biliOperation`、`biliSourceCleanup`、`biliStaleResults`、`broadcastLifecycle`、`obsLease` 与 Web：活动/在途和清理时拒绝切换，旧临时数据隔离。 |
+| AC-08 | COVERED（合成） | `douyinConnectRoutes`、`douyinSource` 与 Web 错误/断开/手动连接：自身清理、不自动重订阅，显示采集仍运行。 |
+| AC-09 | COVERED | `douyinResume`：持久设置保留、旧快照不恢复、无 provider/network；`resume` 验证原 B 站恢复路径。 |
+| AC-10 | COVERED（合成） | `douyinAgent`、`localRehearsal`、`douyinRoutes`、`douyinConsole`、声音回归和相关旧测试：工具/平台隔离、预设、声音与原路径。 |
+| AC-11 | PARTIAL / INCONCLUSIVE | 两视口的提交测试成功/恢复旅程、无横向溢出、设置焦点可见及设置/保存 Enter 通过；其余连接/恢复/断开使用点击。补充桌面键盘探针两次未完成平台选择，尚不能区分键序/异步自动化问题与实现问题，不声称代码缺陷，也没有验证窄屏完整键盘旅程。确切 stdin 脚本和输出摘要在 `.e2e/archive/feat-002-independent-keyboard/`。 |
+
+- 键盘探针一：`node --input-type=module` 接收归档 `first.mjs` 的原始 stdin，Tab 到平台后 End，立即读值不是 douyin，exit 1；可能早于异步保存。探针二同入口接收 `second.mjs`，ArrowDown 后等待抖音房间输入 30 秒超时，exit 1。均在桌面阶段终止，浏览器关闭，fixture child exit 0；未到最终拦截断言。两次未定位原因，按停止规则保留证据，不再重复或修改实现。
+- 资源收尾：两套 E2E 临时端口 52773/52774/52929/52930 执行 `lsof -nP -iTCP:52773 -iTCP:52774 -iTCP:52929 -iTCP:52930 -sTCP:LISTEN` exit 1、无监听；只读 `ps` 筛选测试 fixture/Vitest 进程 exit 1、无匹配。键盘探针各自关闭浏览器并等待自有 fixture 退出。未操作共享服务。建议主 Agent 对本轮请求 `record-validation --feature-id FEAT-002 --result fail --test-command 'npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-validate'`；fail 表示必要验证未完成，不代表已确认实现缺陷。
+
+### 主 Agent 有限键盘诊断与停止（2026-11-09，UTC）
+
+- 独立 Validate 对候选 `a4c3c68296a7596bbaaf00c99bd6eb1f92eee1b0` 报 INCONCLUSIVE；主 Agent 于 14:50:56 实际 record-validation fail。AC-02/03/04 的直接边界测试缺口与 AC-11 键盘段分别保留，不以完整套件通过覆盖缺口。
+- 键盘段已经有两次未定位的尝试。主 Agent 使用唯一诊断额度：约 14:51 开始，5 分钟上限，假设为 macOS 原生 select 需确认键才能提交；仅启动专属 fixture `127.0.0.1:59463`，新 Chrome 测试页与假桥接，无真实房间/模型/语音/账号。读取既有 select，ArrowDown、Space 及展开/确认键序均未见值改变；不能据此判定实现或浏览器驱动缺陷。
+- CUA `getApp('Google Chrome')` 的只读焦点核查实际阻塞 916.9522 秒，工具返回已超过本次有限期限；返回的是前台旧舞台窗口、测试页为后台标签，尚不足以证明键盘事件派发或实现根因。没有获得可复现的因果定位证据，不追加实验、不重置额度、不向其他 Agent 重新派发键盘诊断。
+- 15:08:52 前已关闭专属测试页、结束 exec 98340（exit 0），`lsof -nP -iTCP:59463 -sTCP:LISTEN` exit 1/无监听。共享 Harness/yovoice/DyHub/Stage 均未停止、修改或加载新实现。当前控制台仍为旧版；不是 FEAT-002 部署通过。
+- 主 Agent 已向用户询问是否明确暂缓完整键盘验收、先交付鼠标操作已验证范围，或保持候选暂不加载；答复仍待到达，不能以等待时间当批准。AC-11 当前要求不变。键盘段暂停等待用户方向，其余 AC-02/03/04 测试完善仍在原授权内，由原 Build worker 继续，不能藉此重开键盘实验。
+- lifecycle 拒绝直接 `done → in_progress`（exit 2、未写 state）；按返回的合法恢复路径 `done → todo`、读取 next=build、再 `todo → in_progress`。CLI 清除待推进 validation/review/release 字段，前述失败证据及诊断额度继续在本文件保留，不可据状态清除视为新段。
+
+### TASK-002 独立边界补测（2026-11-09）
+
+- 在候选 `a4c3c68296a7596bbaaf00c99bd6eb1f92eee1b0` 上新增 `packages/dsh-livestream/test/douyinAdapterBoundaries.test.ts`，生产代码和 runner 未修改，测试与此记录尚未提交。原有产品上下文、state 的工作树变动属于主 Agent 的生命周期工作，未由本次补测改写。
+- AC-02：真实 `DouyinLiveSource` 配合内存 WebSocket 替身与虚拟时钟，直接验证连接错误、已打开 socket 且按时 pong 仍未 live 的 45 秒超时、20 秒 ping 后 10 秒未 pong、上游 stopped/closed；每项核对错误与采集控制台手动恢复提示、终态清理及后续 60 秒无自动重订阅。AC-03：真实 adapter→Hub→Show→stage 断言 member 映射 enter、follow 映射 follow，使用假 brain 和假 TTS。AC-04：Hub 断开旧目标后连接新目标，旧 GET 的 fetch 替身故意忽略已触发的 abort 并返回旧错误，新代较旧的 GET 也迟到，断言新房间保持 connected/live 且无旧错误。
+- 首次 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run test/douyinAdapterBoundaries.test.ts` exit 1：Vitest 提升 mock 工厂时，静态导入的 EventEmitter 尚未初始化，测试未运行；改成工厂内动态导入后同命令 exit 0，最终 7/7 通过。该装置问题未引起生产代码修改。
+- 新增测试改变覆盖率运行输入，因此最后重新执行 `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-002-boundaries`，exit 0，53 文件、251 通过、8 既有 fixture 缺失跳过；覆盖 JSON/LCOV 保存在包内 `coverage/feat-002-boundaries/`。`node packages/dsh-livestream/test/coverage-diff.mjs 0fa95631550857708e67684b6bbba41e102c34ae packages/dsh-livestream/coverage/feat-002-boundaries/coverage-final.json` exit 0，变更行 844/999（84.48%）、分支 459/548（83.76%）。先前相同生产快照的独立 typecheck 和隔离 build 仍为上文证据；本轮未重跑 Web。
+- 新测试自身不创建网络监听，仅使用内存 socket、无效本机目标和虚拟时钟，结束时断言无余留计时器并删除临时数据；全量测试使用已有临时端口和替身，macOS 原生声音测试如既有测试运行，未调用真实模型或语音供应商。任务 Vitest 已退出；沙箱内只读 `ps` 受限（exit 1，operation not permitted），授权只读重查无对应进程（exit 1）；Node 对 `os.tmpdir()` 的 `douyin-adapter-stage-*` 只读枚举 exit 0、剩余为空。`git diff --check` exit 0。未操作共享服务。上文首次完整套件自动审批拒绝及早期 7390 fixture 访问历史继续有效。
+- 本补测满足 AC-02/03/04 以上直接合成边界，不代表真实房间、礼物、长期稳定或真实模型/语音已验证。AC-11 键盘段仍按上文停止并等待用户决定；本次没有键盘实验、修改或完成状态请求。整体 Build 仍 incomplete，保留独立 Validate 的 INCONCLUSIVE / fail 历史。
