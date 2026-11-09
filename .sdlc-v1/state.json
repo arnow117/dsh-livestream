@@ -1,0 +1,55 @@
+{
+  "features": {
+    "FEAT-001": {
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-09T11:49:32Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-001.engineering.md",
+      "id": "FEAT-001",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-001",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "TASK-001": {
+          "depends_on": [],
+          "id": "TASK-001",
+          "status": "done",
+          "title": "统一直播语音设置、热更新和私有试听",
+          "updated_at": "2026-11-09T12:27:39Z"
+        }
+      },
+      "updated_at": "2026-11-09T12:27:39Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
+    }
+  },
+  "requirements": {
+    "REQ-001": {
+      "created_at": "2026-11-09T11:48:17Z",
+      "depends_on": [],
+      "description": "在直播控制台整合现有云端与本地语音配置，支持未保存草稿私有试听及保存后即时生效。",
+      "domain": "livestream",
+      "feature_id": "FEAT-001",
+      "id": "REQ-001",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-001.product.md",
+      "status": "in_delivery",
+      "title": "直播语音配置热更新与私有试听",
+      "updated_at": "2026-11-09T12:27:39Z"
+    }
+  },
+  "state_format": "sdlc-lightweight-state-v1",
+  "state_version": 3
+}
