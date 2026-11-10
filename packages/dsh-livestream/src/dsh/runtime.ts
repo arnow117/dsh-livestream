@@ -128,7 +128,7 @@ export const DEFAULT_BOARD = [
 ].join('\n');
 
 const LOCAL_BOARD = '本地彩排\n和主人聊天，回应模拟观众的弹幕与礼物';
-export const DOUYIN_BOARD = '抖音只读接入 / 本地舞台\n和主人聊天，回应直播间观众';
+export const DOUYIN_BOARD = '和大肥鱼聊聊天\n发弹幕提问，一起聊聊有趣的事\n谢谢大家的陪伴与支持';
 
 /** 机密的名字（DSH 凭据）。豆包的和 dsh-game 共用 */
 export const SECRETS = {

@@ -54,7 +54,12 @@ test('saves and connects a room before forwarding input to the local stage', asy
   await expect(screen.getByText('连接状态：已连上')).toBeVisible();
   await app.screenshot('douyin-connected');
   await screen.getByRole('button', '模拟观众').tap();
-  await expect(screen.getByRole('button', '小花 ×5')).toBeVisible();
+  await expect(screen.getByLabel('礼物名称')).toHaveValue('小心心');
+  await expect(screen.getByRole('button', '发送礼物')).toBeVisible();
+  await screen.getByLabel('礼物名称').fill('星河纸鹤');
+  await screen.getByLabel('数量').fill('7');
+  await screen.getByRole('button', '发送礼物').tap();
+  await expect(screen.getByText('送出 星河纸鹤 ×7（金额未知）')).toBeVisible();
   await expect(screen.getByText('上舰')).toHaveCount(0);
   await expect(screen.getByText('小电视飞船 ¥1245')).toHaveCount(0);
   await screen.getByRole('button', '开始本地舞台').tap();

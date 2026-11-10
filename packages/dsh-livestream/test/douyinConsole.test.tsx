@@ -111,7 +111,7 @@ describe('console platform settings with real handlers', () => {
     await change('live-platform', 'douyin');
     await click('设置');
     expect(element.textContent).toContain('礼物金额未知时仍按节奏安排感谢');
-    expect([...element.querySelectorAll('textarea')].some((area) => area.value.includes('抖音只读接入'))).toBe(true);
+    expect([...element.querySelectorAll('textarea')].some((area) => area.value.includes('和大肥鱼聊聊天'))).toBe(true);
     await click('关闭');
     await act(async () => eventSource.onmessage?.({ data: JSON.stringify({ type: 'live', event: { kind: 'chat', id: 'old', user: { id: 'u', name: '测试' }, text: '保留内容' } }) }));
     expect(element.textContent).toContain('保留内容');
@@ -126,10 +126,28 @@ describe('console platform settings with real handlers', () => {
     expect(element.textContent).toContain('新内容');
     expect(element.querySelector('.dl-feed-row.dl-focus')).toBeNull();
     await click('模拟观众');
-    expect(element.textContent).toContain('小花 ×5');
+    expect(field('sim-gift').value).toBe('小心心');
     expect(element.textContent).not.toContain('小电视飞船');
-    await click('小花 ×5');
-    expect(runtime.show.hub.recentEvents()[0]).toMatchObject({ platform: 'douyin', valueKnown: false });
+    const simulateCalls = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith('/simulate'));
+    for (const [gift, count] of [['小心心', '1'], ['玫瑰', '5'], ['自定义星星', '12'], ['玫瑰', '9999']]) {
+      await change('sim-gift', gift);
+      await change('sim-gift-count', count);
+      await click('发送礼物');
+      const [, init] = simulateCalls().at(-1)!;
+      expect(JSON.parse(String(init?.body))).toMatchObject({ kind: 'gift', gift, count: Number(count) });
+      expect(runtime.show.hub.recentEvents().at(-1)).toMatchObject({
+        platform: 'douyin', giftName: gift, count: Number(count), valueYuan: 0, valueKnown: false,
+      });
+    }
+    const sent = simulateCalls().length;
+    for (const [gift, count] of [[' ', '1'], ['玫瑰', '0'], ['玫瑰', '-1'], ['玫瑰', '1.5'], ['玫瑰', '10000'], ['玫瑰', '9007199254740992']]) {
+      await change('sim-gift', gift);
+      await change('sim-gift-count', count);
+      const button = [...element.querySelectorAll('button')].find((item) => item.textContent?.trim() === '发送礼物')!;
+      expect(button.disabled).toBe(true);
+      await click('发送礼物');
+    }
+    expect(simulateCalls()).toHaveLength(sent);
   });
 
   it('ignores an older poll and refreshes another page’s target without overwriting the draft', async () => {
@@ -152,6 +170,10 @@ describe('console platform settings with real handlers', () => {
     expect(external.status).toBe(200);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_200)); });
     expect(element.textContent).toContain('已保存：B 站 42');
+    await click('小花花 ×5');
+    expect(runtime.show.hub.recentEvents().at(-1)).toMatchObject({
+      platform: 'bilibili', giftName: '小花花', count: 5, valueYuan: 0.5,
+    });
     expect(field('live-room').value).toBe('333');
     expect((field('live-platform') as HTMLSelectElement).value).toBe('douyin');
   });

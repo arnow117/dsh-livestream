@@ -33,6 +33,27 @@ describe('Douyin owner settings', () => {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value),
   }));
 
+  it('uses the platform default while preserving custom and empty boards', async () => {
+    const boards: string[] = [];
+    const unsubscribe = runtime.show.stage.subscribe((event) => {
+      if (event.type === 'board') boards.push(event.text);
+    }, false);
+    try {
+      await post('settings', { livePlatform: 'douyin' });
+      runtime.publishBoard();
+      expect(boards.at(-1)).toBe('和大肥鱼聊聊天\n发弹幕提问，一起聊聊有趣的事\n谢谢大家的陪伴与支持');
+      await post('settings', { boardText: '自定义告示' });
+      expect(boards.at(-1)).toBe('自定义告示');
+      await post('settings', { boardText: '' });
+      expect(boards.at(-1)).toBe('');
+      await post('settings', { boardText: runtime.DEFAULT_BOARD, livePlatform: 'bilibili' });
+      runtime.publishBoard();
+      expect(boards.at(-1)).toBe('本地彩排\n和主人聊天，回应模拟观众的弹幕与礼物');
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('persists a string ID, rejects invalid input and preserves existing Bili settings', async () => {
     const id = '90071992547409931234567';
     expect((await post('settings', { livePlatform: 'douyin', douyinRoomId: `https://live.douyin.com/${id}` })).status).toBe(200);

@@ -1166,8 +1166,16 @@ function Feed({ feed, focus, sleep }: { feed: FeedRow[]; focus: Set<string>; sle
 function Simulator({ douyin }: { douyin: boolean }) {
   const [name, setName] = useState('测试观众');
   const [text, setText] = useState('');
+  const [gift, setGift] = useState('小心心');
+  const [giftCount, setGiftCount] = useState('1');
   const [busy, error, run] = useBusy();
   const send = (kind: string, extra: Record<string, unknown> = {}) => run(() => api('simulate', { kind, name, text, ...extra }).then(() => { if (kind === 'chat' || kind === 'superchat') setText(''); }));
+  const count = Number(giftCount);
+  const validGift = gift.trim().length > 0;
+  const validCount = /^[1-9]\d*$/.test(giftCount) && Number.isSafeInteger(count) && count <= 9999;
+  const sendGift = () => {
+    if (validGift && validCount) send('gift', { gift: gift.trim(), count });
+  };
   return (
     <div className="dl-dock-body">
       <div className="dl-row">
@@ -1177,15 +1185,46 @@ function Simulator({ douyin }: { douyin: boolean }) {
       </div>
       <div className="dl-sim">
         <span>礼物</span>
-        <div className="dl-chips">
-          {douyin ? (
-            <button className="dl-chip-gift" onClick={() => send('gift', { gift: '小花', count: 5 })}>小花 ×5</button>
-          ) : <>
+        {douyin ? (
+          <div className="dl-sim-gift">
+            <div className="dl-row">
+              <label htmlFor="sim-gift">礼物名称</label>
+              <input
+                id="sim-gift"
+                list="sim-gift-options"
+                maxLength={200}
+                value={gift}
+                onChange={(e) => setGift(e.target.value)}
+              />
+              <datalist id="sim-gift-options">
+                {['小心心', '玫瑰', '棒棒糖', '嘉年华'].map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+              <label htmlFor="sim-gift-count">数量</label>
+              <input
+                id="sim-gift-count"
+                type="text"
+                inputMode="numeric"
+                value={giftCount}
+                onChange={(e) => setGiftCount(e.target.value)}
+                aria-describedby="sim-gift-help"
+              />
+              <button
+                className="dl-chip-gift"
+                disabled={busy || !validGift || !validCount}
+                onClick={sendGift}
+              >
+                发送礼物
+              </button>
+            </div>
+            <p id="sim-gift-help">可选常见礼物或输入名称；数量为 1 到 9999 的整数。</p>
+          </div>
+        ) : <div className="dl-chips">
             <button className="dl-chip-gift" onClick={() => send('gift', { gift: '小花花', count: 5, yuan: 0.5 })}>小花花 ×5</button>
             <button className="dl-chip-gift" onClick={() => send('gift', { gift: '情书', count: 1, yuan: 5.2 })}>情书 ¥5.2</button>
             <button className="dl-chip-gift dl-chip-big" onClick={() => send('gift', { gift: '小电视飞船', count: 1, yuan: 1245 })}>小电视飞船 ¥1245</button>
-          </>}
-        </div>
+          </div>}
         {!douyin && <>
         <span>醒目留言</span>
         <div className="dl-chips">
@@ -1331,6 +1370,10 @@ export const CONSOLE_CSS = `
 .dl-row{display:flex;gap:10px;align-items:center}
 .dl-sim{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:center;margin-top:14px}
 .dl-sim>span{font-size:12px;color:var(--dl-faint)}
+.dl-sim-gift .dl-row{flex-wrap:wrap}
+.dl-sim-gift label,.dl-sim-gift p{font-size:12px;color:var(--dl-faint)}
+.dl-sim-gift p{margin:6px 0 0}
+.dl-sim-gift input{min-width:100px}
 .dl-chips{display:flex;flex-wrap:wrap;gap:8px}
 .dl-chips button{font-size:12px !important;padding:6px 13px !important;border-radius:999px !important}
 .dl-room .dl-chips button.dl-on{border-color:var(--dl-blue);color:var(--dl-blue)}
