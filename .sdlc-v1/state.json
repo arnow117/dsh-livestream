@@ -74,17 +74,17 @@
       "engineering_context_ref": ".sdlc-v1/context/FEAT-003.engineering.md",
       "id": "FEAT-003",
       "release": {
-        "at": null,
-        "commit": null,
-        "status": "pending"
+        "at": "2026-11-10T05:08:58Z",
+        "commit": "cda053722492e3055ac5a56752bd7772ef17aeb8",
+        "status": "released"
       },
       "requirement_id": "REQ-003",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-10T04:44:05Z",
+        "by": "unified_review",
+        "decision": "approved"
       },
-      "status": "in_progress",
+      "status": "released",
       "tasks": {
         "TASK-003": {
           "depends_on": [],
@@ -94,12 +94,12 @@
           "updated_at": "2026-11-10T04:34:02Z"
         }
       },
-      "updated_at": "2026-11-10T04:34:02Z",
+      "updated_at": "2026-11-10T05:08:58Z",
       "validation": {
-        "at": null,
-        "command": null,
-        "commit": null,
-        "result": "pending"
+        "at": "2026-11-10T04:39:02Z",
+        "command": "npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-003-correction-1-validate",
+        "commit": "cda053722492e3055ac5a56752bd7772ef17aeb8",
+        "result": "pass"
       }
     }
   },
@@ -141,9 +141,9 @@
       "id": "REQ-003",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-003.product.md",
-      "status": "in_delivery",
+      "status": "released",
       "title": "统一直播控制台的平台与房间管理",
-      "updated_at": "2026-11-10T04:34:02Z"
+      "updated_at": "2026-11-10T05:08:58Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

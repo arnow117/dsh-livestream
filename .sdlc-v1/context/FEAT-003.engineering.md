@@ -340,16 +340,59 @@ npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-
 - 资源：fixture 使用临时 DSH_HOME、动态 loopback、stage stub；Web 浏览器和 fixture 均断言共享 3080/3081/7390/8757 请求为 0。Douyin app 60635/60636、bridge 60643/60651 的日志记录 shutdown；voice app 60948/60949，voice fixture 日志为空。UTC 04:06:32 以 `lsof` 检查上述六端口及四共享端口无监听（exit 1），按运行相关命令筛查无残留进程；未启动、停止或重启共享服务。测试没有访问真实房间、凭据、用户 profile、GLM、yovoice 或云服务；两条既有短 macOS `say` 测试使用系统语音，未播放。
 - **范围限制**：真实 Harness owner 鉴权、安装 UI 与 fresh unpack 留 Ship；真实房间、礼物、长期稳定、GLM、真实 TTS/听感、外部并发账号/房间 mutation、完整键盘旅程均未证明。所有账号匿名且控制期间不由外部并发修改为部署前提；本次不将 synthetic 通过外推到真实部署。
 
+### 独立 Validate：Review 修正批次 1（2026-11-10）
+
+- **结论：PASS**；本轮新候选 `cda053722492e3055ac5a56752bd7772ef17aeb8`，差异基线仍为 `f59a586c69c81b800cf9a11f57268c528d980484`。执行前业务树干净、TASK-003 done；下列结果为本轮独立实跑，未复用 6df 的完整套件结果。UTC 04:35–04:37（本地 12:35–12:37）；Node 26.13.0、pnpm 12.18.0、Vitest 3.2.4、e2e 0.23.0、HeadlessChrome 156.0.8078.4；桌面 1440×900、窄屏 375×812、strict read-only cache、workers 1、retries 0、trace on、每套上限 600000ms、无 agent/model 步骤。本轮根据先前已确认的 sandbox 回环 `EPERM` 直接使用允许本地回环的环境；先前失败及证据保留在上一独立 Validate 节。
+
+| 本轮实际命令 | exit / 结果 |
+|---|---|
+| `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-003-correction-1-validate` | 0；64 文件、322 passed / 8 skipped，开始 12:35:49，9.17s；完整套件兼 coverage，日志 `packages/dsh-livestream/.e2e/feat-003-correction-1-validate-vitest.log`。 |
+| `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check` | 0。 |
+| `node packages/dsh-livestream/test/coverage-diff.mjs f59a586c69c81b800cf9a11f57268c528d980484 packages/dsh-livestream/coverage/feat-003-correction-1-validate/coverage-final.json` | 0；变更行 702/778 = 90.23%，分支 452/552 = 81.88%，达到 80%/70% 要求。 |
+| `node build.mjs`（独立 `/private/tmp/dsh-feat003-correction-validate.FTW9es`，复制 src/build/package 并链接现有 node_modules） | 0；四个入口构建成功，临时目录已删除，生产 lib 未覆盖。 |
+| 包目录 `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000` | 0；12/12，开始 12:35:48，22.45s；日志 `.e2e/feat-003-correction-1-validate-douyin.log`。 |
+| 包目录 `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-voice-regression.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000` | 0；6/6，开始 12:36:21，8.92s；日志 `.e2e/feat-003-correction-1-validate-voice.log`。 |
+
+| 当前 AC | 状态 | 本轮通过的代表证据（隔离 synthetic 环境） |
+|---|---|---|
+| 01 | COVERED | `douyinConsole`、双视口 atomic-target / douyin Web，主页草稿、已保存目标与平台输入提示。 |
+| 02 | COVERED | `roomControlQuery`、`roomTargetPersistence`、`douyinConsole` 和 Web：原子保存、失败与 stale revision、刷新。 |
+| 03 | COVERED | `liveTarget`、`douyinRoutes` 与 Web：合法字符串/URL、精度、非法输入、B 站设置保留。 |
+| 04 | COVERED | `douyinSource` 与 Web：连接中/live 区分、目标事件和舞台路径。 |
+| 05 | COVERED | `douyinControlRecovery`、`roomControlIntegration` 和 Web：匿名前提、拒绝/未知和状态反馈。 |
+| 06 | COVERED | `douyinControlRecovery`、`roomControlIntegration`、`douyinSource` 和 Web：显式重试、terminal 重建、断开不自动重订阅。 |
+| 07 | COVERED | `roomControlIntegration` 和 Web：detach 不发 stop，确认后先 detach、精确房间 stop；窄屏终态截图人工核对显示没连接、房间已停止。 |
+| 08 | COVERED | `douyinControlRecovery`、`douyinControlJournal`、`roomControlQuery`、`douyinControlOwnership` 和 `roomControlLifecycle`：持久 unknown、旧请求/阶段归属、重载、404/stop 与 ABA。uptime/重启不单独自动解锁，无连续时钟证明时保持保护。 |
+| 09 | COVERED | `roomControlQuery`、`biliConnectLease`、`obsLease`、`broadcastLifecycle`、`showEndingDisconnect`、target retirement 和 Web 切换回归。 |
+| 10 | COVERED | 同次完整 suite 的 Bili/OBS/彩排/声音回归与双视口 voice Web；provider 使用替身，两个既有短离线 macOS say 测试除外。 |
+| 11 | COVERED | 双视口 18/18，包含既有 Enter/焦点子集、错误/网络/溢出与共享端口断言；README/抖音指南仍对应该 synthetic 操作，完整键盘旅程延期。 |
+
+- Review R1：本次 `douyinControlOwnership.test.ts` 的 9 项中包含 account/connect 两个旧查询、同 opId HTTP→WS 阶段变化及旧实例卸载后迟到响应；断言新 marker 持续存在。R2：同套件覆盖 connect/stop 预检、HTTP 待定、post-HTTP 复查及 WS 等待时 dispose，真实 handler 的 `roomControlLifecycle.test.ts` 验证 reapply 与旧响应保护。R3：双视口 unknown Web 断言明确状态、房间、保护、恢复提示与错误去重、按钮禁用及 mutation 数；窄屏截图人工核对。以上均来自本轮已通过的实际执行，独立 delta review 仍由主 Agent 安排。
+- 本轮 JUnit、trace、截图与 fixture 日志存于 `packages/dsh-livestream/.e2e/archive/feat-003-correction-1-validate-cda05372/{feat-003-correction-1,feat-003-correction-1-voice}/`；Build 产物在运行前归档至 `packages/dsh-livestream/.e2e/archive/feat-003-correction-1-before-revalidate-cda05372/`。旧 6df Validate 和 review 截图未覆盖。coverage JSON 位于 `packages/dsh-livestream/coverage/feat-003-correction-1-validate/coverage-final.json`。
+- 资源：运行前后只读 `lsof` 均见 yovoice PID 61390 监听 3081、DyHub PID 61490 监听 8757，3080/7390 无监听；未启动、停止或重启共享服务。临时 DSH_HOME、动态 loopback 与 stage stub；Web fixture 和浏览器断言四共享端口零请求。Douyin app 65201/65202、bridge 65207/65216 日志记录 shutdown；voice app 65426/65427，voice fixture 日志为空。UTC 04:36:49 `lsof` 对本轮六端口 exit 1、无监听，相关进程筛查无残留。未使用真实房间、凭据、用户 profile、GLM、真实 yovoice 或云服务；未播放音频。
+- **未验证范围**：真实 Harness owner 鉴权、安装 UI、fresh unpack 留 Ship；真实房间/礼物/长期稳定、真实模型/TTS/听感、外部并发账号或房间 mutation、完整键盘旅程未证明。所有账号匿名且控制期间无外部并发修改为部署前提；不将 synthetic 结果外推到真实部署。
+
 ## 评审记录（实际）
 
 - 2026-11-10，独立 `unified_review` 对 baseline `f59a586…` 到已验证 `6df2c24653793f100c43de19c9ec7e30e1c0c508` 累计审查，结论 changes_requested；主 Agent 已记录并将同一 TASK-003 合法恢复为 in_progress。尚未发布或安装候选。
 - 必须修正：P1，异步 reconcile 的旧 marker 响应可清除后续新操作日志，需清理时再核对同次操作/阶段及当前 controller 状态；P2，controller 缺卸载生命周期，预检或 HTTP 后仍可发 mutation/重新订阅，需取消自有等待并保护已发送日志；P2，unknown 被两遍普通错误替代，需明确未知状态、保护范围/原因和恢复说明且去重。独立 reviewer 的两项零网络内存探针复现前两项；首次封装加载失败后修正探针，两探针 exit 0，未改生产源码。
 - 已覆盖累计 diff、D1–D3、DTO、owner 路由、journal、source/Hub/Show、Bili 取消、匿名部署、usage 参数及双视口截图；未发现有证据支持的重复实现或其他可避免工程债。停止截图的“已停止＋连接中”处于既有一秒 SSE 更新窗口，当前证据不证明持续错误；后续截图应等待 subscription idle。真实部署/fresh-unpack/owner 与实房间范围仍待后续对应检查，完整键盘继续延期。
+- 修正后 `unified_review` 独立复核 `6df2c246…` → `cda053722492e3055ac5a56752bd7772ef17aeb8` delta 及受影响调用链，结论 approved，R1/R2/R3 均 resolved，无新增必须修复项。重跑原零网络探针：旧查询只清 old，新 unknown 保留；卸载场景只发生 GET stats，无 mutation/订阅。新桌面/窄屏 unknown 说明与停止后“没连接＋已停止”截图已核对，命名派生状态和等待 helper 职责清楚，usage 一致。主 Agent 已接受该源码与隔离验证范围；实际安装/owner/fresh unpack 另由 Ship 证明。
 
 ## 发布与观察记录（实际）
 
 - 产品观察计划唯一引用 `.sdlc-v1/context/REQ-003.product.md` 的“发布后观察计划”。
-- 尚未发布或启动服务；Ship须绑定approved候选、fresh-unpack内容/业务smoke、本机实际版本与鉴权/空态/离线路径，保留真实房间、礼物、长期稳定、真实GLM/TTS及完整键盘未测范围。用户最终验收统一页面；不启动后台监控。
+
+### Ship 制品准备（2026-11-10，未安装）
+
+- 批准源码/validation commit `cda053722492e3055ac5a56752bd7772ef17aeb8`；隔离构建和 fresh unpack 制品 `../reuse/20261110-unified-console/dsh-livestream-0.0.1.tgz` SHA-256 `4d9c0e20d276b69700575a35d94a00a09f6800e03873840ef5491c54fa0b1cd2`，详细 source/compiled/package hashes、环境和配套文件见同目录 `manifest.json`、`README.md`。119 个 Git blob 列表/内容与批准对象一致，归档 51 个安全文件与构建逐项 hash 一致，无本机绝对路径；已有依赖链接仅供隔离构建。
+- `python3 prepare.py` exit 0；`node artifact-smoke.mjs` 最终 exit 0（专属 bridge/stage 动态端口、临时 home 和 peer 链接已清理）。真实编译路由覆盖无效/有效目标原子保存与长字符串、匿名 metadata/preflight/start、初始化未等同 live、受控 live/chat→Show→stage、仅断开不停止、确认停止精确目标且其他房间/全局不受影响、响应丢失后 unknown 和新进程 404 不解锁/不自动重放。模型、真实 TTS、共享/外部请求为 0；不代表真实 Harness owner 鉴权。原始 `prepare.log`、`smoke.log` 和首次断言误判日志 `smoke-attempt-1.log` 保留。首次末尾断言误将其他房间号作为长目标子串匹配，改为精确路径后通过。
+- 现有 last-good 包 SHA-256 再核对为 `b649ac5913906fd3c17a178a00cb9fab7b5fc6f5e82cb92448ab60e1e7665153`；本阶段未改安装、未回滚。真实安装版本、owner/未认证与空态/离线检查由主 Agent 完成；真实房间、礼物、长期稳定、模型/TTS/听感及完整键盘旅程未测。unknown 的跨重启时钟连续性不能推定；回滚不能绕过保护。产品观察计划见上述引用，未启动后台观察。
+- 已在原本机 Harness profile 加载批准实现 `cda053722492e3055ac5a56752bd7772ef17aeb8`，包 SHA-256 `4d9c0e20d276b69700575a35d94a00a09f6800e03873840ef5491c54fa0b1cd2`。制品与配套指南在 `../reuse/20261110-unified-console/`；119 源码/配套 Git blob、51 包文件及 8 编译文件核对一致，新解包隔离 smoke 通过，详见下方制品准备记录及该目录 manifest/smoke.log。
+- 实际加载前确认未在播、未订阅、无未决日志，保留旧 lib 并仅重载本轮启动的 Harness；独立 yovoice 与匿名 DyHub 保持运行，无须回滚。所有服务监听数字 loopback；当前本机 DSH/Stage 为 3080/7390，原 yovoice 3081、DyHub 8757。GLM、credentials、profile patch 和声音相关四份私有配置哈希在加载及浏览器操作前后保持一致，不将凭据或认证 URL 写入记录。
+- 真实宿主 owner 的 state/room-control 均 200；未认证 GET state/room-control 及 POST connect/disconnect/collector-stop/settings 六项为 401，过期 owner stop 为 409。实际客户端可执行内容按宿主 source-map 包装/末尾换行归一后，与批准包的已安装文件精确一致；实际 stage.js SHA-256 匹配制品。首次附加探针误把打包后的中文转义当作源码字面量，移除这一冗余检查并保留精确内容对照，再由实际 DOM 验证中文界面；没有修改业务代码来通过探针。
+- Chrome 实际打开原生“直播”主页，验证 B 站/抖音草稿切换、B 站本地限制、保存目标未被草稿改变、声音 Drawer 的 yovoice / VoxCPM2 q8 及原音色描述，未点击保存、连接或试听。检查新页面 console error 为 0，最后返回抖音空房间并保留认证页面。真实截图 `../smoke/unified-console/final-console.png`，部署证据 `../smoke/unified-console/deployment.json`。本轮未启动真实房间或发起 GLM/TTS 任务。
+- 本机交付可验收，用户手工验收反馈仍待返回；真实抖音弹幕/礼物、长期稳定、真实模型/语音重测与完整键盘旅程未由本轮证明。产品观察计划仍引用 REQ-003，后续实际问题按该计划回流，不启用后台监控。
 
 ### TASK-003 Build 实际记录（2026-11-10）
 
