@@ -9,6 +9,7 @@ describe('platform tool selection', () => {
   const env = { ...process.env };
   const tools = new Map<string, any>();
   const installed = new Map<string, any>();
+  const conditions = new Map<string, any>();
   const disposers: Array<() => void> = [];
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'douyin-agent-'));
@@ -20,7 +21,8 @@ describe('platform tool selection', () => {
       effect(effect: () => () => void, label?: string) {
         if (label?.endsWith(' tool')) disposers.push(effect());
       },
-      tools: { register(tool: any) {
+      tools: { register(tool: any, options?: any) {
+        if (options?.when) conditions.set(tool.name, options.when);
         tools.set(tool.name, tool);
         installed.set(tool.name, tool);
         return () => installed.delete(tool.name);
@@ -34,11 +36,12 @@ describe('platform tool selection', () => {
     await rm(dir, { recursive: true, force: true });
   });
   it('removes Bili tools, rejects retained references, then restores tools on Bili', async () => {
-    const oldTools = [...tools.values()].filter((tool) => tool.name !== 'show_stats');
+    const oldTools = [...tools.values()].filter((tool) => !['show_stats', 'weather_lookup', 'public_search'].includes(tool.name));
     expect(oldTools.length).toBeGreaterThan(10);
     runtime.show.setPlatform('douyin');
     runtime.updateSettings({ livePlatform: 'douyin' });
-    expect([...installed.keys()]).toEqual(['show_stats']);
+    expect([...installed.keys()]).toEqual(['weather_lookup', 'public_search', 'show_stats']);
+    for (const when of conditions.values()) expect(await when({ agent: { session: { id: 'live' } }, signal: new AbortController().signal })).toBe(false);
     const fetch = vi.spyOn(globalThis, 'fetch');
     try {
       for (const tool of oldTools) {

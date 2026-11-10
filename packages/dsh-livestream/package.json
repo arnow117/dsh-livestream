@@ -50,6 +50,21 @@
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/cordis-plugin-group": "1.1.0",
+    "@deepseek-ai/cordis-plugin-loader": "1.1.0",
+    "@deepseek-ai/dsh-agent": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-agent-loop": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-agent-preset": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-agent-preset-registry": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-persona": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-scope": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-session": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-session-projection": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "@deepseek-ai/schemastery": "3.18.4",
     "@e2e-dev/web": "0.15.5",
@@ -67,6 +82,10 @@
     "react-dom": "18.3.1",
     "typescript": "6.0.3",
     "vitest": "3.2.4",
-    "ws": "8.18.3"
+    "ws": "8.18.3",
+    "yaml": "2.9.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.2.0"
   }
 }

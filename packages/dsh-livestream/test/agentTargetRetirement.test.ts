@@ -26,7 +26,7 @@ it('stops watching old live and game sessions after a target change', async () =
     });
     runtime.show.goLive('old', 'old-game');
     await vi.advanceTimersByTimeAsync(300);
-    expect(lookup.mock.calls.map((call) => call[0])).toEqual(['old', 'old-game']);
+    expect(lookup.mock.calls.map((call) => call[0])).toEqual(['old', 'old', 'old-game']);
     runtime.show.endLive();
     (runtime.show as any).finish();
     runtime.show.setPlatform('douyin');

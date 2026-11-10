@@ -9,7 +9,8 @@ describe('platform-specific persona', () => {
     const douyin = patch.slice(patch.indexOf('id: preset-dsh-livestream-douyin'), patch.indexOf('id: preset-dsh-livestream-game'));
     expect(bili).toContain('你正在 B 站直播间当主播');
     expect(douyin).toContain('抖音只读接入 / 本地舞台');
-    expect(douyin).toContain('仅可用 show_stats');
+    expect(douyin).toContain('查询工具实际可用时');
+    expect(douyin).not.toContain('仅可用 show_stats');
     expect(douyin).toContain('没有账号操作');
     expect(douyin).not.toContain('view_profile');
     expect(douyin).not.toContain('dsh-game/agent');

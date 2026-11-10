@@ -101,6 +101,40 @@
         "commit": "cda053722492e3055ac5a56752bd7772ef17aeb8",
         "result": "pass"
       }
+    },
+    "FEAT-004": {
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-10T09:00:12Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-004.engineering.md",
+      "id": "FEAT-004",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-006",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "FEAT-004-T001": {
+          "depends_on": [],
+          "id": "FEAT-004-T001",
+          "status": "in_progress",
+          "title": "接通有来源查询并验证直播生命周期隔离",
+          "updated_at": "2026-11-10T09:03:30Z"
+        }
+      },
+      "updated_at": "2026-11-10T09:03:30Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
     }
   },
   "requirements": {
@@ -144,6 +178,93 @@
       "status": "released",
       "title": "统一直播控制台的平台与房间管理",
       "updated_at": "2026-11-10T05:08:58Z"
+    },
+    "REQ-004": {
+      "created_at": "2026-11-10T06:11:54Z",
+      "depends_on": [],
+      "description": "直播Agent在真实获准抖音私聊上下文收/回复用户并发送多维表格登记入口，用户主动提交手机号和人脸照片；两Agent以同Skill和真实授权API直读写唯一共享飞书业务DB，登记独立于T1在线。当前无企业号/enterprise.im，官方路径前提不足、替代路径未核实，保持captured。",
+      "domain": "douyin-private-messaging",
+      "feature_id": null,
+      "id": "REQ-004",
+      "priority": "P0",
+      "product_context_ref": ".sdlc-v1/context/REQ-004.product.md",
+      "status": "captured",
+      "title": "抖音私信互动与访客登记",
+      "updated_at": "2026-11-10T06:11:54Z"
+    },
+    "REQ-005": {
+      "created_at": "2026-11-10T06:27:24Z",
+      "depends_on": [],
+      "description": "真实观众可见可听主路径已现场通过；Mac失焦后声音继续但画面冻结作为本需求P0播出缺陷处理，在所属Task验证失焦、遮挡、Space、最小化、分层故障、恢复与结束后无旧回复补播；OBS网页源与Electron仅为未测候选，原主路径证据和未测边界保持，独立于私信及机器人。",
+      "domain": "douyin-audience-output",
+      "feature_id": null,
+      "id": "REQ-005",
+      "priority": "P0",
+      "product_context_ref": ".sdlc-v1/context/REQ-005.product.md",
+      "status": "ready",
+      "title": "真实抖音直播的观众端播出与验收",
+      "updated_at": "2026-11-10T10:40:33Z"
+    },
+    "REQ-006": {
+      "created_at": "2026-11-10T07:51:01Z",
+      "depends_on": [
+        "REQ-002"
+      ],
+      "description": "按用户确认交付天气查询与公开资料搜索，沿现有GLM、yovoice与舞台提供有来源回答，保持平台权限隔离及取消、切换、下播后的晚到结果约束；产品规格已收敛，服务接入和有限验证由Plan明确。",
+      "domain": "livestream-tools",
+      "feature_id": "FEAT-004",
+      "id": "REQ-006",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-006.product.md",
+      "status": "in_delivery",
+      "title": "直播 Agent 天气查询与公开资料搜索",
+      "updated_at": "2026-11-10T09:03:30Z"
+    },
+    "REQ-007": {
+      "created_at": "2026-11-10T08:22:08Z",
+      "depends_on": [
+        "REQ-002"
+      ],
+      "description": "处理Mac正式Chrome舞台失焦后声音继续但画面停住的问题，使主播切到其他app工作时画面和音频持续更新；分别验证失焦可见、遮挡、Space与最小化状态，定位渲染、采集或视频输出环节，专用渲染源仅为候选，不默认承诺锁屏或休眠支持。",
+      "domain": "livestream-output",
+      "feature_id": null,
+      "id": "REQ-007",
+      "priority": "P0",
+      "product_context_ref": ".sdlc-v1/context/REQ-007.product.md",
+      "status": "cancelled",
+      "title": "舞台失焦后的直播画面持续更新",
+      "updated_at": "2026-11-10T09:29:14Z"
+    },
+    "REQ-008": {
+      "created_at": "2026-11-10T08:22:08Z",
+      "depends_on": [
+        "REQ-002",
+        "REQ-005"
+      ],
+      "description": "复用既有Papermorph杠杆课件和现有直播控制台及舞台，交付技能资料配置与课程互动；owner配置技能和目录，首版加载技能并受限读取指定资料，新增技能或更换主目录下次新会话生效、活动会话保持快照；沿GLM和yovoice讲解、弹幕问答、答题及调参，具体Task与交互细节待Spec和Plan，不即时生成、执行脚本或开放通用文件权限。",
+      "domain": "livestream-course",
+      "feature_id": null,
+      "id": "REQ-008",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-008.product.md",
+      "status": "captured",
+      "title": "既有课件的直播讲解与弹幕互动",
+      "updated_at": "2026-11-10T09:29:14Z"
+    },
+    "REQ-009": {
+      "created_at": "2026-11-10T09:12:40Z",
+      "depends_on": [
+        "REQ-002"
+      ],
+      "description": "主人可为现有直播模式和会话配置所需skills及工作目录，了解实际发现、启用、加载、生效边界和缺失执行工具；优先复用DSH原生机制并以Papermorph和既有课件目录验证，保持同session、GLM、yovoice及默认兼容，不自动开放全局技能、Shell或任意文件权限，具体读取与异步生效契约待Spec明确。",
+      "domain": "livestream-capabilities",
+      "feature_id": null,
+      "id": "REQ-009",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-009.product.md",
+      "status": "cancelled",
+      "title": "直播模式的技能与工作目录配置",
+      "updated_at": "2026-11-10T09:29:14Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

@@ -8,6 +8,12 @@
  */
 
 export const STAGE_PROTOCOL = 1;
+export const OWNED_OUTPUT_PROTOCOL = 'owned-live-v1';
+
+export interface StageOutputOwner {
+  epoch: string;
+  turn: string;
+}
 
 /** 角色包清单（assets/characters/<id>/character.json） */
 export interface CharacterManifest {
@@ -166,12 +172,14 @@ export type BrainState = 'off' | 'listening' | 'thinking' | 'speaking' | 'away';
 
 export type StageEvent =
   /** build：舞台页代码的版本（插件更新后变）；连上时先发 */
-  | { v: 1; type: 'hello'; character: CharacterManifest; template: TemplateManifest; build?: string; at: number }
+  | { v: 1; type: 'hello'; character: CharacterManifest; template: TemplateManifest; build?: string; outputEpoch?: string | null; at: number }
   /**
    * 她说一句话。timeline：逐字时间（音频里的毫秒 → 亮到第几个字），字幕按实际播放位置走；
    * 没有时（没语音、旧版身体）按 estimateMs 匀速走
    */
-  | { v: 1; type: 'say'; id: string; text: string; mood: string; audio: string | null; estimateMs: number; timeline?: Array<{ chars: number; atMs: number }>; speaker?: string; at: number }
+  | { v: 1; type: 'say'; id: string; text: string; mood: string; audio: string | null; estimateMs: number; timeline?: Array<{ chars: number; atMs: number }>; speaker?: string; owner?: StageOutputOwner; at: number }
+  | { v: 1; type: 'invalidate'; owner: StageOutputOwner; at: number }
+  | { v: 1; type: 'output'; epoch: string | null; at: number }
   | { v: 1; type: 'brain'; state: BrainState; detail?: string; at: number }
   /** 她调用了一个工具（终端里记一行「调用 工具名 对象」）；doing：提示符上显示她在干什么 */
   | { v: 1; type: 'tool'; name: string; detail: string; doing?: string; at: number }

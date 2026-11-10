@@ -5,9 +5,10 @@
  * 这一页关掉也不影响直播。
  */
 
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import QRCode from 'qrcode';
 import type { TtsSettings } from '../shared/ttsSettings';
+import type { QueryResult, QuerySettings } from '../shared/readOnlyQuery';
 import type { RoomControlSnapshot } from '../shared/roomControl';
 import { parseDouyinRoomId } from '../shared/liveTarget';
 import { usesNewConsole } from '../body/voices';
@@ -65,7 +66,7 @@ const PRESET_ID = 'dsh-livestream';
 /** 游戏线（另一个会话里的她，专门玩游戏）用的预设 */
 const GAME_PRESET_ID = 'dsh-livestream-game';
 const DOUYIN_PRESET_ID = 'dsh-livestream-douyin';
-const SECRET_REFS = { cookie: 'BILIBILI_COOKIE', tts: 'DOUBAO_TTS_API_KEY', appId: 'DOUBAO_TTS_APP_ID', accessKey: 'DOUBAO_TTS_ACCESS_KEY' } as const;
+const SECRET_REFS = { cookie: 'BILIBILI_COOKIE', tts: 'DOUBAO_TTS_API_KEY', appId: 'DOUBAO_TTS_APP_ID', accessKey: 'DOUBAO_TTS_ACCESS_KEY', glm: 'GLM_CODING_PLAN_API_KEY' } as const;
 const COLLECTOR_TEXT: Record<RoomControlSnapshot['collector'], string> = {
   unknown: '状态未确认',
   missing: '未接入',
@@ -88,6 +89,8 @@ interface ShowStatus {
   pending: Record<string, number>;
   lines: SpokenLine[];
   stageWatchers: number;
+  outputCapabilities?: { capableSpeakers: number; legacySpeakers: number; capablePreviews: number; legacyPreviews: number };
+  query?: QueryResult | { kind: QueryResult['kind']; status: 'searching'; queryId: string } | null;
   roomId: number | null;
 }
 interface BroadcastStatus {
@@ -104,10 +107,12 @@ interface HostState {
   ok: boolean;
   show: ShowStatus;
   broadcast: BroadcastStatus;
+  queryCredential?: 'configured' | 'unconfigured' | 'error';
+  queryService?: 'unverified' | 'available' | 'incompatible';
   runtime?: { localRehearsal: boolean; ttsBackend: 'macos' | 'yovoice' | 'doubao' };
   douyinBridgeUrl?: string;
   roomControl: RoomControlSnapshot;
-  settings: { livePlatform: 'bilibili' | 'douyin'; douyinRoomId: string; roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
+  settings: { livePlatform: 'bilibili' | 'douyin'; douyinRoomId: string; roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; readOnlyQueries: QuerySettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
   stageUrl: string;
   characters: PackEntry[];
   templates: PackEntry[];
@@ -246,22 +251,23 @@ function useSecrets(includeBili: boolean): Record<string, boolean | null> {
   const [state, setState] = useState<Record<string, boolean | null>>({ cookie: null, tts: null });
   useEffect(() => {
     if (!creds) return;
-    const refs = includeBili ? Object.values(SECRET_REFS) : [SECRET_REFS.tts, SECRET_REFS.appId, SECRET_REFS.accessKey];
-    void creds.describe(refs).then((r) => setState({ cookie: !!r.value?.[SECRET_REFS.cookie]?.configured, tts: !!r.value?.[SECRET_REFS.tts]?.configured, appId: !!r.value?.[SECRET_REFS.appId]?.configured, accessKey: !!r.value?.[SECRET_REFS.accessKey]?.configured })).catch(() => {});
+    const refs = includeBili ? Object.values(SECRET_REFS) : [SECRET_REFS.tts, SECRET_REFS.appId, SECRET_REFS.accessKey, SECRET_REFS.glm];
+    void creds.describe(refs).then((r) => setState({ cookie: !!r.value?.[SECRET_REFS.cookie]?.configured, tts: !!r.value?.[SECRET_REFS.tts]?.configured, appId: !!r.value?.[SECRET_REFS.appId]?.configured, accessKey: !!r.value?.[SECRET_REFS.accessKey]?.configured, glm: !!r.value?.[SECRET_REFS.glm]?.configured })).catch(() => {});
   }, [creds, version, includeBili]);
   return state;
 }
 
 function SecretField({ label, ref_, hint, configured }: { label: string; ref_: string; hint: string; configured: boolean | null }) {
   const [value, setValue] = useState('');
+  const inputId = useId();
   const [busy, error, run] = useBusy();
   const creds = useCredentials();
   if (!creds) return <div className="dl-field"><label>{label}</label><p className="dl-hint">这个 DSH 没有凭据服务：用环境变量 {ref_} 提供。</p></div>;
   return (
     <div className="dl-field">
-      <label>{label} {configured === null ? null : configured ? <span className="dl-tag dl-ok-tag">已配置</span> : <span className="dl-tag">未配置</span>}</label>
+      <label htmlFor={inputId}>{label} {configured === null ? null : configured ? <span aria-hidden="true" className="dl-tag dl-ok-tag">已配置</span> : <span aria-hidden="true" className="dl-tag">未配置</span>}</label>
       <div className="dl-row">
-        <input type="password" value={value} placeholder={configured ? '已保存（重新填写会覆盖）' : hint} onChange={(e) => setValue(e.target.value)} />
+        <input id={inputId} type="password" value={value} placeholder={configured ? '已保存（重新填写会覆盖）' : hint} onChange={(e) => setValue(e.target.value)} />
         <button disabled={busy || !value.trim()} onClick={() => run(async () => {
           await creds.set(ref_, value.trim());
           setValue('');
@@ -269,6 +275,33 @@ function SecretField({ label, ref_, hint, configured }: { label: string; ref_: s
         })}>保存</button>
       </div>
       {error && <p className="dl-error">{error}</p>}
+    </div>
+  );
+}
+
+const QUERY_STATUS: Record<string, string> = {
+  searching: '正在查询', evidence: '已取得资料', limited: '资料不足', needs_clarification: '需要澄清',
+  empty: '没有结果', unavailable: '查询不可用', busy: '查询繁忙', timeout: '查询超时',
+  failed: '查询失败', unsupported_response: '服务返回不兼容', cancelled: '查询已取消',
+};
+
+function displayQueryTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? '时间未知' : date.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function QueryEvidence({ query }: { query: ShowStatus['query'] }) {
+  if (!query) return <p className="dl-hint">尚无查询结果</p>;
+  return (
+    <div className="dl-query-result" aria-live="polite">
+      <p className="dl-query-status">{query.kind === 'weather' ? '天气' : '公开资料'}：{QUERY_STATUS[query.status] ?? query.status}</p>
+      {'limitation' in query && query.limitation && <p>{query.limitation}</p>}
+      {'sources' in query && query.sources.length > 0 && <ul className="dl-query-sources">
+        {query.sources.map((source) => <li key={source.url}>
+          <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title || source.name}</a>
+          <span>检索：{displayQueryTime(source.retrievedAt)}；{source.providerTime.kind === 'unknown' ? '来源未提供更新时间' : source.providerTime.kind === 'observed' ? `观测：${displayQueryTime(source.providerTime.value)}` : `预报日期：${source.providerTime.value}`}</span>
+        </li>)}
+      </ul>}
     </div>
   );
 }
@@ -808,6 +841,21 @@ export function Console() {
               </div>
             </div>
             <Feed feed={feed} focus={focus} sleep={stageFile(host?.stageUrl, 'characters', character, 'art/sleep.webp')} />
+            <section className="dl-query-card" aria-label="查询状态与来源">
+              <h3>查询状态与来源</h3>
+              <QueryEvidence query={show?.query} />
+              {show?.brainSession && show.query?.queryId && show.query.status !== 'cancelled' && <>
+                <button className="dl-link" disabled={busy} onClick={() => run(async () => {
+                  await api('query/cancel', { sessionId: show.brainSession, queryId: show.query?.queryId });
+                })}>停止查询回复</button>
+                <p className="dl-hint">停止查询回复也会撤销尚未播放的查询语音；会话里的停止生成只停止正在生成的内容。</p>
+              </>}
+              {show?.outputCapabilities && <p className="dl-hint">
+                {show.outputCapabilities.capableSpeakers > 0 ? '舞台已连接。' : show.outputCapabilities.legacySpeakers > 0 ? '需要刷新舞台。' : '舞台未连接。'}
+                {show.outputCapabilities.legacySpeakers > 0 && show.outputCapabilities.capableSpeakers > 0 ? ' 有旧舞台需要刷新。' : ''}
+                {show.outputCapabilities.capablePreviews + show.outputCapabilities.legacyPreviews > 0 ? ' 预览静音。' : ''}
+              </p>}
+            </section>
             {show?.brainSession && (
               <div className="dl-links">
                 <button className="dl-link" onClick={() => svc?.uiWorkspace.openSession(show.brainSession!)}>打开她直播的会话 →</button>
@@ -827,6 +875,14 @@ export function Console() {
               : <section className="dl-voice"><h3>声音</h3>{voiceError
                 ? <div className="dl-field"><p role="alert">{voiceError}</p><button onClick={() => setVoiceReload((value) => value + 1)}>重试</button></div>
                 : <p role="status">正在读取声音设置</p>}</section>}
+            <section className="dl-field dl-query-settings" aria-labelledby="query-settings-title">
+              <h3 id="query-settings-title">天气与公开资料</h3>
+              <p className="dl-hint">默认关闭。查询与模型共用 GLM Coding Plan 凭据；修改凭据会影响模型。服务是否可用需要实际查询确认。</p>
+              <label><input type="checkbox" checked={settings?.readOnlyQueries?.weather ?? false} disabled={busy} onChange={(event) => { const enabled = event.target.checked; run(async () => { await api('settings', { readOnlyQueries: { weather: enabled } }); await refresh(); }); }} /> 启用天气查询</label>
+              <label><input type="checkbox" checked={settings?.readOnlyQueries?.publicSearch ?? false} disabled={busy} onChange={(event) => { const enabled = event.target.checked; run(async () => { await api('settings', { readOnlyQueries: { publicSearch: enabled } }); await refresh(); }); }} /> 启用公开资料搜索</label>
+              <SecretField label="GLM Coding Plan API Key" ref_={SECRET_REFS.glm} configured={secrets.glm ?? null} hint="GLM Coding Plan API Key" />
+              <p>凭据：{host?.queryCredential === 'error' ? '读取失败' : (secrets.glm ?? (host?.queryCredential === 'configured')) ? '已配置' : '未配置'}；服务：{host?.queryService === 'available' ? '上次可用' : host?.queryService === 'incompatible' ? '返回不兼容' : '未验证'}</p>
+            </section>
             {!douyin && <>
             <h3>推流到 B 站</h3>
             <ObsCheck />
@@ -1386,6 +1442,15 @@ export const CONSOLE_CSS = `
 /* 右栏：直播间，像观众看到的弹幕栏 */
 .dl-side{display:flex;flex-direction:column;min-height:0;border-radius:20px;background:var(--dl-surface);border:1px solid var(--dl-line);box-shadow:var(--dl-shadow);overflow:hidden}
 .dl-side-head{padding:14px 16px 12px;border-bottom:1px solid var(--dl-line)}
+.dl-query-card{padding:14px 16px;border-top:1px solid var(--dl-line);font-family:system-ui,-apple-system,"PingFang SC",sans-serif;font-size:13px;color:var(--dl-dim)}
+.dl-query-card h3{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--dl-text)}
+.dl-query-result p{margin:0 0 6px;line-height:1.5}
+.dl-query-status{font-weight:600;color:var(--dl-text)}
+.dl-query-sources{display:flex;flex-direction:column;gap:8px;margin:8px 0;padding:0;list-style:none}
+.dl-query-sources li{display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+.dl-query-sources a{color:var(--dl-blue);text-decoration:underline}
+.dl-query-sources span{font-size:11px;line-height:1.5;color:var(--dl-faint)}
+.dl-query-settings{font-family:system-ui,-apple-system,"PingFang SC",sans-serif}.dl-query-settings h3{margin:4px 0;color:var(--dl-text)}
 .dl-now{display:flex;align-items:center;gap:9px;font-size:14px}
 .dl-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
 .dl-stats div{padding:8px 4px;border-radius:12px;background:var(--dl-sunken);text-align:center}

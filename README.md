@@ -109,12 +109,21 @@ Harness 主人在「直播」主页选择 B 站或抖音，填写房间并点击
 
 在启动 Harness 的进程环境中设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL=1` 和 `DSH_LIVESTREAM_TTS_BACKEND=macos`。本地语音调用系统 `say`、PATH 中的 `ffmpeg` 和 `ffprobe`，不需要豆包密钥；默认使用 `Tingting`，可通过 `DSH_LIVESTREAM_MACOS_VOICE` 指定已安装的系统音色。语音转换需要能够访问 macOS 的语音服务；某些沙箱会让 `say` 输出空音频。字幕时间按实际音频时长均分估算，并非逐字强制对齐。文字通过临时文件传递，不经过 shell；取消或超时后清理文件。
 
-彩排模式不连接或登录 B 站，不推流、不探测 OBS、不轮询账号消息，也不向直播会话暴露 B 站及游戏工具；`show_stats` 仍可使用。它不恢复之前未结束的直播。抖音只读接入另需独立匿名采集器，见上方说明。正式直播不设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL`，仍使用原有行为；没有保存过后端且不设置语音后端时使用豆包。
+彩排模式不连接或登录 B 站，不推流、不探测 OBS、不轮询账号消息，也不向直播会话暴露 B 站及游戏工具；`show_stats` 仍可使用，天气和公开资料工具仅在主人启用且凭据可用时提供。它不恢复之前未结束的直播。抖音只读接入另需独立匿名采集器，见上方说明。正式直播不设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL`，仍使用原有行为；没有保存过后端且不设置语音后端时使用豆包。
 
 启动前，在插件设置中把 `distillModel` 设为现有的 `provider/model`，例如本机 GLM 路由 `glm-coding-plan/glm-5.3-flash`，并在 Harness 会话中选择同一模型。这样需要提炼记忆时也会使用该路由。控制台中打开直播并用模拟观众发送消息，舞台地址可在本机浏览器打开；结束时点击下播。不开 B 站、无需 OBS 或 B 站 Cookie。模拟事件和主播回复仍会调用所选模型并消耗其额度。
 
 也可将 `DSH_LIVESTREAM_TTS_BACKEND` 设为 `yovoice`，并在 Harness 进程环境中提供 `YOVOICE_URL` 和 `YOVOICE_API_TOKEN`。此后端使用 yovoice 的任务接口，默认选择 `voxcpm2-q8` 和中文女声描述；可分别通过 `DSH_LIVESTREAM_YOVOICE_MODEL`、`DSH_LIVESTREAM_YOVOICE_VOICE` 设置尚未保存字段的初始值。它将任务串行提交，取消时请求服务端取消并等待终态，音频转成 MP3 后按时长估算字幕；不会自动切换到其他语音服务。如果无法确认被取消任务的终态，插件会停止提交后续 yovoice 任务；先检查该任务和共享服务状态，再重启 Harness。模型冷启动可能较慢，服务闲置后会再次冷启动。
 
+
+<a id="LIVE-QUERY-WEATHER"></a>
+<a id="LIVE-QUERY-SEARCH"></a>
+<a id="LIVE-QUERY-CONTROL"></a>
+### 天气与公开资料
+
+主人在「直播」→「设置」中分别启用天气查询和公开资料搜索，两项首次均关闭。查询使用已有 `GLM_CODING_PLAN_API_KEY`，与模型共用；修改此凭据也会影响模型。启动新的直播会话后，可在「跟她说话」中询问“北京天气如何”或“OBS Studio 许可证是什么”；有明确日期时可写“北京 2026-11-12 天气预报”。控制台显示查询状态、可核对的来源与检索时间；资料不足、服务失败或来源时间未知时不会当作已确认的天气事实。要撤销本次查询尚未播放的回复，在查询区点击「停止查询回复」；会话的「停止生成」只作用于正在生成的轮次。舞台预览静音，旧舞台需要显式刷新；控制台提示“舞台已连接”仅表示兼容连接，不表示音频已播放。
+
+配置、来源限制和未验证范围见 [天气与资料查询说明](examples/macos-yovoice/README.md#天气与公开资料查询)。查询会使用联网服务及其额度，服务可用性与套餐权益需要另行确认；本功能的真实 GLM 续答、yovoice 播放与正式观众端尚未完成验证。
 
 <a id="LIVE-VOICE-EDIT"></a>
 <a id="LIVE-VOICE-PREVIEW"></a>

@@ -1,3 +1,6 @@
+import { mergeQuerySettings } from '../shared/readOnlyQuery';
+import { resolveQueryCredential } from './queryCredential';
+import { queryTurns, type QueryTurn } from './queryTurns';
 /**
  * dsh-livestream 根插件（宿主端）：开舞台服务器，给控制台（网页端 client.tsx）用的路由。
  *
@@ -26,7 +29,7 @@ import { assertBiliCurrent, beginBiliOperation, biliOperationsActive, inBiliOper
 import { normalizeDouyinBridgeUrl } from '../core/platforms/douyin/douyinSource';
 import { DouyinRoomControl } from './douyinRoomControl';
 import type { RoomControlSnapshot } from '../shared/roomControl';
-import { agentReady, asr, broadcast, cookie, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { agentReady, asr, broadcast, cookie, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, queryServiceStatus, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
@@ -231,6 +234,25 @@ async function resumeLive(ctx: HostContext, stopped: () => boolean): Promise<voi
   }
 }
 
+function cancelNativeQueryTurn(lease: QueryTurn): void {
+  const agent = lease.agent as {
+    status?: string;
+    session?: { snapshotEvents(): Array<{ type: string; data?: { turn?: number } }> };
+    cancel?: (cause: { kind: 'user' }, options: { keepInbox: true }) => void;
+  };
+  if (agent.status !== 'running' || !agent.session || !agent.cancel || lease.callerSignal.aborted) return;
+  try {
+    const events = agent.session.snapshotEvents();
+    const lastStart = events.findLastIndex((event) => event.type === 'turn/start');
+    if (lastStart < 0 || events[lastStart].data?.turn !== lease.turn) return;
+    if (events.slice(lastStart + 1).some((event) => event.type === 'turn/end' && event.data?.turn === lease.turn)) return;
+    agent.cancel({ kind: 'user' }, { keepInbox: true });
+  } catch {
+    // Local output is already invalidated; an unavailable native session must
+    // not authorize cancelling a different turn or undo that invalidation.
+  }
+}
+
 export function apply(ctx: HostContext): void {
   const roomControl = new DouyinRoomControl(dataDir);
   const roomControlSnapshot = () => makeRoomControlSnapshot(roomControl);
@@ -247,9 +269,15 @@ export function apply(ctx: HostContext): void {
       if (!credentials?.set) throw new Error('这个 DSH 没有凭据服务，存不了');
       await credentials.set(name, value);
     };
+    const offReference = ctx.on?.('credentials/reference-updated', (ref: string) => {
+      if (ref === 'GLM_CODING_PLAN_API_KEY') queryTurns.invalidateAll();
+    });
+    const offRecord = ctx.on?.('credentials/record-updated', () => queryTurns.invalidateAll());
     hooks.secret = secret;
     hooks.setSecret = setSecret;
     return () => {
+      offReference?.();
+      offRecord?.();
       if (hooks.secret === secret) hooks.secret = async (name) => process.env[name] ?? '';
       if (hooks.setSecret === setSecret) hooks.setSecret = async () => { throw new Error('这个 DSH 没有凭据服务，存不了'); };
     };
@@ -295,7 +323,10 @@ export function apply(ctx: HostContext): void {
       },
     }), label);
 
-  route('/api/dsh-livestream/state', ['GET'], () => json(state()), 'state');
+  route('/api/dsh-livestream/state', ['GET'], async () => {
+    const credential = await resolveQueryCredential(ctx.get?.('credentials'), process.env.GLM_CODING_PLAN_API_KEY);
+    return json({ ...state(), queryCredential: credential.status, queryService: queryServiceStatus });
+  }, 'state');
 
   route('/api/dsh-livestream/room-control', ['GET'], async () => {
     const snapshot = roomControlSnapshot();
@@ -343,6 +374,10 @@ export function apply(ctx: HostContext): void {
       } catch {
         return fail('声音设置无效');
       }
+    }
+    if (patch.readOnlyQueries !== undefined) {
+      try { next.readOnlyQueries = mergeQuerySettings(settings.readOnlyQueries, patch.readOnlyQueries); }
+      catch { return fail('查询设置无效'); }
     }
     if (patch.idleAfterSec !== undefined) next.idleAfterSec = Math.max(10, Math.min(600, Number(patch.idleAfterSec) || 45));
     if (patch.gameChatGapSec !== undefined) next.gameChatGapSec = Math.max(5, Math.min(120, Number(patch.gameChatGapSec) || 15));
@@ -402,6 +437,18 @@ export function apply(ctx: HostContext): void {
     if (next.template && show.gameSource) placeGame(show.gameSource);
     return json(state());
   }, 'settings');
+
+  route('/api/dsh-livestream/query/cancel', ['POST'], async (request) => {
+    const input = await controlBody<{ sessionId?: unknown; queryId?: unknown }>(request);
+    if (!input || typeof input.sessionId !== 'string' || !input.sessionId || input.sessionId.length > 256
+      || typeof input.queryId !== 'string' || !input.queryId || input.queryId.length > 128) return fail('查询身份无效');
+    const epoch = show.stage.outputEpoch;
+    if (!epoch || show.currentSession !== input.sessionId || show.status().query?.queryId !== input.queryId) return fail('查询已变化，请刷新后重试', 409);
+    const result = queryTurns.cancel(input.sessionId, input.queryId, epoch);
+    if (!result) return fail('查询已变化，请刷新后重试', 409);
+    if (!result.alreadyCancelled) cancelNativeQueryTurn(result.lease);
+    return json(state());
+  }, 'query cancel');
 
   route('/api/dsh-livestream/tts/preview', ['POST'], async (request) => {
     const patch = await body<{ text?: unknown; tts?: unknown } | null>(request);

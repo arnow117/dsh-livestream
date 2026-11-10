@@ -149,9 +149,9 @@ export class StageServer {
     const { character, template } = this.options.current();
     const c = this.options.packs.character(character);
     const t = this.options.packs.template(template);
-    if (c && t) send({ v: 1, type: 'hello', character: c, template: t, build: this.build, at: Date.now() });
+    if (c && t) send({ v: 1, type: 'hello', character: c, template: t, build: this.build, outputEpoch: this.options.stage.outputEpoch, at: Date.now() });
     // ?preview=1：控制台里的预览，静音、不回执
-    const unsubscribe = this.options.stage.subscribe(send, url.searchParams.get('preview') !== '1');
+    const unsubscribe = this.options.stage.subscribe(send, url.searchParams.get('preview') !== '1', url.searchParams.get('outputProtocol') ?? undefined);
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000);
     req.on('close', () => {
       clearInterval(ping);

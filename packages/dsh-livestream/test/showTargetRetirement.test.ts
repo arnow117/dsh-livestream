@@ -22,7 +22,7 @@ describe('show target retirement', () => {
       expect(show.currentGameSession).toBe('game-session');
       show.ownerSay('new owner');
       await (show as any).direct();
-      expect(push).toHaveBeenCalledWith('live-session', expect.stringContaining('new owner'), false);
+      expect(push).toHaveBeenCalledWith('live-session', expect.stringContaining('new owner'), false, expect.objectContaining({ kind: 'owner' }));
       oldResult(false);
       expect(await oldPush).toBe(false);
       expect(show.status().brain).not.toBe('away');
@@ -141,4 +141,89 @@ describe('show target retirement', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+it('discards a query-owned TTS result after cancellation, even when synthesis ignores abort', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'show-query-'));
+  let finish!: (value: { audio: Uint8Array; timeline: [] }) => void;
+  const synthesize = vi.fn(() => new Promise<{ audio: Uint8Array; timeline: [] }>((resolve) => { finish = resolve; }));
+  const show = new LiveShow({ push: vi.fn(async () => true), synthesize }, { dataDir: dir, names: ['角色'] });
+  const events: any[] = [];
+  const unsubscribe = show.stage.subscribe((event) => events.push(event), true, 'owned-live-v1');
+  try {
+    show.goLive('session');
+    const abort = new AbortController();
+    const lease = { owner: { epoch: show.stage.outputEpoch!, turn: '1' }, signal: abort.signal, valid: () => !abort.signal.aborted };
+    const speaking = show.say('过期答案', '', abort.signal, 'live', lease);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    abort.abort();
+    finish({ audio: new Uint8Array([1]), timeline: [] });
+    expect(await speaking).toBe('');
+    expect(events.filter((event) => event.type === 'say')).toEqual([]);
+    expect(show.status().lines).toEqual([]);
+  } finally {
+    unsubscribe();
+    show.dispose();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it.each(['disconnect', 'ending', 'offair'] as const)(
+  'discards a delayed query-owned TTS result after %s',
+  async (transition) => {
+    const dir = mkdtempSync(join(tmpdir(), 'show-query-transition-'));
+    let finish!: (value: { audio: Uint8Array; timeline: [] }) => void;
+    const synthesize = vi.fn(() => new Promise<{ audio: Uint8Array; timeline: [] }>((resolve) => { finish = resolve; }));
+    const show = new LiveShow({ push: vi.fn(async () => true), synthesize }, { dataDir: dir, names: ['角色'] });
+    const events: any[] = [];
+    const unsubscribe = show.stage.subscribe((event) => events.push(event), true, 'owned-live-v1');
+    try {
+      show.goLive('session');
+      const signal = new AbortController().signal;
+      const lease = { owner: { epoch: show.stage.outputEpoch!, turn: '1' }, signal, valid: () => true };
+      const speaking = show.say('过期答案', '', signal, 'live', lease);
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      if (transition === 'disconnect') show.disconnect();
+      else {
+        show.endLive();
+        if (transition === 'offair') (show as any).finish();
+      }
+      finish({ audio: new Uint8Array([1]), timeline: [] });
+      expect(await speaking).toBe('');
+      expect(events.filter((event) => event.type === 'say')).toEqual([]);
+      expect(show.status().lines).toEqual([]);
+    } finally {
+      unsubscribe();
+      show.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+it('does not synthesize a cancelled owned sentence waiting in the microphone queue', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'show-query-queue-'));
+  const synthesize = vi.fn(async () => ({ audio: new Uint8Array([1]), timeline: [] }));
+  const show = new LiveShow({ push: vi.fn(async () => true), synthesize }, { dataDir: dir, names: ['角色'] });
+  let releaseMic!: () => void;
+  const events: any[] = [];
+  const unsubscribe = show.stage.subscribe((event) => events.push(event), true, 'owned-live-v1');
+  try {
+    show.goLive('session');
+    const occupied = show.stage.withMic(() => new Promise<void>((resolve) => { releaseMic = resolve; }));
+    await vi.waitFor(() => expect(releaseMic).toBeTypeOf('function'));
+    const abort = new AbortController();
+    const lease = { owner: { epoch: show.stage.outputEpoch!, turn: '1' }, signal: abort.signal, valid: () => !abort.signal.aborted };
+    const queued = show.say('已取消的排队句', '', abort.signal, 'live', lease);
+    abort.abort();
+    releaseMic();
+    await occupied;
+    expect(await queued).toBe('');
+    expect(synthesize).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type === 'say')).toEqual([]);
+    expect((show as any).queued).toBe(0);
+  } finally {
+    unsubscribe();
+    show.dispose();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -3,7 +3,7 @@
  * 只有一张嘴：说话一句一句排队（withMic），前一句念完下一句才开始。
  */
 
-import type { StageEvent } from '../stage/protocol';
+import { OWNED_OUTPUT_PROTOCOL, type StageEvent } from '../stage/protocol';
 
 type Listener = (event: StageEvent) => void;
 
@@ -11,7 +11,20 @@ type Listener = (event: StageEvent) => void;
 type StageEventInput = StageEvent extends infer E ? E extends StageEvent ? Omit<E, 'v' | 'at'> : never : never;
 
 export class Stage {
-  private listeners = new Set<Listener>();
+  private listeners = new Map<Listener, { speaker: boolean; capable: boolean }>();
+  outputEpoch: string | null = null;
+  private outputListeners = new Set<() => void>();
+
+  onOutputChange(listener: () => void): () => void {
+    this.outputListeners.add(listener);
+    return () => this.outputListeners.delete(listener);
+  }
+
+  setOutputEpoch(epoch: string | null): void {
+    this.outputEpoch = epoch;
+    for (const listener of this.outputListeners) listener();
+    this.broadcast({ type: 'output', epoch });
+  }
   /** 出声的舞台页（OBS 的浏览器源）；预览页静音、不回执 */
   private speakers = new Set<Listener>();
   private pending = new Map<string, () => void>();
@@ -24,8 +37,8 @@ export class Stage {
   }
 
   /** speaker：这个页面出声、念完回执（OBS 的浏览器源）；控制台里的预览传 false */
-  subscribe(listener: Listener, speaker = true): () => void {
-    this.listeners.add(listener);
+  subscribe(listener: Listener, speaker = true, outputProtocol?: string): () => void {
+    this.listeners.set(listener, { speaker, capable: outputProtocol === OWNED_OUTPUT_PROTOCOL });
     if (speaker) this.speakers.add(listener);
     for (const event of this.latest.values()) listener(event);
     return () => {
@@ -34,10 +47,23 @@ export class Stage {
     };
   }
 
+  outputCapabilities(): { capableSpeakers: number; legacySpeakers: number; capablePreviews: number; legacyPreviews: number } {
+    const counts = { capableSpeakers: 0, legacySpeakers: 0, capablePreviews: 0, legacyPreviews: 0 };
+    for (const { speaker, capable } of this.listeners.values()) {
+      if (speaker && capable) counts.capableSpeakers++;
+      else if (speaker) counts.legacySpeakers++;
+      else if (capable) counts.capablePreviews++;
+      else counts.legacyPreviews++;
+    }
+    return counts;
+  }
+
   broadcast(event: StageEventInput): void {
     const full = { v: 1, at: Date.now(), ...event } as StageEvent;
     if (full.type === 'room' || full.type === 'brain' || full.type === 'usage' || full.type === 'media' || full.type === 'board' || full.type === 'orders' || full.type === 'game' || full.type === 'gameStatus' || full.type === 'notice') this.latest.set(full.type, full);
-    for (const listen of this.listeners) {
+    const owned = full.type === 'output' || full.type === 'invalidate' || (full.type === 'say' && !!full.owner);
+    for (const [listen, options] of this.listeners) {
+      if (owned && !options.capable) continue;
       try {
         listen(full);
       } catch {
@@ -51,6 +77,7 @@ export class Stage {
    * timeoutMs 是兜底：舞台卡住也不会一直等。
    */
   waitSaid(id: string, estimateMs: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
     return new Promise((resolve) => {
       const finish = () => {
         clearTimeout(timer);

@@ -28,6 +28,7 @@ import { synthesizeMacos } from '../body/macosTts';
 import { synthesizeYovoice } from '../body/yovoiceTts';
 import { DEFAULT_VOICE } from '../body/voices';
 import type { DistillLlm } from '../core/memory/distill';
+import type { Topic } from '../core/attention/topics';
 import type { CharacterManifest, GameSource } from '../stage/protocol';
 import { gameRect } from '../stage/layout';
 import { connectObs, showGameSources } from '../body/obs';
@@ -35,6 +36,7 @@ import type { OwnerPace } from '../core/attention/attention';
 import { assertBiliCurrent, beginBiliOperation, inBiliOperation } from '../shared/biliOperations';
 import { parseDouyinRoomId } from '../shared/liveTarget';
 import type { LivePlatform } from '../core/live';
+import { mergeQuerySettings, type QuerySettings } from '../shared/readOnlyQuery';
 import { defaultTtsSettings, mergeTtsSettings, type TtsSettings } from '../shared/ttsSettings';
 
 export interface Settings {
@@ -46,6 +48,7 @@ export interface Settings {
   /** 空串用角色包的默认音色 */
   voice: string;
   tts: TtsSettings;
+  readOnlyQueries: QuerySettings;
   stagePort: number;
   stageToken: string;
   /** 下播提炼观众记忆用的模型（provider/model） */
@@ -171,6 +174,7 @@ function loadSettings(): Settings {
     template: 'default',
     voice: '',
     tts: defaultTtsSettings(process.env, saved.voice ?? ''),
+    readOnlyQueries: { weather: false, publicSearch: false },
     stagePort: 7390,
     stageToken: '',
     distillModel: 'deepseek-official/deepseek-flash',
@@ -198,6 +202,11 @@ function loadSettings(): Settings {
     settings.douyinRoomId = '';
   }
   settings.tts = mergeTtsSettings(defaultTtsSettings(process.env, saved.voice ?? ''), saved.tts ?? {}, { allowInvalidCurrent: true });
+  try {
+    settings.readOnlyQueries = mergeQuerySettings(undefined, saved.readOnlyQueries ?? {});
+  } catch {
+    settings.readOnlyQueries = { weather: false, publicSearch: false };
+  }
   settings.voice = settings.tts.doubaoVoice;
   if (!settings.stageToken) {
     settings.stageToken = randomBytes(12).toString('base64url');
@@ -219,6 +228,13 @@ function saveSettings(next: Settings): void {
 
 export const settings: Settings = loadSettings();
 const platformListeners = new Set<() => void>();
+const querySettingsListeners = new Set<() => void>();
+export let queryServiceStatus: 'unverified' | 'available' | 'incompatible' = 'unverified';
+export function setQueryServiceStatus(status: typeof queryServiceStatus): void { queryServiceStatus = status; }
+export function onQuerySettingsChange(listener: () => void): () => void {
+  querySettingsListeners.add(listener);
+  return () => querySettingsListeners.delete(listener);
+}
 export function onPlatformChange(listener: () => void): () => void {
   platformListeners.add(listener);
   return () => platformListeners.delete(listener);
@@ -230,10 +246,16 @@ export function updateSettings(patch: Partial<Settings>): Settings {
     if (patch.tts?.doubaoVoice !== undefined && patch.voice.trim() !== tts.doubaoVoice) throw new Error('音色设置冲突');
     tts = mergeTtsSettings(tts, { doubaoVoice: patch.voice });
   }
-  const next = { ...settings, ...patch, tts, voice: tts.doubaoVoice };
+  const readOnlyQueries = patch.readOnlyQueries
+    ? mergeQuerySettings(settings.readOnlyQueries, patch.readOnlyQueries)
+    : settings.readOnlyQueries;
+  const next = { ...settings, ...patch, tts, readOnlyQueries, voice: tts.doubaoVoice };
   saveSettings(next);
   const platformChanged = next.livePlatform !== settings.livePlatform;
+  const queryChanged = (settings.readOnlyQueries.weather && !next.readOnlyQueries.weather)
+    || (settings.readOnlyQueries.publicSearch && !next.readOnlyQueries.publicSearch);
   Object.assign(settings, next);
+  if (queryChanged) for (const listener of querySettingsListeners) listener();
   if (platformChanged) {
     for (const listener of platformListeners) {
       try { listener(); } catch (error) { console.warn('[dsh-livestream] 更新平台工具失败：', error); }
@@ -251,13 +273,15 @@ export const hooks: {
   secret: (name: string) => Promise<string>;
   /** 存一个机密（扫码登录拿到的 Cookie）；没有凭据服务时抛错 */
   setSecret: (name: string, value: string) => Promise<void>;
-  push: (sessionId: string, text: string, now?: boolean) => Promise<boolean>;
+  push: (sessionId: string, text: string, now?: boolean, topic?: Topic) => Promise<boolean>;
+  initializeWatch: (sessionId: string) => void;
   complete: ((model: string, system: string, user: string) => Promise<string>) | null;
   log: (level: 'info' | 'warn', message: string) => void;
 } = {
   secret: async (name) => process.env[name] ?? '',
   setSecret: async () => { throw new Error('这个 DSH 没有凭据服务，存不了'); },
   push: async () => false,
+  initializeWatch: () => {},
   complete: null,
   log: (level, message) => (level === 'warn' ? console.warn : console.log)(`[dsh-livestream] ${message}`),
 };
@@ -292,7 +316,8 @@ const distill: DistillLlm = async (system, user) => {
 
 export const show = new LiveShow(
   {
-    push: (sessionId, text, now) => hooks.push(sessionId, text, now),
+    push: (sessionId, text, now, topic) => hooks.push(sessionId, text, now, topic),
+    initializeWatch: (sessionId) => hooks.initializeWatch(sessionId),
     synthesize: (text, signal, voice) => {
       if (voice) return speech(text, signal, voice);
       const snapshot = speechSnapshot();

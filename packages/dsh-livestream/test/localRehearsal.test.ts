@@ -7,6 +7,7 @@ describe('local rehearsal mode', () => {
   let dir: string;
   let routes: Map<string, (request: Request) => Promise<Response> | Response>;
   let tools: string[];
+  const conditions = new Map<string, any>();
   let statsTool: { execute: (args: object) => Promise<string> };
   let runtime: typeof import('../src/dsh/runtime');
   const followup = vi.fn();
@@ -31,7 +32,7 @@ describe('local rehearsal mode', () => {
     });
     agent.apply({
       effect(effect: () => unknown, label?: string) { if (label?.endsWith(' tool')) effect(); },
-      tools: { register(tool: { name: string; execute: (args: object) => Promise<string> }) { tools.push(tool.name); statsTool = tool; return () => {}; } },
+      tools: { register(tool: { name: string; execute: (args: object) => Promise<string> }, options?: any) { tools.push(tool.name); if (options?.when) conditions.set(tool.name, options.when); if (tool.name === 'show_stats') statsTool = tool; return () => {}; } },
       get(name: string) { return name === 'agents' ? { get: () => ({ followup }) } : undefined; },
     });
   });
@@ -56,8 +57,9 @@ describe('local rehearsal mode', () => {
     }
   });
 
-  it('exposes only the local statistics tool', () => {
-    expect(tools).toEqual(['show_stats']);
+  it('admits only statistics when queries are disabled', async () => {
+    expect(tools).toEqual(['weather_lookup', 'public_search', 'show_stats']);
+    for (const when of conditions.values()) expect(await when({ agent: { session: { id: 'live' } }, signal: new AbortController().signal })).toBe(false);
   });
 
   it('exposes runtime mode alongside the existing state without changing saved settings', async () => {

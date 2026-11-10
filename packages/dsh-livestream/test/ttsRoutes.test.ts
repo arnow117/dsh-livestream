@@ -49,6 +49,16 @@ describe('voice settings and preview routes', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  it('persists query settings atomically and rejects invalid changes', async () => {
+    expect(runtime.settings.readOnlyQueries).toEqual({ weather: false, publicSearch: false });
+    expect((await post('settings', { readOnlyQueries: { weather: true } })).status).toBe(200);
+    expect(runtime.settings.readOnlyQueries).toEqual({ weather: true, publicSearch: false });
+    const before = await readFile(join(dir, 'dsh-livestream/settings.json'), 'utf8');
+    expect((await post('settings', { readOnlyQueries: { publicSearch: 'true' } })).status).toBe(400);
+    expect(await readFile(join(dir, 'dsh-livestream/settings.json'), 'utf8')).toBe(before);
+    expect(runtime.settings.readOnlyQueries).toEqual({ weather: true, publicSearch: false });
+  });
+
   it('previews a draft with root credentials and saves only on request', async () => {
     vi.stubGlobal('fetch', fetchProvider);
     const before = await readFile(join(dir, 'dsh-livestream/settings.json'), 'utf8');

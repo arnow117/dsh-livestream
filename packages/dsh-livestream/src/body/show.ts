@@ -25,11 +25,12 @@ import { cleanName, cleanText } from '../core/safety';
 import { speakable } from '../core/speakable';
 import { topicText } from '../core/topicText';
 import { lookupViewer, type ViewerLookup } from '../core/viewerLookup';
-import type { BrainState, GameSource, GameStatus, StageLiveEvent, StageUser } from '../stage/protocol';
+import type { BrainState, GameSource, GameStatus, StageLiveEvent, StageOutputOwner, StageUser } from '../stage/protocol';
 import { gameStatusOf } from './gameStatus';
 import { Player, type PlayRequest } from './player';
 import type { VideoNotes } from './watchAlong';
 import { Stage } from './stage';
+import type { QueryResult } from '../shared/readOnlyQuery';
 
 /** 一个视频不放了：怎么结束的、放了多少秒、这期间她说了什么 */
 export interface VideoEnd {
@@ -38,12 +39,19 @@ export interface VideoEnd {
   said: string[];
 }
 
+export interface OwnedSpeech {
+  owner: StageOutputOwner;
+  signal: AbortSignal;
+  valid(): boolean;
+}
+
 export interface ShowHooks {
   /**
    * 把一件事作为一条消息推进她的会话（唤醒她）；会话不在线返回 false。
    * now：插进她这一轮的下一步（她在玩游戏、一轮没完时）；不然排到下一轮
    */
-  push(sessionId: string, text: string, now?: boolean): Promise<boolean>;
+  push(sessionId: string, text: string, now?: boolean, topic?: Topic): Promise<boolean>;
+  initializeWatch?(sessionId: string): void;
   /** 合成一句话的语音（mp3）和逐字时间；没配密钥或失败返回 null（只有字幕，按字数走） */
   /** voice：嘉宾用自己的音色；不给就是她的 */
   synthesize(text: string, signal: AbortSignal, voice?: string): Promise<{ audio: Uint8Array; timeline: Array<{ chars: number; atMs: number }> } | null>;
@@ -116,6 +124,8 @@ export interface ShowStatus {
   pending: Record<string, number>;
   lines: SpokenLine[];
   stageWatchers: number;
+  outputCapabilities: ReturnType<Stage['outputCapabilities']>;
+  query: QueryResult | { kind: QueryResult['kind']; status: 'searching'; queryId: string; turn: number } | null;
   /** 当前连着的房间号（没连为 null） */
   roomId: number | string | null;
 }
@@ -184,6 +194,7 @@ export class LiveShow {
   });
   private attention: LiveAttention;
   private memory: LiveMemory;
+  private query: ShowStatus['query'] = null;
   private onAir = false;
   private ending = false;
   private endingTimer: NodeJS.Timeout | null = null;
@@ -394,6 +405,8 @@ export class LiveShow {
     const keepEnding = keepSession && this.ending;
     const endingInFlight = keepEnding && this.endingPushIdentity === this.sessionIdentity;
     this.sessionGeneration++;
+    this.query = null;
+    this.stage.setOutputEpoch(keepSession && this.onAir && !this.ending ? randomUUID() : null);
     if (!keepSession) {
       this.sessionIdentity++;
       this.brainSession = null;
@@ -419,6 +432,7 @@ export class LiveShow {
     this.resetGameLine();
     this.onAir = true;
     this.ending = false;
+    this.stage.setOutputEpoch(randomUUID());
     this.endingPushed = false;
     this.turnRunning = false;
     this.attention = this.freshAttention();
@@ -427,6 +441,7 @@ export class LiveShow {
     // 别人的直播间（旁观、试播）不留任何记忆：不建档，也不写这场的回顾
     this.memoryStream = this.rememberViewers;
     if (this.memoryStream) this.memory.begin(Date.now());
+    this.hooks.initializeWatch?.(sessionId);
     this.priority = [{ kind: 'opening' }];
     this.inbox = [];
     this.lines = [];
@@ -455,6 +470,7 @@ export class LiveShow {
     }
     this.onAir = true;
     this.ending = false;
+    this.stage.setOutputEpoch(randomUUID());
     this.endingPushed = false;
     this.turnRunning = false;
     this.attention = this.freshAttention();
@@ -464,6 +480,7 @@ export class LiveShow {
     this.spoken = snapshot.spokenChars ?? 0;
     this.orders = new OrderBook(snapshot.orders);
     this.publishOrders(false);
+    this.hooks.initializeWatch?.(snapshot.sessionId);
     this.priority = [{ kind: 'resumed', gapSec: Math.max(1, Math.round((now - snapshot.at) / 1000)), ...(playing ? { playing: true } : {}) }];
     this.inbox = [];
     this.logFile = snapshot.logFile;
@@ -504,6 +521,8 @@ export class LiveShow {
   endLive(): void {
     if (!this.onAir || this.ending) return;
     this.ending = true;
+    this.query = null;
+    this.stage.setOutputEpoch(null);
     this.priority.unshift({ kind: 'ending', summary: '' });
     this.endingTimer = setTimeout(() => this.finish(), ENDING_GRACE_MS);
   }
@@ -514,6 +533,7 @@ export class LiveShow {
     if (!this.onAir) return;
     this.stopVideo('off');
     this.onAir = false;
+    this.stage.setOutputEpoch(null);
     this.ending = false;
     this.endingPushed = false;
     this.priority = [];
@@ -791,7 +811,7 @@ export class LiveShow {
     if (ending) this.endingPushIdentity = identity;
     this.setBrain('thinking', topicLabel(topic));
     try {
-      const ok = await this.hooks.push(this.brainSession!, text, midTurn);
+      const ok = await this.hooks.push(this.brainSession!, text, midTurn, topic);
       const current = ending
         ? this.ending && this.sessionIdentity === identity && this.endingPushIdentity === identity
         : generation === this.sessionGeneration;
@@ -893,21 +913,28 @@ export class LiveShow {
   }
 
   /** 念她写的话：合成语音、交给舞台、等念完 */
-  async say(raw: string, mood: string, signal: AbortSignal, line: 'live' | 'game' = 'live'): Promise<string> {
+  async say(raw: string, mood: string, signal: AbortSignal, line: 'live' | 'game' = 'live', owned?: OwnedSpeech): Promise<string> {
     const text = speakable(raw);
     if (!text) return '';
     const generation = this.sessionGeneration;
+    const current = () => !owned || (owned.valid() && !owned.signal.aborted && this.onAir && !this.ending && this.stage.outputEpoch === owned.owner.epoch);
     // 嘴两条线共用、按先后念：游戏线的话一句不丢（死了、危险、拿到装备都在这里说）；直播线推下一件事时不等游戏线的话
     const game = line === 'game';
     this.queued += 1;
     if (game) this.queuedGame += 1;
     return this.stage.withMic(async () => {
       if (generation !== this.sessionGeneration) return '';
+      if (!current()) {
+        this.queued -= 1;
+        if (game) this.queuedGame -= 1;
+        return '';
+      }
       this.activeSpeech += 1;
       this.speaking += 1;
       this.attention.speechStarted();
       this.setBrain('speaking');
       const start = Date.now();
+      let committed = false;
       try {
         let speech: { audio: Uint8Array; timeline: Array<{ chars: number; atMs: number }> } | null = null;
         // 合成一段平时不到 2 秒：一次最多等 SYNTH_TIMEOUT_MS，卡住了马上再试一次（实测豆包偶尔一个请求一直不回，等满两分钟直播就冷场了）
@@ -918,6 +945,7 @@ export class LiveShow {
             this.hooks.log?.('warn', `语音合成失败（第 ${attempt} 次）：${(err as Error).message}`);
           }
         }
+        if (!current()) return '';
         const id = randomUUID();
         const estimateMs = estimateSpeechMs(text);
         const done = this.stage.waitSaid(id, estimateMs, signal);
@@ -925,7 +953,9 @@ export class LiveShow {
           type: 'say', id, text, mood, estimateMs,
           audio: speech ? Buffer.from(speech.audio).toString('base64') : null,
           ...(speech?.timeline.length ? { timeline: speech.timeline } : {}),
+          ...(owned ? { owner: owned.owner } : {}),
         });
+        committed = true;
         await done;
       } finally {
         this.activeSpeech -= 1;
@@ -934,10 +964,12 @@ export class LiveShow {
           this.queued -= 1;
           if (game) this.queuedGame -= 1;
           this.attention.speechEnded(Date.now());
-          this.lines = [...this.lines, { text, mood, at: start }].slice(-RECENT_LINES);
-          this.herLines.push(text);
-          this.spoken += [...text].length;
-          this.record({ type: 'say', text, mood, start, end: Date.now(), ...(game ? { line: 'game' } : {}) });
+          if (committed) {
+            this.lines = [...this.lines, { text, mood, at: start }].slice(-RECENT_LINES);
+            this.herLines.push(text);
+            this.spoken += [...text].length;
+            this.record({ type: 'say', text, mood, start, end: Date.now(), ...(game ? { line: 'game' } : {}) });
+          }
           this.setBrain(!this.onAir ? 'off' : this.turnRunning ? 'thinking' : 'listening');
         }
       }
@@ -1144,6 +1176,22 @@ export class LiveShow {
     });
   }
 
+  cancelQuery(epoch: string, queryId: string): void {
+    if (this.stage.outputEpoch !== epoch || this.query?.queryId !== queryId) return;
+    this.query = { kind: this.query.kind, queryId, status: 'cancelled', evidenceText: '', sources: [] };
+  }
+
+  queryFeedback(epoch: string, signal: AbortSignal, value: NonNullable<ShowStatus['query']>, turn?: number, elapsedMs?: number): boolean {
+    if (!this.onAir || this.ending || signal.aborted || this.stage.outputEpoch !== epoch) return false;
+    this.query = value;
+    if (value.status === 'searching') {
+      const label = value.kind === 'weather' ? '天气' : '公开资料';
+      this.stage.broadcast({ type: 'tool', name: value.kind, detail: '', doing: `正在查询${label}` });
+    }
+    this.record({ type: 'query', queryId: value.queryId, kind: value.kind, turn: turn ?? ('turn' in value ? value.turn : undefined), phase: value.status, elapsedMs, sources: 'sources' in value ? value.sources.length : 0 });
+    return true;
+  }
+
   get isOnAir(): boolean {
     return this.onAir;
   }
@@ -1167,6 +1215,8 @@ export class LiveShow {
       pending: snap.pending,
       lines: this.lines,
       stageWatchers: this.stage.watchers,
+      outputCapabilities: this.stage.outputCapabilities(),
+      query: this.query,
       roomId: this.roomId,
     };
   }

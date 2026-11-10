@@ -3,7 +3,7 @@
  * 唯一往回发的是「这句念完了」（出声的页面才发；预览页静音、不回执）。
  */
 
-import type { BrainState, CharacterManifest, GameSource, GameStatus, StageEvent, StageLiveEvent, StageOrder, StageUser, TemplateManifest } from './protocol';
+import { OWNED_OUTPUT_PROTOCOL, type BrainState, type CharacterManifest, type GameSource, type GameStatus, type StageEvent, type StageLiveEvent, type StageOrder, type StageOutputOwner, type StageUser, type TemplateManifest } from './protocol';
 import { type FxEvent, giftTier, pick, triggersOf } from './triggers';
 
 export interface ChatRow {
@@ -252,7 +252,87 @@ function endLine(id: string): void {
   said(id);
 }
 
+interface PendingOwned {
+  owner: StageOutputOwner;
+  id: string;
+  version: number;
+  started: boolean;
+  revoked: boolean;
+  player: HTMLAudioElement | null;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+let connectionVersion = 0;
+let outputEpoch: string | null = null;
+let pendingOwned: PendingOwned | null = null;
+let activeSource: EventSource | null = null;
+
+function revokeOwned(owner?: StageOutputOwner): void {
+  const pending = pendingOwned;
+  if (!pending || pending.started || (owner && (owner.epoch !== pending.owner.epoch || owner.turn !== pending.owner.turn))) return;
+  pending.revoked = true;
+  pending.player?.pause();
+  if (pending.timer) clearTimeout(pending.timer);
+  pendingClick = null;
+  update((s) => ({ ...s, line: s.line?.id === pending.id ? null : s.line, needsClick: false }));
+  pendingOwned = null;
+}
+
+function onOwnedSay(event: Extract<StageEvent, { type: 'say' }> & { owner: StageOutputOwner }): void {
+  if (!outputEpoch || event.owner.epoch !== outputEpoch) return;
+  revokeOwned();
+  audio?.pause();
+  const pending: PendingOwned = {
+    owner: event.owner, id: event.id, version: connectionVersion,
+    started: false, revoked: false, player: null, timer: null,
+  };
+  pendingOwned = pending;
+  const valid = () => !pending.revoked && pending.version === connectionVersion && outputEpoch === pending.owner.epoch;
+  let announced = false;
+  const begin = (durationMs: number) => {
+    if (!valid()) return;
+    update((s) => {
+      const next = { ...s, line: { id: event.id, text: event.text, mood: event.mood, startedAt: Date.now(), durationMs, timeline: event.timeline, speaker: event.speaker } };
+      if (announced) return next;
+      announced = true;
+      return term(next, event.speaker ? 'guest' : 'say', `${event.speaker ? `${event.speaker}：` : ''}${MOOD_TEXT[event.mood] ? `（${MOOD_TEXT[event.mood]}）` : ''}${short(event.text, 26)}`);
+    });
+  };
+  const fallback = () => {
+    if (!valid()) return;
+    begin(event.estimateMs);
+    pending.timer = setTimeout(() => {
+      if (valid()) endLine(event.id);
+      if (pendingOwned === pending) pendingOwned = null;
+    }, event.estimateMs);
+  };
+  if (!event.audio || preview) return fallback();
+  const player = new Audio(`data:audio/mpeg;base64,${event.audio}`);
+  pending.player = player;
+  audio = player;
+  audioLine = event.id;
+  player.onloadedmetadata = () => {
+    if (pending.started) begin(Number.isFinite(player.duration) ? player.duration * 1000 : event.estimateMs);
+  };
+  player.onplaying = () => {
+    if (!valid()) return player.pause();
+    pending.started = true;
+    begin(Number.isFinite(player.duration) ? player.duration * 1000 : event.estimateMs);
+  };
+  player.onended = () => {
+    if (pending.started || valid()) endLine(event.id);
+    if (pendingOwned === pending) pendingOwned = null;
+  };
+  player.onerror = fallback;
+  player.play().catch(() => {
+    if (!valid()) return;
+    update((s) => ({ ...s, needsClick: true }));
+    pendingClick = () => { if (valid()) update((s) => ({ ...s, needsClick: false })); };
+    fallback();
+  });
+}
+
 function onSay(event: Extract<StageEvent, { type: 'say' }>): void {
+  if (event.owner) return onOwnedSay(event as Extract<StageEvent, { type: 'say' }> & { owner: StageOutputOwner });
   audio?.pause();
   const begin = (durationMs: number) => update((s) => ({ ...s, line: { id: event.id, text: event.text, mood: event.mood, startedAt: Date.now(), durationMs, timeline: event.timeline, speaker: event.speaker } }));
   const fallback = () => {
@@ -494,13 +574,21 @@ function handle(event: StageEvent): void {
         location.reload();
         return;
       }
+      outputEpoch = event.outputEpoch ?? null;
       pageBuild ??= event.build;
       helloAt = Date.now();
       update((s) => ({ ...s, connected: true, character: event.character, template: event.template }));
       if (demo && !demoStarted) startDemo(event.character.name);
       return;
+    case 'output':
+      revokeOwned();
+      outputEpoch = event.epoch;
+      return;
+    case 'invalidate':
+      return revokeOwned(event.owner);
     case 'say':
-      update((s) => term(s, event.speaker ? 'guest' : 'say', `${event.speaker ? `${event.speaker}：` : ''}${MOOD_TEXT[event.mood] ? `（${MOOD_TEXT[event.mood]}）` : ''}${short(event.text, 26)}`));
+      if (event.owner && (!outputEpoch || event.owner.epoch !== outputEpoch)) return;
+      if (!event.owner) update((s) => term(s, event.speaker ? 'guest' : 'say', `${event.speaker ? `${event.speaker}：` : ''}${MOOD_TEXT[event.mood] ? `（${MOOD_TEXT[event.mood]}）` : ''}${short(event.text, 26)}`));
       return onSay(event);
     case 'brain': return onBrain(event);
     case 'tool': return update((s) => term({ ...s, brain: 'thinking', brainDetail: event.doing ?? s.brainDetail }, 'tool', `${event.name}${event.detail ? ` ${event.detail}` : ''}`));
@@ -578,8 +666,14 @@ function startDemo(name: string): void {
 
 export function connect(): void {
   if (state.phase === 'updating') setPhase('updating', { ms: UPDATING_MAX_MS, next: 'waiting' });
-  const source = new EventSource(`/events?token=${encodeURIComponent(token)}${preview ? '&preview=1' : ''}`);
+  connectionVersion++;
+  outputEpoch = null;
+  revokeOwned();
+  activeSource?.close();
+  const source = new EventSource(`/events?token=${encodeURIComponent(token)}&outputProtocol=${OWNED_OUTPUT_PROTOCOL}${preview ? '&preview=1' : ''}`);
+  activeSource = source;
   source.onmessage = (message) => {
+    if (source !== activeSource) return;
     try {
       handle(JSON.parse(message.data) as StageEvent);
     } catch {
@@ -587,6 +681,10 @@ export function connect(): void {
     }
   };
   source.onerror = () => {
+    if (source !== activeSource) return;
+    connectionVersion++;
+    outputEpoch = null;
+    revokeOwned();
     update((s) => ({ ...s, connected: false }));
     // 直播中断线（插件在重启、在更新）：过一会儿还没接上就盖「更新中」
     if (!state.onAir || preview || updatingTimer) return;
@@ -595,5 +693,7 @@ export function connect(): void {
       if (!state.connected && state.onAir) startUpdating();
     }, UPDATING_AFTER_MS);
   };
-  source.onopen = () => update((s) => ({ ...s, connected: true }));
+  source.onopen = () => {
+    if (source === activeSource) update((s) => ({ ...s, connected: true }));
+  };
 }
