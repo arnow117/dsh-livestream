@@ -5,7 +5,7 @@ import type { LiveSource, LiveSourceListener } from '../source';
 export const DOUYIN_CACHE_TTL_MS = 120_000;
 export const DOUYIN_CACHE_LIMIT = 4_000;
 const MAX_FRAME_BYTES = 1_048_576;
-const RECOVERY = '先断开订阅，再显式连接；上游已结束或出错时，请先到采集控制台恢复或停止后重开。';
+const RECOVERY = '请在直播页检查房间状态后显式重试。';
 
 type JsonObject = Record<string, unknown>;
 const object = (value: unknown): JsonObject | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : null;
@@ -69,8 +69,9 @@ export class DouyinLiveSource implements LiveSource {
   private readonly groups = new Map<string, { count: number; observedAt: number; eventId: string }>();
   private groupSequence = 0;
   private readonly origin: string;
+  private initialized = false;
 
-  constructor(private readonly roomId: string, bridgeUrl: string) {
+  constructor(private readonly roomId: string, bridgeUrl: string, private readonly onInitialized?: (result: 'connected' | 'error') => void) {
     if (!/^[0-9]{1,64}$/.test(roomId)) throw new Error('抖音房间号无效');
     this.origin = normalizeDouyinBridgeUrl(bridgeUrl);
   }
@@ -78,6 +79,7 @@ export class DouyinLiveSource implements LiveSource {
   start(listener: LiveSourceListener): void {
     this.listener = listener;
     this.terminal = false;
+    this.initialized = false;
     const generation = ++this.generation;
     listener.room({ platform: 'douyin', roomId: this.roomId });
     listener.state('connecting');
@@ -192,11 +194,16 @@ export class DouyinLiveSource implements LiveSource {
     const frame = object(value);
     if (!frame || frame.roomId !== this.roomId) return;
     if (frame.type === '__connected') {
+      const room = object(frame.room);
+      if (!room || room.roomId !== this.roomId || !['connecting', 'live', 'closed', 'error', 'stopped'].includes(String(room.status))) return;
+      this.settleInitialization('connected');
       this.stateVersion++;
-      this.roomState(object(frame.room));
+      this.roomState(room);
       return;
     }
     if (frame.type === '__error') {
+      if (!text(frame.error, 500)) return;
+      this.settleInitialization('error');
       this.stateVersion++;
       this.fail(text(frame.error, 500) ?? '采集出错');
       return;
@@ -255,6 +262,12 @@ export class DouyinLiveSource implements LiveSource {
       event = { ...base, id: eventId, kind: 'gift', giftName, count: delta, valueYuan: 0, valueKnown: false };
     }
     if (event) this.listener?.event(event);
+  }
+
+  private settleInitialization(result: 'connected' | 'error'): void {
+    if (this.initialized) return;
+    this.initialized = true;
+    this.onInitialized?.(result);
   }
 
   private prune(now: number): void {

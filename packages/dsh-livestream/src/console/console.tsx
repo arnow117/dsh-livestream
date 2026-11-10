@@ -8,6 +8,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import QRCode from 'qrcode';
 import type { TtsSettings } from '../shared/ttsSettings';
+import type { RoomControlSnapshot } from '../shared/roomControl';
 import { parseDouyinRoomId } from '../shared/liveTarget';
 import { usesNewConsole } from '../body/voices';
 
@@ -65,6 +66,15 @@ const PRESET_ID = 'dsh-livestream';
 const GAME_PRESET_ID = 'dsh-livestream-game';
 const DOUYIN_PRESET_ID = 'dsh-livestream-douyin';
 const SECRET_REFS = { cookie: 'BILIBILI_COOKIE', tts: 'DOUBAO_TTS_API_KEY', appId: 'DOUBAO_TTS_APP_ID', accessKey: 'DOUBAO_TTS_ACCESS_KEY' } as const;
+const COLLECTOR_TEXT: Record<RoomControlSnapshot['collector'], string> = {
+  unknown: '状态未确认',
+  missing: '未接入',
+  connecting: '连接中',
+  live: '采集中',
+  closed: '已结束',
+  error: '出错',
+  stopped: '已停止',
+};
 
 interface PackEntry { id: string; name: string; builtin: boolean }
 interface SpokenLine { text: string; mood: string; at: number }
@@ -96,6 +106,7 @@ interface HostState {
   broadcast: BroadcastStatus;
   runtime?: { localRehearsal: boolean; ttsBackend: 'macos' | 'yovoice' | 'doubao' };
   douyinBridgeUrl?: string;
+  roomControl: RoomControlSnapshot;
   settings: { livePlatform: 'bilibili' | 'douyin'; douyinRoomId: string; roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
   stageUrl: string;
   characters: PackEntry[];
@@ -435,8 +446,19 @@ export function Console() {
   const svc = useServices();
   const { status, feed, focus, brainDetail, broadcast: liveBc } = useLive();
   const [host, setHost] = useState<HostState | null>(null);
+  const latestHost = useRef<HostState | null>(null);
+  latestHost.current = host;
   const [busy, error, run] = useBusy();
   const [room, setRoom] = useState('');
+  const [platformDraft, setPlatformDraft] = useState<'bilibili' | 'douyin'>('bilibili');
+  const [roomControl, setRoomControl] = useState<RoomControlSnapshot | null>(null);
+  const [connectPending, setConnectPending] = useState(false);
+  const [roomError, setRoomError] = useState('');
+  const [confirmStop, setConfirmStop] = useState(false);
+  const roomActionSequence = useRef(0);
+  const roomPollInFlight = useRef(false);
+  const pendingBiliConnect = useRef<{ id: string; revision: string } | null>(null);
+  const draftInitialized = useRef(false);
   const [copied, setCopied] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [voiceSaving, setVoiceSaving] = useState(false);
@@ -447,8 +469,56 @@ export function Console() {
   const previewRef = useRef<HTMLDivElement>(null);
   const secrets = useSecrets(host?.settings.livePlatform === 'bilibili');
 
-  const refresh = () => api('state').then((s) => { setHost(s); setRoom((r) => r || (s.settings.livePlatform === 'douyin' ? s.settings.douyinRoomId : s.settings.roomId ? String(s.settings.roomId) : '')); });
+  const refresh = () => api('state').then((s) => {
+    setHost(s);
+    if (!draftInitialized.current) {
+      draftInitialized.current = true;
+      setPlatformDraft(s.settings.livePlatform);
+      setRoom(s.settings.livePlatform === 'douyin' ? s.settings.douyinRoomId : s.settings.roomId ? String(s.settings.roomId) : '');
+    }
+  });
   useEffect(() => { void refresh().catch(() => {}); }, []);
+  useEffect(() => { setConfirmStop(false); }, [host?.roomControl?.controlRevision]);
+  useEffect(() => {
+    const expected = host?.roomControl;
+    if (!expected) return;
+    let active = true;
+    let sequence = 0;
+    const query = async () => {
+      const requested = latestHost.current?.roomControl;
+      if (!active || !requested || roomPollInFlight.current) return;
+      roomPollInFlight.current = true;
+      const current = ++sequence;
+      try {
+        const result = await api<{ roomControl: RoomControlSnapshot }>('room-control');
+        const snapshot = result.roomControl;
+        const stillCurrent = () => {
+          const latest = latestHost.current?.roomControl;
+          return active && current === sequence && latest?.controlRevision === requested.controlRevision
+            && latest.target.platform === requested.target.platform && latest.target.roomId === requested.target.roomId;
+        };
+        if (!stillCurrent()) return;
+        if (snapshot.target.platform !== requested.target.platform || snapshot.target.roomId !== requested.target.roomId) {
+          const fresh = await api('state');
+          if (stillCurrent() && fresh.roomControl.controlRevision === snapshot.controlRevision) {
+            setRoomControl(snapshot);
+            setHost(fresh);
+          }
+        } else {
+          setRoomControl(snapshot);
+          setHost((previous) => previous && previous.roomControl.controlRevision === requested.controlRevision
+            ? { ...previous, roomControl: snapshot } : previous);
+        }
+      } catch {
+        if (active && current === sequence) setRoomControl(null);
+      } finally {
+        roomPollInFlight.current = false;
+      }
+    };
+    void query();
+    const timer = setInterval(() => void query(), 1_000);
+    return () => { active = false; clearInterval(timer); };
+  }, [host?.roomControl?.controlRevision, host?.roomControl?.target.platform, host?.roomControl?.target.roomId]);
   useEffect(() => {
     if (!drawer) {
       setVoiceReady(false);
@@ -470,11 +540,11 @@ export function Console() {
   const show = status ?? host?.show ?? null;
   const settings = host?.settings;
   const douyin = settings?.livePlatform === 'douyin';
-  const collectorUrl = host?.douyinBridgeUrl && /^http:\/\/(?:127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?$/.test(host.douyinBridgeUrl)
-    ? host.douyinBridgeUrl : undefined;
   let roomIsSaved = false;
   try {
-    roomIsSaved = douyin ? parseDouyinRoomId(room) === settings?.douyinRoomId : Number(room) === settings?.roomId && !!settings?.roomId;
+    roomIsSaved = platformDraft === settings?.livePlatform && (platformDraft === 'douyin'
+      ? parseDouyinRoomId(room) === settings?.douyinRoomId
+      : Number(room) === settings?.roomId && !!settings?.roomId);
   } catch {
     roomIsSaved = false;
   }
@@ -499,9 +569,41 @@ export function Console() {
   const endLive = () => run(async () => { await api('offair', {}); await refresh(); });
 
   const saveRoom = () => run(async () => {
-    const target = douyin ? { douyinRoomId: parseDouyinRoomId(room) } : { roomId: Number(room) };
-    setHost(await api('settings', target));
+    const target = platformDraft === 'douyin' ? { douyinRoomId: parseDouyinRoomId(room) } : { roomId: Number(room) };
+    setHost(await api('settings', { livePlatform: platformDraft, ...target, controlRevision: host?.roomControl?.controlRevision }));
   });
+
+  const roomAction = (path: 'connect' | 'disconnect' | 'collector/stop', extra: Record<string, unknown> = {}) => {
+    const sequence = ++roomActionSequence.current;
+    let revision = host?.roomControl?.controlRevision;
+    if (path === 'connect' && !douyin && revision) {
+      const id = crypto.randomUUID();
+      pendingBiliConnect.current = { id, revision };
+      extra = { ...extra, connectId: id };
+    } else if (path === 'disconnect' && pendingBiliConnect.current) {
+      revision = pendingBiliConnect.current.revision;
+      extra = { ...extra, cancelConnectId: pendingBiliConnect.current.id };
+      pendingBiliConnect.current = null;
+    }
+    setRoomError('');
+    if (path === 'connect') setConnectPending(true);
+    else setConnectPending(false);
+    void api(path, { controlRevision: revision, ...extra }).then((result) => {
+      if (sequence === roomActionSequence.current) setHost(result);
+    }).catch(async (reason) => {
+      if (sequence !== roomActionSequence.current) return;
+      setRoomError((reason as Error).message);
+      try {
+        const fresh = await api('state');
+        if (sequence === roomActionSequence.current) setHost(fresh);
+      } catch { /* Preserve the actionable error. */ }
+    }).finally(() => {
+      if (sequence === roomActionSequence.current) {
+        setConnectPending(false);
+        pendingBiliConnect.current = null;
+      }
+    });
+  };
 
   const choose = (patch: Record<string, unknown>) => run(async () => setHost(await api('settings', patch)));
   // 换了主题：预览重新打开、演示一遍开场动画和直播中的样子（直播中不演示，直接换）
@@ -585,6 +687,45 @@ export function Console() {
           <button className="dl-btn" disabled={busy} onClick={() => run(async () => { await api('broadcast/stop', {}); await refresh(); })}>重试停止推流</button>
         )}
         {bc?.phase === 'face' && bc.faceQr && <FaceModal qr={bc.faceQr} onCancel={() => run(async () => { await api('broadcast/stop', {}); await refresh(); })} />}
+
+        <section className="dl-field dl-room-control" aria-labelledby="room-control-title">
+          <h2 id="room-control-title">直播间</h2>
+          <label htmlFor="live-platform">平台</label>
+          <select id="live-platform" value={platformDraft} disabled={busy} onChange={(event) => {
+            const platform = event.target.value as 'bilibili' | 'douyin';
+            setPlatformDraft(platform);
+            setRoom(platform === 'douyin' ? settings?.douyinRoomId ?? '' : settings?.roomId ? String(settings.roomId) : '');
+          }}>
+            <option value="bilibili">B 站</option>
+            <option value="douyin">抖音只读接入 / 本地舞台</option>
+          </select>
+          <label htmlFor="live-room">{platformDraft === 'douyin' ? '抖音房间号或完整直播间地址' : 'B 站直播间房间号'}</label>
+          <div className="dl-row">
+            <input id="live-room" value={room} placeholder={platformDraft === 'douyin' ? '数字房间号或 https://live.douyin.com/数字' : '直播间网址最后那串数字'} onChange={(event) => setRoom(platformDraft === 'douyin' ? event.target.value : event.target.value.replace(/\D/g, ''))} />
+            <button disabled={busy || !room} onClick={saveRoom}>保存</button>
+            {conn === 'idle' && !connectPending
+              ? <button disabled={busy || !roomIsSaved || (!!roomControl && roomControl.operation.state !== 'idle') || (localRehearsal && !douyin)} onClick={() => roomAction('connect', { action: 'connect' })}>连接</button>
+              : <button onClick={() => roomAction('disconnect')}>断开订阅</button>}
+            {douyin && conn === 'error' && <button disabled={busy || !!roomControl?.operation && roomControl.operation.state !== 'idle'} onClick={() => roomAction('connect', { action: 'retry' })}>重试连接</button>}
+          </div>
+          <p className="dl-hint">已保存：{settings?.livePlatform === 'douyin' ? '抖音' : 'B 站'} {settings?.livePlatform === 'douyin' ? settings.douyinRoomId || '未设置' : settings?.roomId ?? '未设置'}</p>
+          <p className="dl-hint" aria-live="polite">连接状态：{connectPending ? '连接中' : CONN_TEXT[conn] ?? conn}</p>
+          {douyin && <p className="dl-hint">采集服务：{roomControl?.bridge === 'online' ? '可用' : roomControl?.bridge === 'offline' ? '不可用' : '正在检查'}；房间状态：{COLLECTOR_TEXT[roomControl?.collector ?? 'unknown']}</p>}
+          {douyin && <p className="dl-hint">断开订阅只停止本插件接收，采集可能继续运行。</p>}
+          {douyin && roomControl?.operation.state === 'unknown' && <p role="alert" className="dl-error">{roomControl.operation.error}</p>}
+          {douyin && settings?.douyinRoomId && <div className="dl-row">
+            <label className="dl-check"><input type="checkbox" checked={confirmStop} onChange={(event) => setConfirmStop(event.target.checked)} /> 确认停止抖音 {settings.douyinRoomId} 的采集，会影响使用该房间的其他程序</label>
+            <button disabled={!confirmStop || busy || roomControl?.operation.state !== 'idle'} onClick={() => roomAction('collector/stop', { confirmSharedEffect: true })}>停止此房间采集</button>
+          </div>}
+          {roomError && <p role="alert" className="dl-error">{roomError}</p>}
+          {!roomIsSaved && <p className="dl-hint">请先保存房间，再连接。</p>}
+          {localRehearsal && platformDraft === 'bilibili' && <p className="dl-hint">本地彩排模式不能连接 B 站直播间。</p>}
+          {!douyin && settings?.roomId ? (
+            <label className="dl-check"><input type="checkbox" checked={settings.ownRooms.includes(settings.roomId)} onChange={(event) => choose({ ownRoom: event.target.checked })} /> 这是我自己的直播间：记住常来的观众（别人的直播间只旁观，不记）</label>
+          ) : null}
+          {!douyin && show?.live.state === 'connected' && !show.live.loggedIn && <p className="dl-hint">匿名连接：部分观众的名字会被 B 站打码。</p>}
+          {show?.live.lastError && <p role="alert" className="dl-error">{show.live.lastError}</p>}
+        </section>
 
         {!show?.onAir && doneCount < steps.length && (
           <div className="dl-checklist">
@@ -676,37 +817,6 @@ export function Console() {
               : <section className="dl-voice"><h3>声音</h3>{voiceError
                 ? <div className="dl-field"><p role="alert">{voiceError}</p><button onClick={() => setVoiceReload((value) => value + 1)}>重试</button></div>
                 : <p role="status">正在读取声音设置</p>}</section>}
-            <h3>直播间</h3>
-            <div className="dl-field">
-              <label htmlFor="live-platform">平台</label>
-              <select id="live-platform" value={settings?.livePlatform ?? 'bilibili'} disabled={busy} onChange={(event) => {
-                const platform = event.target.value as 'bilibili' | 'douyin';
-                run(async () => {
-                  const updated = await api('settings', { livePlatform: platform });
-                  setHost(updated);
-                  setRoom(platform === 'douyin' ? updated.settings.douyinRoomId : String(updated.settings.roomId ?? ''));
-                });
-              }}>
-                <option value="bilibili">B 站</option>
-                <option value="douyin">抖音只读接入 / 本地舞台</option>
-              </select>
-              <label htmlFor="live-room">{douyin ? '抖音房间号或完整直播间地址' : 'B 站直播间房间号'}</label>
-              <div className="dl-row">
-                <input id="live-room" value={room} placeholder={douyin ? '数字房间号或 https://live.douyin.com/数字' : '直播间网址最后那串数字'} onChange={(event) => setRoom(douyin ? event.target.value : event.target.value.replace(/\D/g, ''))} />
-                <button disabled={busy || !room} onClick={saveRoom}>保存</button>
-                {conn === 'idle'
-                  ? <button disabled={busy || !roomIsSaved} onClick={() => run(async () => setHost(await api('connect', {})))}>连接</button>
-                  : <button disabled={busy} onClick={() => run(async () => setHost(await api('disconnect', {})))}>断开订阅</button>}
-              </div>
-              <p className="dl-hint" aria-live="polite">连接状态：{CONN_TEXT[conn] ?? conn}</p>
-              {!roomIsSaved && <p className="dl-hint">请先保存房间，再连接。</p>}
-              {douyin && <p className="dl-hint">采集器：{host?.douyinBridgeUrl}。{collectorUrl && <a href={collectorUrl} target="_blank" rel="noreferrer">打开采集控制台</a>} 首次连接可能启动采集；断开只停止本插件订阅，采集仍运行，请到采集控制台停止。出错请先断开订阅，再显式连接；上游已结束或出错时先在采集控制台恢复或停止后重开。<a href="https://github.com/ymstar/dyhub" target="_blank" rel="noreferrer">采集器说明</a></p>}
-              {!douyin && settings?.roomId ? (
-                <label className="dl-check"><input type="checkbox" checked={settings.ownRooms.includes(settings.roomId)} onChange={(event) => choose({ ownRoom: event.target.checked })} /> 这是我自己的直播间：记住常来的观众（别人的直播间只旁观，不记）</label>
-              ) : null}
-              {!douyin && show?.live.state === 'connected' && !show.live.loggedIn && <p className="dl-hint">匿名连接：部分观众的名字会被 B 站打码。</p>}
-              {show?.live.lastError && <p role="alert" className="dl-error">{show.live.lastError}</p>}
-            </div>
             {!douyin && <>
             <h3>推流到 B 站</h3>
             <ObsCheck />
@@ -1173,6 +1283,7 @@ export const CONSOLE_CSS = `
 /* 主区：左边监视器 + 导播台，右边直播间 */
 .dl-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,380px);gap:16px}
 @media (max-width:1100px){.dl-grid{grid-template-columns:1fr}.dl-side{min-height:520px}}
+@media (max-width:600px){.dl-top{align-items:stretch;flex-direction:column}.dl-brand{width:100%}.dl-brand-text{min-width:0}.dl-top-actions{flex-wrap:wrap}.dl-room-control .dl-row{flex-wrap:wrap}.dl-room-control .dl-row input:not([type="checkbox"]){flex-basis:100%}}
 .dl-main{display:flex;flex-direction:column;gap:16px;min-width:0}
 .dl-label{font-size:12px;color:var(--dl-faint);letter-spacing:1px;white-space:nowrap}
 .dl-meta{font-size:12px;color:var(--dl-faint)}
@@ -1270,6 +1381,8 @@ export const CONSOLE_CSS = `
 .dl-room :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
 .dl-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dl-dim);margin:8px 0 2px}
 .dl-check input{flex:none}
+.dl-room-control .dl-check{flex:1 1 210px}
+.dl-room-control .dl-check input{flex:none}
 .dl-tag{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--dl-line);color:var(--dl-faint)}
 .dl-ok-tag{color:light-dark(#1f9e68,#5fe0a8);border-color:rgba(95,224,168,.45)}
 .dl-hint{margin:0;font-size:12px;color:var(--dl-faint);line-height:1.6}

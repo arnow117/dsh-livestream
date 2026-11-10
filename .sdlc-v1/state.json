@@ -67,6 +67,40 @@
         "commit": "63fe27163da1b918dedc27becaf893f4054b29ba",
         "result": "pass"
       }
+    },
+    "FEAT-003": {
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-10T03:08:43Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-003.engineering.md",
+      "id": "FEAT-003",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-003",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "TASK-003": {
+          "depends_on": [],
+          "id": "TASK-003",
+          "status": "done",
+          "title": "统一原生房间控制与安全恢复",
+          "updated_at": "2026-11-10T04:01:35Z"
+        }
+      },
+      "updated_at": "2026-11-10T04:01:35Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
     }
   },
   "requirements": {
@@ -95,6 +129,21 @@
       "status": "released",
       "title": "抖音直播间只读接入与本地舞台互动",
       "updated_at": "2026-11-09T16:45:00Z"
+    },
+    "REQ-003": {
+      "created_at": "2026-11-10T02:53:34Z",
+      "depends_on": [
+        "REQ-002"
+      ],
+      "description": "在现有直播主页统一配置 B 站或抖音房间，提供准确状态、同页恢复与房间级停止，并保持声音和既有平台行为。",
+      "domain": "livestream",
+      "feature_id": "FEAT-003",
+      "id": "REQ-003",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-003.product.md",
+      "status": "in_delivery",
+      "title": "统一直播控制台的平台与房间管理",
+      "updated_at": "2026-11-10T04:01:35Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

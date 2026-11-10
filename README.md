@@ -98,15 +98,18 @@ DOUBAO_TTS_ACCESS_KEY=...
 
 <a id="LIVE-DOUYIN-CONNECT"></a>
 <a id="LIVE-DOUYIN-DISCONNECT"></a>
-## 抖音只读接入与断开
+<a id="LIVE-ROOM-CONFIG"></a>
+<a id="LIVE-DOUYIN-RETRY"></a>
+<a id="LIVE-DOUYIN-STOP"></a>
+## 配置直播间与抖音只读接入
 
-在已有「直播」控制台保存抖音房间并显式连接，用现有声音在本地舞台互动。首次连接可能启动独立采集器；断开订阅后采集仍运行，需到采集控制台停止。安装、部署参数、恢复步骤与验证边界见 [抖音接入说明](examples/douyin/README.md)。
+Harness 主人在「直播」主页选择 B 站或抖音，填写房间并点击「保存」；输入中的草稿不会改变当前目标。抖音需要预先运行独立匿名采集器，连接后可在本地舞台互动；出错时在同页显式重试。断开只停止本插件接收；要停止该房间采集，确认对其他使用者的影响后点击「停止此房间采集」。若结果未确认，页面会保护原目标，不能通过重复连接或停止来猜测结果。具体准备、账号前提、恢复限制与未验证范围见 [抖音接入说明](examples/douyin/README.md)。
 
 ## macOS 本地彩排
 
 在启动 Harness 的进程环境中设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL=1` 和 `DSH_LIVESTREAM_TTS_BACKEND=macos`。本地语音调用系统 `say`、PATH 中的 `ffmpeg` 和 `ffprobe`，不需要豆包密钥；默认使用 `Tingting`，可通过 `DSH_LIVESTREAM_MACOS_VOICE` 指定已安装的系统音色。语音转换需要能够访问 macOS 的语音服务；某些沙箱会让 `say` 输出空音频。字幕时间按实际音频时长均分估算，并非逐字强制对齐。文字通过临时文件传递，不经过 shell；取消或超时后清理文件。
 
-彩排模式不连接或登录 B 站，不推流、不探测 OBS、不轮询账号消息，也不向直播会话暴露 B 站及游戏工具；`show_stats` 仍可使用。它不恢复之前未结束的直播。不要在彩排期间开启推流或连接直播间。正式直播不设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL`，仍使用原有行为；没有保存过后端且不设置语音后端时使用豆包。
+彩排模式不连接或登录 B 站，不推流、不探测 OBS、不轮询账号消息，也不向直播会话暴露 B 站及游戏工具；`show_stats` 仍可使用。它不恢复之前未结束的直播。抖音只读接入另需独立匿名采集器，见上方说明。正式直播不设置 `DSH_LIVESTREAM_LOCAL_REHEARSAL`，仍使用原有行为；没有保存过后端且不设置语音后端时使用豆包。
 
 启动前，在插件设置中把 `distillModel` 设为现有的 `provider/model`，例如本机 GLM 路由 `glm-coding-plan/glm-5.3-flash`，并在 Harness 会话中选择同一模型。这样需要提炼记忆时也会使用该路由。控制台中打开直播并用模拟观众发送消息，舞台地址可在本机浏览器打开；结束时点击下播。不开 B 站、无需 OBS 或 B 站 Cookie。模拟事件和主播回复仍会调用所选模型并消耗其额度。
 

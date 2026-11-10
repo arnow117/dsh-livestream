@@ -18,6 +18,7 @@
 | Agent | `packages/dsh-livestream/src/dsh/agent.ts`、`cordis.patch.yml` | 注册直播预设和工具、监听助手正文、绑定模型服务；凭据 resolver 属于根插件生命周期。 |
 | 控制台 | `packages/dsh-livestream/src/console/client.tsx`、`console.tsx` | 侧栏「直播」面板、设置 Drawer、`TtsSettingsPanel` 声音草稿/保存/私有试听、DSH credentials 输入、状态轮询与事件流。 |
 | 共享声音配置 | `packages/dsh-livestream/src/shared/ttsSettings.ts` | 浏览器与宿主共用 TTS 类型、环境兼容默认值和增量字段验证；不依赖 Node API。 |
+| 原生房间控制 | `packages/dsh-livestream/src/shared/roomControl.ts`、`src/dsh/douyinRoomControl.ts`、`douyinControlJournal.ts` | 主页平台/房间原子保存、owner 房间控制、revision、匿名采集前提与插件自有操作日志；固定 loopback HTTP/WS，未知结果保守保护。 |
 | 直播目标与操作归属 | `packages/dsh-livestream/src/shared/liveTarget.ts`、`biliOperations.ts` | 抖音字符串房间输入验证；进程内 B 站/OBS 操作计数、目标 epoch 与 AsyncLocalStorage lease，用于切平台和拒绝过期异步结果。`biliOperations.ts` 是 Node 端模块。 |
 | 舞台 | `packages/dsh-livestream/src/stage/`、`stage/index.html`、`stage/stage.css` | 协议、状态、音频播放、字幕、布局、组件与特效。 |
 | 身体与集成 | `packages/dsh-livestream/src/body/` | `LiveShow`、舞台服务器、豆包/macOS/yovoice TTS、B 站、OBS、ASR 和媒体。 |
@@ -54,8 +55,8 @@
 | 控制台 API | `src/dsh/index.ts` 的 `apply()` | 通过 `ctx.connection.fetch.register` 注册路由，身份校验依赖 Harness connection；插件未实现独立登录。主要入口为 GET `state`、POST `settings`、`tts/preview`、`onair`、`offair`、`owner`、`simulate`，以及 GET `events`，均在 `/api/dsh-livestream/` 下。 |
 | 设置 | `runtime.ts` 的 `Settings`、`loadSettings()`、`updateSettings()` | `settings.tts` 包含 backend、yovoice 模型/描述、Mac 音色、豆包 speaker/rate；保存字段优先旧 env 默认。旧 `settings.voice` 保留豆包 alias，空串在每次合成时跟随角色。保存同目录独占临时 JSON 后 rename，再发布内存。 |
 | 平台与房间 | `settings.livePlatform`、`settings.douyinRoomId`、`shared/liveTarget.ts` | 平台默认 `bilibili`，旧数字 `roomId` 保留。抖音房间为 1–64 位 ASCII 数字字符串或完整 `https://live.douyin.com/<digits>`，不接受短链/query/hash/任意 URL，不转换成 Number；房间/用户/事件 ID 保留字符串语义。 |
-| 抖音部署地址 | `DSH_LIVESTREAM_DOUYIN_BRIDGE_URL`、`normalizeDouyinBridgeUrl()` | 默认 `http://127.0.0.1:8757`，由 DSH 启动者管理；只接受 HTTP 数字 loopback `127.0.0.1` / `[::1]` 和合法端口，拒绝 userinfo/query/hash/非根 path/远端与重定向。UI 只读展示并链接采集控制台，不保存 Cookie/任意 bridge 地址。 |
-| 抖音订阅与停止 | `DouyinLiveSource.start/stop`、既有 POST `connect/disconnect` | 只有主人首次显式连接创建订阅，可能按 DyHub 行为启动该房间采集；socket-open 不代表 live。source 用 WS 控制帧/状态 GET 确认 live，错误/关闭后清理自身传输与定时器，不自动重订阅。断开只停止本插件订阅，采集仍运行；停止采集需主人到独立采集控制台操作，closed/error 恢复后再显式连接。 |
+| 抖音部署地址 | `DSH_LIVESTREAM_DOUYIN_BRIDGE_URL`、`normalizeDouyinBridgeUrl()` | 默认 `http://127.0.0.1:8757`，由 DSH 启动者管理；只接受 HTTP 数字 loopback `127.0.0.1` / `[::1]` 和合法端口，拒绝 userinfo/query/hash/非根 path/远端与重定向。页面不编辑 bridge 地址或 Cookie，部署参数见抖音指南。 |
+| 抖音订阅与停止 | `DouyinRoomControl`、`DouyinLiveSource`、GET `room-control`、POST `connect/disconnect/collector/stop` | 主页同页显式连接/重试、只读状态及确认后停止已保存房间；断开订阅仍不停止采集。socket-open/初始化 ack 不代表 live；终态不自动重订阅。支持独立匿名目录，拒绝含认证账号或无法确认的账号集合；不管理全局进程。外部 mutation 前持久 journal，未确认结果锁定目标，重启/uptime 不单独解除保护。 |
 | 目标切换与旧操作 | `shared/biliOperations.ts`、`index.ts`、`body/show.ts` | 舞台活动、已有订阅、Bili/OBS 在途操作或清理未完成时，平台/房间变更返回 409；目标 epoch 和 lease 检查拒绝旧结果继续产生副作用。断开清理旧 Hub/attention/控制台/舞台临时目标上下文，保留历史、声音与已存 B 站设置。 |
 | 平台预设与权限 | `cordis.patch.yml`、`console.tsx`、`agent.ts` | 独立 `dsh-livestream-douyin` 预设只说明只读抖音输入、本地输出和 `show_stats`；旧 `dsh-livestream` B 站及游戏预设保留。Console 按平台选择预设；B 站工具注册、执行及异步结果检查当前平台，抖音不登录、不发言、不推流、不自动续订或恢复采集。 |
 | TTS 选择与缓存 | `runtime.ts` 的 `speechSnapshot()`、`speech()`、`prepareSpeech()` | 每次合成使用完整声音快照；超时和成本语义使用有效 `settings.tts.backend`。prepared key 含配置/实际 speaker/文字，声音或角色设置保存后清除未消费缓存，已取走的合成不在该 Map 中。 |
@@ -85,7 +86,7 @@ commands:
 
 覆盖率检查器调用形状为 `node packages/dsh-livestream/test/coverage-diff.mjs <baseline-commit> [coverage-report]`（参数形状从源码确认，本次未执行）；基线必须由调用方按功能工程上下文显式确定。可选 report path 相对仓库根解析，缺省仍为 `packages/dsh-livestream/coverage/feat-001/coverage-final.json`；不同功能的报告不能混用。脚本结合基线 diff 和未跟踪新源码，按 instrumented 行/分支检查 80%/70%；缺参/无效 commit/无可计量改动或缺报告非零退出。旧实际调用样例与功能基线见 FEAT-001 工程证据，FEAT-002 的独立报告与固定基线见其工程契约；不以当前 HEAD 或旧报告代替。
 
-`e2e-douyin.config.ts` 是抖音旅程入口，`e2e-voice-regression.config.ts` 复用旧声音测试并写独立回归产物。两者已存在且可从源码确认，调用时将上表 E2E 的 `--config` 切换为对应文件；本次未执行，当前实际结果/准备缺口只索引 `.sdlc-v1/context/FEAT-002.engineering.md` 的实现与验证记录，不提前填入通过结论。
+`e2e-douyin.config.ts` 是平台/房间草稿与抖音旅程入口，`e2e-voice-regression.config.ts` 复用声音测试并写独立回归产物。调用时将上表 E2E 的 `--config` 切换为对应文件；实际结果索引当前 Feature 工程上下文。FEAT-002 是历史接入记录，FEAT-003 是统一主页与房间控制记录，二者的实现/验证范围分开。
 
 构建会删除并重建 `packages/dsh-livestream/lib/`；共享运行环境仍使用该产物时，构建/独立验证使用隔离复制目录，不能删除在用 lib。E2E launcher 自行将测试 bundle 写入忽略的 `.e2e/`，不使用生产 lib。宿主缓存控制台模块，实际加载新插件产物由主 Agent 协调 Harness；声音保存本身即时生效，不得自动重启共享彩排/采集服务。
 
@@ -97,12 +98,12 @@ commands:
 | e2e:OpenAPI | 无 OpenAPI schema；声音和抖音路由测试调用真实 handler/适配器，Web fixture HTTP 转发真实注册路由，抖音 fixture 自建真实 WS bridge 模拟固定 wire 协议。fixture 不启动完整 Harness，不等同生产 owner 鉴权；共享环境的写入/订阅副作用不能用 synthetic 结果授权。 |
 | e2e:Web 工具 | 项目已固定 CLI/Web engine，`test:e2e` 与配置存在；Web engine 依赖 `playwright-core 1.64.1`。父仓库共享 CLI 可作辅助，但仓库运行脚本不写入其绝对路径。SDLC 正式 Validate 必须运行纳入被测提交的测试。 |
 | Web 浏览器 | 配置 Chromium，目标 desktop 1440×900、narrow 375×812；工程运行记录为 `HeadlessChrome/156.0.8078.4`。使用现有匹配浏览器缓存，不为验证自动下载；后续运行仍记录实际浏览器/构建版本。 |
-| Web 测试资产 | 旧 `test/e2e/voice-settings.e2e.ts` 保留声音旅程；`test/e2e-douyin/douyin.e2e.ts` 覆盖保存/显式连接/live 事件输入、失败与手动恢复、切换限制/断开清空。真实 Console/CSS、routes/source/存储保留，push/TTS 与外部服务采用替身；配置/fixture/测试随实现提交，存在资产不等于本轮通过。 |
+| Web 测试资产 | `test/e2e/voice-settings.e2e.ts` 保留声音旅程；`test/e2e-douyin/{atomic-target,douyin}.e2e.ts` 覆盖原子保存、连接/live 输入、同页重试/停止、共享影响确认、unknown 保护和切换限制。真实 Console/CSS、routes/controller/source/存储保留，push/TTS 与外部服务采用替身；配置/fixture/测试随实现提交，存在资产不等于本轮通过。 |
 | 合成协议 fixture | `test/fixtures/dyhub-normalized-defaults.json` 记录固定 DyHub commit、真实 normalizer 编译方法、protobuf 合成输入及 frames，用于缺失总数变 0、全零礼物/组 ID 等边界。`.gitignore` 明确放行该文件，不提交真实用户抓包或本机数据；不再将整个 fixtures 目录视为均被忽略。 |
 | 核心验证能力 | 已有确定性 API/持久化/请求参数、stage 零事件、错误恢复、取消、键盘与宽度断言及截图。provider 替身音频不能证明真实音频可解码、听感或生产播放；主 Agent 的真实浏览器/yovoice 有界检查单独记录，截图不代替业务断言。 |
 | 模型、身份与预算 | E2E 仅精确 locator，无 `agent.*`、模型 provider 或真实凭据，模型调用预算 0；fixture 注入测试身份/环境。业务 GLM 模型由部署配置维持，不因 TTS 改变。不得将真实 token 或认证 URL 写入产物。 |
 | 环境与资源隔离 | 两套 E2E 均用 `127.0.0.1:0`、runner `{port}`/app.command、临时 DSH_HOME；新桥接也使用专属 ephemeral WS/HTTP 端口。新旧 fixture 都将 stage URL 指向自身 `/__stage` stub，测试拦截 `127.0.0.1/localhost` 的 3080/3081/7390/8757 并断言零访问，避免 iframe 静默访问共享 Stage。fixture 只清理自有资源，不能操作用户 Chrome、真实 profile、GLM/TTS、共享 Harness/Stage/DyHub。 |
-| 产物 | `coverage/feat-001/` 为旧兼容默认，其他功能用独立报告目录，如 `coverage/feat-002/`。声音 E2E 原始输出 `.e2e/feat-001/`，抖音 `.e2e/feat-002/`，声音回归 `.e2e/feat-002-voice/`；保存 report/JUnit/trace/截图/fixture.log。launcher 的测试 bundle 分别在 `.e2e/fixture/`、`.e2e/feat-002-build/`，失败证据归档 `.e2e/archive/`。包内 `.e2e/`、`coverage/` 忽略，原始报告不入 Git/state。 |
+| 产物 | `coverage/feat-001/` 为旧兼容默认，当前功能用 `coverage/feat-003-build/` / `feat-003-validate/`。当前 Web 输出 `.e2e/feat-003/`、`.e2e/feat-003-voice/`；旧 Feature 报告保留在各自编号目录。保存 report/JUnit/trace/截图/fixture.log，launcher bundle 位于 `.e2e/feat-003-build/`、`.e2e/feat-003-voice-build/`；旧失败证据归档 `.e2e/archive/`。包内 `.e2e/`、`coverage/` 忽略，原始报告不入 Git/state。 |
 | 缓存与独立验证 | 配置显式 `cache.mode: read-only`、`strict: true`、workers=1、retries=0；每测试 120 秒，动作/断言各 5 秒，实际命令另限整次 10 分钟。严格缓存不保证零模型调用，零调用来自无 Agent 步骤/模型配置；正式 Validate 独立运行已提交测试，不能以实现者证据或浏览器探索替代。 |
 | CI | 未发现 `.github/` 或仓库内 CI 配置；目前为本机命令验证。 |
 | 准备边界 | 本次 onboard 未执行业务检查；实际命令/退出结果、测试数、覆盖率数值、候选版本与阶段只保留在 Feature 工程证据，project.md 仅索引稳定入口。 |
@@ -250,7 +251,7 @@ health_check: none
 
 操作文档以 `examples/macos-yovoice/README.md` 为 Mac 环境入口。编排方说明本机外部 yovoice 位于兄弟工作区 `workspace/20261108-yovoice-dependency`，数据目录位于 `workspace/20261012-hypit-services/yovoice-data`；目前只有 VoxCPM2 q8 和 audio.cpp `0.9.1` Metal runtime。本阶段未启动或查询这些资源。维护目标继续保留 `codex/macos-yovoice` 分支；源码、测试、模板在分支中维护，运行数据不入库。仓库的 `tools/deploy-server.sh` 是旧 Windows 远程部署路径，不能作为当前 Mac 发布目标或执行授权。
 
-抖音部署导航为 `examples/douyin/README.md`：外部 DyHub v0.3.1 固定 commit `3a79c57d85c59289db3b77211b3ec01fae47d42c`、独立源码/数据工作目录、browser-only、数字 loopback 监听与已有 Chrome。插件只消费指定房间 HTTP/WS，不安装/管理用户浏览器、不登录/导入 Cookie、不启动 GLM/TTS 服务。源码中的 bridge env 默认不是探测共享服务健康或停止服务的授权。
+抖音部署导航为 `examples/douyin/README.md`：外部 DyHub v0.3.1 固定 commit `3a79c57d85c59289db3b77211b3ec01fae47d42c`、独立匿名源码/数据目录、browser-only、数字 loopback 监听与已有 Chrome。插件在 owner 显式操作下管理指定房间的采集与订阅，不安装/管理用户浏览器、不登录/导入 Cookie、不启动模型/TTS 或管理全局采集进程。日志位于插件数据目录的 `douyin-control.json`，不删除未确认日志来绕过保护。源码中的默认 bridge env 本身不授权额外操作。
 
 ## 仓库上下文来源（Repository context sources）
 

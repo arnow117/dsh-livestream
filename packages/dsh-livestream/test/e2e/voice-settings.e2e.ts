@@ -70,6 +70,7 @@ test('draft preview is private and saved voice survives reload', async ({ app, s
   expect(await browser.evaluate(() => (window as unknown as { testErrors: string[] }).testErrors)).toEqual([]);
   await expect.poll(async () => (await fixture(app.baseUrl)).stageRequests).toBeGreaterThan(0);
   expect((await fixture(app.baseUrl)).stageUrl).toContain(app.baseUrl);
+  expect((await fixture(app.baseUrl)).sharedRequests).toBe(0);
   expect(blocked).toEqual([]);
   await app.screenshot('voice-saved');
 });
@@ -100,6 +101,7 @@ test('switching backends preserves drafts and sends adapter parameters', async (
   const failed = await fixture(app.baseUrl);
   expect(failed.calls).toHaveLength(3);
   expect(failed.calls[2].backend).toBe('yovoice');
+  expect((await fixture(app.baseUrl)).sharedRequests).toBe(0);
   expect(blocked).toEqual([]);
   await app.screenshot('voice-backends');
 });
@@ -130,6 +132,7 @@ test('cancelling and editing aborts the old preview and allows a new one', async
   await screen.getByRole('button', '试听', { exact: true }).tap();
   await expect(screen.getByRole('status')).toHaveText('试听已准备好');
   await screen.getByRole('button', '关闭').tap();
+  expect((await fixture(app.baseUrl)).sharedRequests).toBe(0);
   expect(blocked).toEqual([]);
   await app.screenshot('voice-closed');
 });

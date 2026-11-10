@@ -70,11 +70,47 @@ function message(socket: any, value: unknown): void {
 function expectRecovery(states: Array<{ state: string; error?: string }>, reason: string): void {
   expect(states.at(-1)).toMatchObject({ state: 'error' });
   expect(states.at(-1)?.error).toContain(reason);
-  expect(states.at(-1)?.error).toContain('先断开订阅，再显式连接');
-  expect(states.at(-1)?.error).toContain('采集控制台恢复或停止后重开');
+  expect(states.at(-1)?.error).toContain('请在直播页检查房间状态后显式重试');
 }
 
 describe('Douyin adapter terminal boundaries', () => {
+  it('settles initialization only on a valid acknowledgement and does not infer live', () => {
+    const initialized = vi.fn();
+    const states: string[] = [];
+    source = new DouyinLiveSource('123', bridgeUrl, initialized);
+    source.start({ state: (state) => states.push(state), stats: () => {}, room: () => {}, event: () => {} });
+    const socket = transport.sockets[0];
+    open(socket);
+    message(socket, { type: '__connected', roomId: '123', room: { roomId: 'other', status: 'live' } });
+    expect(initialized).not.toHaveBeenCalled();
+    message(socket, { type: '__connected', roomId: '123', room: { roomId: '123', status: 'connecting' } });
+    expect(initialized).toHaveBeenCalledOnce();
+    expect(initialized).toHaveBeenCalledWith('connected');
+    expect(states.at(-1)).toBe('connecting');
+    message(socket, { type: '__error', roomId: '123', error: 'late failure' });
+    expect(initialized).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a late initialization acknowledgement after its transport times out', async () => {
+    const initialized = vi.fn();
+    source = new DouyinLiveSource('123', bridgeUrl, initialized);
+    source.start({ state: () => {}, stats: () => {}, room: () => {}, event: () => {} });
+    const socket = transport.sockets[0];
+    await vi.advanceTimersByTimeAsync(45_000);
+    message(socket, { type: '__connected', roomId: '123', room: { roomId: '123', status: 'connecting' } });
+    expect(initialized).not.toHaveBeenCalled();
+    expect(socket.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('settles initialization on a valid error acknowledgement', () => {
+    const initialized = vi.fn();
+    source = new DouyinLiveSource('123', bridgeUrl, initialized);
+    source.start({ state: () => {}, stats: () => {}, room: () => {}, event: () => {} });
+    message(transport.sockets[0], { type: '__error', roomId: '123', error: 'fixture error' });
+    expect(initialized).toHaveBeenCalledOnce();
+    expect(initialized).toHaveBeenCalledWith('error');
+  });
+
   it('reports an unreachable collector and never automatically resubscribes', async () => {
     const { socket, states, stats } = collector();
     socket.emit('error', new Error('ECONNREFUSED'));

@@ -2,6 +2,8 @@
 
 此示例配合 `codex/macos-yovoice` 分支使用，锁定 Harness 和 `@deepseek-ai/dsh-tools` 为 `0.2.2-rc.1`。对话由 GLM Coding Plan 提供，声音由本地 yovoice / VoxCPM2 生成。配置模板不包含密钥、模型、运行时、会话数据或本机路径。
 
+「直播」主页可保存平台和房间。此彩排配置不连接 B 站；抖音只读互动需要另行准备独立匿名采集器，操作与未知结果处理见 [抖音接入说明](../douyin/README.md)。
+
 ## 前置条件
 
 - Apple Silicon Mac、可运行本仓库的 Node.js / pnpm、PATH 中的 FFmpeg 和 ffprobe。

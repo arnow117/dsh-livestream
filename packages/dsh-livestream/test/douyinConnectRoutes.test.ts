@@ -9,6 +9,15 @@ vi.mock('ws', async () => {
     static OPEN = 1;
     static CLOSED = 3;
     readyState = 0;
+    constructor(url: URL) {
+      super();
+      const roomId = url.searchParams.get('roomId');
+      queueMicrotask(() => {
+        this.readyState = 1;
+        this.emit('open');
+        this.emit('message', Buffer.from(JSON.stringify({ type: '__connected', roomId, room: { roomId, status: 'connecting' } })));
+      });
+    }
     terminate() { this.readyState = 3; this.emit('close'); }
     ping() {}
   }
@@ -28,6 +37,11 @@ describe('explicit owner subscription', () => {
     process.env.DSH_HOME = dir;
     process.env.DSH_LIVESTREAM_LOCAL_REHEARSAL = '1';
     process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL = 'http://127.0.0.1:1';
+    vi.stubGlobal('fetch', async (input: URL | string) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/accounts') return Response.json({ accounts: [{ id: 'anon', name: 'dsh-livestream-anonymous-test', hasCookie: false, hasLogin: false }] });
+      return Response.json({ room: { roomId: '1234567890123456789', status: 'connecting' } });
+    });
     const host = await import('../src/dsh/index');
     runtime = await import('../src/dsh/runtime');
     host.apply({
@@ -40,6 +54,7 @@ describe('explicit owner subscription', () => {
   });
   afterAll(async () => {
     runtime.show.dispose();
+    vi.unstubAllGlobals();
     process.env = env;
     await rm(dir, { recursive: true, force: true });
   });

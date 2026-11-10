@@ -18,8 +18,13 @@ const providerCalls: unknown[] = [];
 const jobs = new Map<string, string>();
 (globalThis as any).__audioCalls = providerCalls;
 const originalFetch = globalThis.fetch;
+let sharedRequests = 0;
 globalThis.fetch = async (input, init = {}) => {
   const url = new URL(String(input));
+  if (['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && ['3080', '3081', '7390', '8757'].includes(url.port)) {
+    sharedRequests++;
+    throw new Error('fixture blocked a shared service request');
+  }
   if (url.hostname === '127.0.0.1' && url.port === '1') {
     if (url.pathname.startsWith('/v1/audio/')) return new Response(new Uint8Array([1, 2, 3]));
     const requestId = url.pathname.split('/').at(-1);
@@ -87,6 +92,7 @@ const http = createServer(async (req, res) => {
   if (url.pathname === '/__fail-next') { failNextProvider = true; res.writeHead(200); res.end('ok'); return; }
   if (url.pathname === '/__reset') {
     providerCalls.length = 0;
+    sharedRequests = 0;
     jobs.clear();
     failNextProvider = false;
     failNextState = false;
@@ -96,7 +102,7 @@ const http = createServer(async (req, res) => {
   }
   if (url.pathname === '/__fixture') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ calls: providerCalls, settings: runtime.settings.tts, stageEvents, stageRequests, stageUrl: runtime.server.url, onAir: runtime.show.isOnAir }));
+    res.end(JSON.stringify({ calls: providerCalls, sharedRequests, settings: runtime.settings.tts, stageEvents, stageRequests, stageUrl: runtime.server.url, onAir: runtime.show.isOnAir }));
     return;
   }
   if (url.pathname === '/api/dsh-livestream/state' && failNextState) { failNextState = false; res.writeHead(503); res.end(); return; }

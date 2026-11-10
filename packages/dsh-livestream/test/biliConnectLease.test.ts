@@ -19,7 +19,7 @@ describe('pending Bili connection ownership', () => {
     runtime = await import('../src/dsh/runtime');
     host.apply({
       effect(effect: () => unknown, label?: string) {
-        if (['settings', 'connect', 'disconnect'].includes(label ?? '')) effect();
+        if (['state', 'settings', 'connect', 'disconnect'].includes(label ?? '')) effect();
       },
       provide() {},
       connection: { fetch: { register(route: { path: string; fetch: (request: Request) => Response }) { routes.set(route.path, route.fetch); return () => {}; } } },
@@ -42,5 +42,35 @@ describe('pending Bili connection ownership', () => {
     expect((await pending).status).toBe(409);
     expect(runtime.show.hub.currentConfig).toBeNull();
     expect((await post('settings', { livePlatform: 'douyin' })).status).toBe(200);
+  });
+
+  it('only accepts the matching pending connection identifier for an old revision', async () => {
+    await post('settings', { livePlatform: 'bilibili' });
+    const state = async () => (await routes.get('/api/dsh-livestream/state')!(new Request('http://localhost/'))).json();
+    const firstRevision = (await state()).roomControl.controlRevision;
+    let resolveFirst!: (value: string) => void;
+    let startedFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { startedFirst = resolve; });
+    runtime.hooks.secret = () => new Promise((resolve) => { resolveFirst = resolve; startedFirst(); });
+    const first = post('connect', { controlRevision: firstRevision, connectId: 'first-connect' });
+    await firstStarted;
+    expect((await post('disconnect', { controlRevision: firstRevision })).status).toBe(409);
+    expect((await post('disconnect', { controlRevision: firstRevision, cancelConnectId: 'wrong' })).status).toBe(409);
+    expect((await post('disconnect', { controlRevision: firstRevision, cancelConnectId: 'first-connect' })).status).toBe(200);
+    resolveFirst('fake');
+    expect((await first).status).toBe(409);
+
+    const nextRevision = (await state()).roomControl.controlRevision;
+    let resolveSecond!: (value: string) => void;
+    let startedSecond!: () => void;
+    const secondStarted = new Promise<void>((resolve) => { startedSecond = resolve; });
+    runtime.hooks.secret = () => new Promise((resolve) => { resolveSecond = resolve; startedSecond(); });
+    const second = post('connect', { controlRevision: nextRevision, connectId: 'second-connect' });
+    await secondStarted;
+    expect((await post('disconnect', { controlRevision: firstRevision, cancelConnectId: 'first-connect' })).status).toBe(409);
+    expect((await post('disconnect', { controlRevision: nextRevision, cancelConnectId: 'second-connect' })).status).toBe(200);
+    resolveSecond('fake');
+    expect((await second).status).toBe(409);
+    expect(runtime.show.hub.currentConfig).toBeNull();
   });
 });

@@ -124,4 +124,4 @@ export interface LiveUpdate {
 /** 连一个直播间要的参数 */
 export type LiveConnection =
   | { platform: 'bilibili'; roomId: number; cookie: string }
-  | { platform: 'douyin'; roomId: string; bridgeUrl: string };
+  | { platform: 'douyin'; roomId: string; bridgeUrl: string; onInitialized?: (result: 'connected' | 'error') => void };

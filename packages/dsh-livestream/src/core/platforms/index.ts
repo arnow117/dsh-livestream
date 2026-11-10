@@ -12,6 +12,6 @@ export function createLiveSource(config: LiveConnection): LiveSource {
     case 'bilibili':
       return new BiliLiveSource(config.roomId, config.cookie);
     case 'douyin':
-      return new DouyinLiveSource(config.roomId, config.bridgeUrl);
+      return new DouyinLiveSource(config.roomId, config.bridgeUrl, config.onInitialized);
   }
 }

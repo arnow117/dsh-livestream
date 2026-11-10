@@ -24,7 +24,9 @@ import { mergeTtsSettings } from '../shared/ttsSettings';
 import { parseDouyinRoomId } from '../shared/liveTarget';
 import { assertBiliCurrent, beginBiliOperation, biliOperationsActive, inBiliOperation, invalidateTarget } from '../shared/biliOperations';
 import { normalizeDouyinBridgeUrl } from '../core/platforms/douyin/douyinSource';
-import { agentReady, asr, broadcast, cookie, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { DouyinRoomControl } from './douyinRoomControl';
+import type { RoomControlSnapshot } from '../shared/roomControl';
+import { agentReady, asr, broadcast, cookie, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
@@ -36,12 +38,54 @@ interface HostContext {
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const fail = (message: string, status = 400) => json({ ok: false, error: message }, status);
+const roomControl = new DouyinRoomControl(dataDir);
+
+function roomControlSnapshot(): RoomControlSnapshot {
+  const platform = settings.livePlatform;
+  return {
+    controlRevision: roomControl.revision,
+    target: { platform, roomId: platform === 'douyin' ? settings.douyinRoomId || null : settings.roomId },
+    bridge: 'unknown',
+    collector: 'unknown',
+    subscription: show.status().live.state,
+    operation: roomControl.operation,
+    targetLocked: roomControl.locked || show.isOnAir || !!show.hub.currentConfig || biliOperationsActive() || broadcast.hasActivity,
+    ...(roomControl.locked ? { lockReason: '采集操作尚未完成或结果未确认' } : {}),
+  };
+}
 
 async function body<T>(request: Request): Promise<T> {
   try {
     return (await request.json()) as T;
   } catch {
     return {} as T;
+  }
+}
+
+async function controlBody<T>(request: Request): Promise<T | null> {
+  if (!request.body) return {} as T;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 64 * 1024) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+    const raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+    if (!raw.trim()) return {} as T;
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as T : null;
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -59,6 +103,7 @@ function state() {
     settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined },
     runtime: { localRehearsal, ttsBackend: settings.tts.backend },
     douyinBridgeUrl,
+    roomControl: roomControlSnapshot(),
     stageUrl: server.url,
     characters: packs.list('characters'),
     templates: packs.list('templates'),
@@ -250,8 +295,20 @@ export function apply(ctx: HostContext): void {
 
   route('/api/dsh-livestream/state', ['GET'], () => json(state()), 'state');
 
+  route('/api/dsh-livestream/room-control', ['GET'], async () => {
+    const snapshot = roomControlSnapshot();
+    if (snapshot.target.platform === 'douyin' || roomControl.hasJournal) {
+      const result = await roomControl.query(snapshot.target.platform === 'douyin' ? String(snapshot.target.roomId ?? '') : '');
+      const current = roomControlSnapshot();
+      if (current.controlRevision !== snapshot.controlRevision) return json({ ok: true, roomControl: current });
+      Object.assign(current, result);
+      return json({ ok: true, roomControl: current });
+    }
+    return json({ ok: true, roomControl: snapshot });
+  }, 'room control');
+
   route('/api/dsh-livestream/settings', ['POST'], async (request) => {
-    const patch = await body<Partial<Settings> | null>(request);
+    const patch = await controlBody<Partial<Settings> & { controlRevision?: unknown }>(request);
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return fail('设置无效');
     const next: Partial<Settings> = {};
     if (patch.livePlatform !== undefined) {
@@ -264,7 +321,7 @@ export function apply(ctx: HostContext): void {
     }
     if (patch.roomId !== undefined) {
       const room = Number(patch.roomId);
-      if (!Number.isInteger(room) || room <= 0) return fail('房间号要是正整数');
+      if (!Number.isSafeInteger(room) || room <= 0) return fail('房间号要是正整数');
       next.roomId = room;
     }
     if (patch.character !== undefined) {
@@ -309,7 +366,10 @@ export function apply(ctx: HostContext): void {
     const targetChanged = (next.livePlatform !== undefined && next.livePlatform !== settings.livePlatform)
       || (next.douyinRoomId !== undefined && next.douyinRoomId !== settings.douyinRoomId)
       || (next.roomId !== undefined && next.roomId !== settings.roomId);
-    if (targetChanged && (show.isOnAir || show.hub.currentConfig || biliOperationsActive() || broadcast.hasActivity)) {
+    if (targetChanged && !roomControl.matches(patch.controlRevision)) {
+      return json({ ok: false, error: '房间设置已变化，请刷新后重试', roomControl: roomControlSnapshot() }, 409);
+    }
+    if (targetChanged && (roomControl.locked || show.isOnAir || show.hub.currentConfig || biliOperationsActive() || broadcast.hasActivity)) {
       return fail('请先停止舞台、断开订阅，并等待旧操作和清理完成', 409);
     }
     if ((next.livePlatform ?? settings.livePlatform) === 'douyin'
@@ -325,6 +385,7 @@ export function apply(ctx: HostContext): void {
       return fail('保存设置失败', 500);
     }
     if (targetChanged) {
+      roomControl.advance();
       invalidateTarget();
       show.setPlatform(settings.livePlatform);
       publishBoard();
@@ -368,18 +429,33 @@ export function apply(ctx: HostContext): void {
   }, 'tts preview');
 
   let connectInFlight = false;
-  route('/api/dsh-livestream/connect', ['POST'], async () => {
+  let pendingBiliConnect: { id: string; revision: string } | null = null;
+  route('/api/dsh-livestream/connect', ['POST'], async (request) => {
+    const input = await controlBody<{ controlRevision?: unknown; action?: unknown; connectId?: unknown }>(request);
+    if (!input) return fail('连接请求无效');
+    if (!roomControl.matches(input.controlRevision)) return json({ ok: false, error: '房间状态已变化，请刷新后重试', roomControl: roomControlSnapshot() }, 409);
+    if (input.action !== undefined && input.action !== 'connect' && input.action !== 'retry') return fail('连接操作无效');
+    if (input.connectId !== undefined && (typeof input.connectId !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(input.connectId))) return fail('连接标识无效');
     if (connectInFlight) return fail('连接正在进行，请稍候', 409);
-    if (show.hub.currentConfig) return fail('请先断开当前订阅', 409);
+    const terminalRetry = settings.livePlatform === 'douyin' && input.action === 'retry' && show.status().live.state === 'error';
+    if (show.hub.currentConfig && !terminalRetry) return fail('请先断开当前订阅', 409);
     if (settings.livePlatform === 'douyin') {
       if (!settings.douyinRoomId) return fail('先填抖音房间号');
       try {
-        const bridgeUrl = normalizeDouyinBridgeUrl(process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL ?? 'http://127.0.0.1:8757');
-        show.connectTarget({ platform: 'douyin', roomId: settings.douyinRoomId, bridgeUrl });
-      } catch (error) { return fail((error as Error).message); }
+        const roomId = settings.douyinRoomId;
+        await roomControl.connect(roomId, (bridgeUrl) => new Promise((resolve) => {
+          if (terminalRetry) show.hub.disconnect();
+          show.connectTarget({ platform: 'douyin', roomId, bridgeUrl, onInitialized: resolve });
+        }));
+      } catch (error) { return json({ ok: false, error: (error as Error).message, roomControl: roomControlSnapshot() }, roomControl.locked ? 409 : 502); }
     } else {
       if (localRehearsal) return fail('本地彩排模式不连接 B 站');
       if (!settings.roomId) return fail('先填直播间房间号');
+      if (roomControl.locked) return fail('采集操作尚未确认，不能切换目标', 409);
+      const pending = typeof input.connectId === 'string' && typeof input.controlRevision === 'string'
+        ? { id: input.connectId, revision: input.controlRevision } : null;
+      pendingBiliConnect = pending;
+      roomControl.advance();
       const lease = beginBiliOperation();
       connectInFlight = true;
       try {
@@ -390,17 +466,42 @@ export function apply(ctx: HostContext): void {
         return fail('连接已取消，请重新连接', 409);
       } finally {
         connectInFlight = false;
+        if (pendingBiliConnect === pending) pendingBiliConnect = null;
         lease.release();
       }
     }
     return json(state());
   }, 'connect');
 
-  route('/api/dsh-livestream/disconnect', ['POST'], () => {
+  route('/api/dsh-livestream/disconnect', ['POST'], async (request) => {
+    const input = await controlBody<{ controlRevision?: unknown; cancelConnectId?: unknown }>(request);
+    if (!input) return fail('断开请求无效');
+    const matchesPending = pendingBiliConnect !== null && input.cancelConnectId === pendingBiliConnect.id
+      && input.controlRevision === pendingBiliConnect.revision;
+    if (!roomControl.matches(input.controlRevision) && !matchesPending) return json({ ok: false, error: '房间状态已变化，请刷新后重试', roomControl: roomControlSnapshot() }, 409);
+    pendingBiliConnect = null;
+    roomControl.detach();
     invalidateTarget();
     show.disconnect();
     return json(state());
   }, 'disconnect');
+
+  route('/api/dsh-livestream/collector/stop', ['POST'], async (request) => {
+    const input = await controlBody<{ controlRevision?: unknown; confirmSharedEffect?: unknown }>(request);
+    if (!input) return fail('停止请求无效');
+    if (!roomControl.matches(input.controlRevision)) return json({ ok: false, error: '房间状态已变化，请刷新后重试', roomControl: roomControlSnapshot() }, 409);
+    if (input.confirmSharedEffect !== true) return fail('请确认停止会影响使用该房间采集的其他程序');
+    if (settings.livePlatform !== 'douyin' || !settings.douyinRoomId) return fail('请先保存抖音房间');
+    if (roomControl.locked) return json({ ok: false, error: '采集操作尚未确认，不能停止', roomControl: roomControlSnapshot() }, 409);
+    invalidateTarget();
+    show.disconnect();
+    try {
+      await roomControl.stop(settings.douyinRoomId);
+      return json(state());
+    } catch (error) {
+      return json({ ok: false, error: (error as Error).message, roomControl: roomControlSnapshot() }, roomControl.locked ? 409 : 502);
+    }
+  }, 'collector stop');
 
   route('/api/dsh-livestream/onair', ['POST'], async (request) => {
     const { sessionId, gameSessionId } = await body<{ sessionId?: string; gameSessionId?: string }>(request);

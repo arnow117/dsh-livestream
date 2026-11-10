@@ -10,6 +10,7 @@ export default defineConfig({
       include: [
         'src/shared/ttsSettings.ts',
         'src/shared/liveTarget.ts',
+        'src/shared/roomControl.ts',
         'src/shared/biliOperations.ts',
         'src/core/live.ts',
         'src/stage/protocol.ts',
@@ -35,6 +36,8 @@ export default defineConfig({
         'src/body/biliAccount.ts',
         'src/body/biliRoom.ts',
         'src/dsh/runtime.ts',
+        'src/dsh/douyinRoomControl.ts',
+        'src/dsh/douyinControlJournal.ts',
         'src/dsh/index.ts',
         'src/dsh/agent.ts',
         'src/body/macosTts.ts',
