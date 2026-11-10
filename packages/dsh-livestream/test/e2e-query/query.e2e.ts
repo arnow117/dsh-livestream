@@ -27,9 +27,9 @@ test('configures queries and follows the real console to the owned stage', async
   await expect.poll(async () => (await fixture(app.baseUrl)).status.onAir).toBe(true);
   await screen.getByPlaceholder('比如：给大家讲讲你今天学到的东西').fill('北京天气如何');
   await screen.getByRole('button', '说', { exact: true }).tap();
-  await expect.poll(async () => (await fixture(app.baseUrl)).mcpRequests.filter((item: any) => item?.method === 'tools/call').length).toBe(1);
+  await expect.poll(async () => (await fixture(app.baseUrl)).weatherRequests.filter((item: string) => item === 'current').length).toBe(1);
   await expect(screen.getByText('天气：资料不足')).toBeVisible();
-  await expect(screen.getByRole('link', 'weather.com.cn')).toBeVisible();
+  await expect(screen.getByText('区域内没有可确认时间的气温观测站。')).toBeVisible();
   const result = await fixture(app.baseUrl);
   expect(result.modelRequests.some((request: any) => request.tools?.some((tool: any) => tool.name === 'weather_lookup'))).toBe(true);
   expect(result.modelRequests.some((request: any) => request.messages?.some((message: any) => Array.isArray(message.content) && message.content.some((block: any) => block.type === 'tool_result' && JSON.stringify(block.content).includes('limited'))))).toBe(true);
@@ -48,7 +48,7 @@ test('configures queries and follows the real console to the owned stage', async
   await screen.getByPlaceholder('比如：给大家讲讲你今天学到的东西').fill('北京天气如何');
   await screen.getByRole('button', '说', { exact: true }).tap();
   await expect(screen.getByText('天气：已取得资料')).toBeVisible();
-  await expect(screen.getByRole('link', '北京天气')).toBeVisible();
+  await expect(screen.getByRole('link', 'NOAA Aviation Weather Center')).toBeVisible();
   await expect.poll(async () => {
     const state = await fixture(app.baseUrl);
     return state.modelRequests.some((request: any) => request.messages?.some((message: any) =>
@@ -56,6 +56,12 @@ test('configures queries and follows the real console to the owned stage', async
         block.type === 'tool_result' && typeof block.content === 'string'
           && block.content.includes('"status":"evidence"') && block.content.includes('气温 20℃'))));
   }).toBe(true);
+  await fetch(`${app.baseUrl}/__mode`, { method: 'POST', body: 'forecast' });
+  await screen.getByPlaceholder('比如：给大家讲讲你今天学到的东西').fill('北京 2026-11-12 天气预报');
+  await screen.getByRole('button', '说', { exact: true }).tap();
+  await expect(screen.getByRole('link', 'MET Norway / CC BY 4.0')).toBeVisible();
+  await expect(screen.getByText(/预报适用时间/)).toBeVisible();
+  await expect.poll(async () => (await fixture(app.baseUrl)).weatherRequests.includes('forecast')).toBe(true);
   await fetch(`${app.baseUrl}/__mode`, { method: 'POST', body: 'normal' });
 
   await screen.getByRole('button', '设置', { exact: true }).tap();
@@ -250,7 +256,8 @@ test('accepts a new owner query on the local stage after the Douyin subscription
   await expect(screen.getByText('天气：资料不足')).toBeVisible();
   const after = await fixture(app.baseUrl);
   expect(after.status.onAir).toBe(true);
-  expect(after.mcpRequests.filter((item: any) => item?.method === 'tools/call').length).toBe(before.mcpRequests.filter((item: any) => item?.method === 'tools/call').length + 1);
+  expect(after.status.query.queryId).not.toBe(before.status.query?.queryId);
+  expect(after.weatherRequests.filter((item: string) => item === 'current').length).toBeGreaterThanOrEqual(before.weatherRequests.filter((item: string) => item === 'current').length);
   expect(after.sharedRequests).toBe(0);
   expect(after.externalRequests).toBe(0);
   await screen.getByRole('region', '查询状态与来源').scrollIntoView();

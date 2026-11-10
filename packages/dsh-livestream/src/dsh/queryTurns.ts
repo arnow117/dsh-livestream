@@ -20,7 +20,8 @@ export interface QueryTurn {
 }
 
 const WEATHER_INTENT = /天气|气温|温度|几度|冷不冷|热不热|下雨|降水|下雪|预报/;
-const DATE_INTENT = /\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}[日号]|(?:今|明|后|昨|前)(?:天|日|早|晚|夜|晨|上午|下午|中午)|下周|本周|这周|周末|星期|周[一二三四五六日天]|下个?月|明年|预报/;
+// Do not interpret the overlap in “当前天气” or “目前天气” as “前天”.
+const DATE_INTENT = /\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}[日号]|(?:(?:今|明|后|昨)|(?<![当目])前)(?:天|日|早|晚|夜|晨|上午|下午|中午)|下周|本周|这周|周末|星期|周[一二三四五六日天]|下个?月|明年|预报/;
 
 /** Freezes host-attributed messages for a single agent turn. */
 export class QueryTurns {

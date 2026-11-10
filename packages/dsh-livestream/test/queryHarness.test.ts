@@ -18,7 +18,7 @@ it('runs native tool calls through the real Harness loop and model adapter again
   const dir = await mkdtemp(join(tmpdir(), 'dsh-query-harness-'));
   const env = { ...process.env };
   const requests: any[] = [];
-  const mcp: any[] = [];
+  const weatherRequests: string[] = [];
   let externalRequests = 0;
   let holdContinuation = false;
   let releaseContinuation: (() => void) | undefined;
@@ -52,30 +52,28 @@ it('runs native tool calls through the real Harness loop and model adapter again
   await new Promise<void>((resolve) => model.listen(0, '127.0.0.1', resolve));
   const port = (model.address() as { port: number }).port;
   const originalFetch = globalThis.fetch;
-  const schema = {
-    type: 'object',
-    properties: Object.fromEntries(['search_query', 'search_domain_filter', 'search_recency_filter', 'content_size', 'location'].map((name) => [name, { type: 'string' }])),
-    required: ['search_query'], additionalProperties: false,
-  };
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) !== 'https://open.bigmodel.cn/api/mcp/web_search_prime/mcp') {
-      const url = new URL(String(input));
-      if (url.hostname === '127.0.0.1' && Number(url.port) === port) return originalFetch(input, init);
-      externalRequests++;
-      throw new Error('unexpected external request blocked');
+    const url = new URL(String(input));
+    if (url.hostname === '127.0.0.1' && Number(url.port) === port) return originalFetch(input, init);
+    if (url.hostname === 'nominatim.openstreetmap.org' && url.pathname === '/search') {
+      return Response.json([{
+        name: '北京市', category: 'boundary', type: 'administrative',
+        address: { city: '北京市', country_code: 'cn' }, lat: '40', lon: '116.5',
+        boundingbox: ['39', '41', '115', '118'],
+        geojson: { type: 'Polygon', coordinates: [[[115, 39], [118, 39], [118, 41], [115, 41], [115, 39]]] },
+      }]);
     }
-    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
-    mcp.push(body);
-    if (body?.id === undefined) return new Response(null, { status: 202 });
-    if (holdProvider && body.method === 'tools/call') {
-      await new Promise<void>((resolve) => { releaseProvider = resolve; });
-      providerReturned = true;
+    if (url.hostname === 'aviationweather.gov' && url.pathname === '/api/data/metar') {
+      weatherRequests.push(url.href);
+      if (holdProvider) {
+        await new Promise<void>((resolve) => { releaseProvider = resolve; });
+        providerReturned = true;
+      }
+      // Failure stays uncached so later cancellation cases each exercise the real source path.
+      return new Response(null, { status: 503 });
     }
-    const result = body.method === 'initialize'
-      ? { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
-      : body.method === 'tools/list' ? { tools: [{ name: 'web_search_prime', inputSchema: schema }] }
-        : { content: [{ type: 'text', text: JSON.stringify(JSON.stringify([{ title: '北京天气', link: 'https://weather.com.cn/beijing', content: '北京天气资料' }])) }] };
-    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), { headers: { 'content-type': 'application/json' } });
+    externalRequests++;
+    throw new Error('unexpected external request blocked');
   });
   process.env.DSH_HOME = dir;
   process.env.GLM_CODING_PLAN_API_KEY = 'fake-mcp-key';
@@ -139,7 +137,7 @@ it('runs native tool calls through the real Harness loop and model adapter again
     await vi.waitFor(() => expect(requests.length).toBe(2), { timeout: 5000 });
     expect(requests[0].tools.map((item: any) => item.function.name)).toContain('weather_lookup');
     expect(requests[1].messages.some((message: any) => message.role === 'tool' && message.content.includes('limited'))).toBe(true);
-    expect(mcp.filter((item) => item?.method === 'tools/call')).toHaveLength(1);
+    expect(weatherRequests).toHaveLength(1);
     await vi.waitFor(() => expect(events.some((event) => event.type === 'say')).toBe(true), { timeout: 5000 });
     expect(events.find((event) => event.type === 'say')).toMatchObject({ text: '暂时无法确认北京此刻天气。', owner: { epoch: expect.any(String), turn: expect.any(String) } });
     expect(synthesize).toHaveBeenCalledTimes(1);
@@ -214,9 +212,9 @@ it('runs native tool calls through the real Harness loop and model adapter again
     expect(runtime.show.isOnAir).toBe(true);
     expect(runtime.show.stage.outputEpoch).not.toBe(previousEpoch);
     expect((await cancel('query-fixture', previousQuery!)).status).toBe(409);
-    const callsBeforeDisconnectQuery = mcp.filter((item) => item?.method === 'tools/call').length;
+    const callsBeforeDisconnectQuery = weatherRequests.length;
     agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '北京天气如何' }] }));
-    await vi.waitFor(() => expect(mcp.filter((item) => item?.method === 'tools/call').length).toBe(callsBeforeDisconnectQuery + 1), { timeout: 5000 });
+    await vi.waitFor(() => expect(weatherRequests.length).toBe(callsBeforeDisconnectQuery + 1), { timeout: 5000 });
     await vi.waitFor(() => expect(events.some((event) => event.type === 'say' && event.owner?.epoch === runtime!.show.stage.outputEpoch)).toBe(true), { timeout: 5000 });
 
     // Exercise the same actual Topic → Harness → Show path for both input sources.
@@ -264,7 +262,7 @@ it('runs native tool calls through the real Harness loop and model adapter again
             agentStatus: agent.status,
             query: runtime!.show.status().query,
             recentRequests: requests.slice(-2).map((request) => request.messages?.slice(-2)),
-            recentMcpMethods: mcp.slice(-3).map((request) => request?.method),
+            recentWeatherRequests: weatherRequests.length,
           })).toBeTypeOf('function'), { timeout: 5000 });
         } else if (phase === 'continuation') {
           await vi.waitFor(() => expect(releaseContinuation).toBeTypeOf('function'), { timeout: 5000 });

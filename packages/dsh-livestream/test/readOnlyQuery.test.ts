@@ -21,13 +21,9 @@ describe('read-only search evidence', () => {
     expect(parseSearchResponse(response(unrelated), query, '').status).toBe('limited');
   });
 
-  it('deduplicates equivalent weather observations but rejects conflicts', () => {
-    const query = { kind: 'weather', location: '北京' } as const;
+  it('does not treat synthetic MCP text as structured weather evidence', () => {
     const item = { title: '北京天气', link: 'https://weather.com.cn/beijing', content: '北京当前天气实况：2026-11-10 08:00 UTC+00:00 气温 20℃' };
-    const duplicate = { ...item, link: 'https://weather.com.cn/beijing/duplicate', content: '北京当前天气实况：2026-11-10 16:00 UTC+08:00 气温 20°C' };
-    const conflict = { ...duplicate, content: '北京当前天气实况：2026-11-10 16:00 UTC+08:00 气温 21℃' };
-    expect(parseSearchResponse(response([item, duplicate]), query, '2026-11-10T08:10:00Z').status).toBe('evidence');
-    expect(parseSearchResponse(response([item, conflict]), query, '2026-11-10T08:10:00Z').status).toBe('limited');
+    expect(parseSearchResponse(response([item]), { kind: 'weather', location: '北京' }, '2026-11-10T08:10:00Z').status).toBe('unsupported_response');
   });
 
   it('unwraps the observed double-encoded profile without treating refer as time', () => {
@@ -66,7 +62,7 @@ describe('read-only search evidence', () => {
       { title: '北京昨日天气', link: 'https://weather.com.cn/beijing', content: '2026-11-09 北京今天气温 3℃' },
     ];
     const result = parseSearchResponse(response(weather), { kind: 'weather', location: '北京' }, '2026-11-10T00:00:00.000Z');
-    expect(result.status).toBe('limited');
+    expect(result.status).toBe('unsupported_response');
     expect(result.evidenceText).not.toContain('5℃');
     expect(result.evidenceText).not.toContain('3℃');
   });
@@ -79,7 +75,7 @@ describe('read-only search evidence', () => {
 });
 
 describe('fixed MCP executor', () => {
-  it('uses the fixed tool and weather arguments through the SDK', async () => {
+  it('uses the fixed public-search tool and arguments through the SDK', async () => {
     const { runReadOnlyQuery } = await import('../src/body/readOnlyQuery');
     const calls: Array<{ url: string; method: string; body?: any; redirect?: RequestRedirect }> = [];
     const schema = {
@@ -96,17 +92,17 @@ describe('fixed MCP executor', () => {
         ? { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
         : body.method === 'tools/list'
           ? { tools: [{ name: 'web_search_prime', inputSchema: schema }] }
-          : response([{ title: '北京', link: 'https://weather.com.cn/beijing', content: '北京天气' }]);
+          : response([row]);
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), { headers: { 'content-type': 'application/json' } });
     };
-    const result = await runReadOnlyQuery({ kind: 'weather', location: '北京' }, 'fake-key', new AbortController().signal, fakeFetch);
-    expect(result.status).toBe('limited');
+    const result = await runReadOnlyQuery({ kind: 'public_search', query: 'OBS Studio license' }, 'fake-key', new AbortController().signal, fakeFetch);
+    expect(result.status).toBe('evidence');
     expect(calls.every((call) => call.url === 'https://open.bigmodel.cn/api/mcp/web_search_prime/mcp' && call.redirect === 'error')).toBe(true);
     const searches = calls.filter((call) => call.body?.method === 'tools/call');
     expect(searches).toHaveLength(1);
     expect(searches[0].body.params).toEqual({ name: 'web_search_prime', arguments: {
-      search_query: '北京 当前天气实况 更新时间', content_size: 'medium', location: 'cn',
-      search_recency_filter: 'oneDay', search_domain_filter: 'weather.com.cn',
+      search_query: 'OBS Studio license', content_size: 'medium', location: 'cn',
+      search_recency_filter: 'noLimit',
     } });
   });
 });
@@ -161,7 +157,7 @@ it('asks for administrative context before contacting the provider', async () =>
   for (const location of ['北京', '北京市朝阳区', '重庆市渝中区', '辽宁省朝阳市', '浙江省杭州市']) {
     expect(isSupportedWeatherLocation(location)).toBe(true);
   }
-  expect(parseSearchResponse(response([]), { kind: 'weather', location: '辽宁省朝阳市' }, '').status).toBe('empty');
+  expect(parseSearchResponse(response([]), { kind: 'weather', location: '辽宁省朝阳市' }, '').status).toBe('unsupported_response');
 });
 
 it('never falls back to an environment credential when the credential service exists', async () => {
@@ -172,15 +168,11 @@ it('never falls back to an environment credential when the credential service ex
   expect(await resolveQueryCredential({ resolve: async () => ({ value: '  service-key  ' }) }, 'env-key')).toEqual({ status: 'configured', value: 'service-key' });
 });
 
-it('reports explicit matching weather evidence with its source time and distinguishes a forecast', () => {
+it('does not parse either current or forecast weather from MCP text', () => {
   const current = response([{ title: '北京天气实况', link: 'https://weather.com.cn/beijing', content: '北京当前天气实况：2026-11-10 16:00 UTC+08:00 气温 12℃' }]);
-  const observed = parseSearchResponse(current, { kind: 'weather', location: '北京' }, '2026-11-10T08:10:00.000Z');
-  expect(observed.status).toBe('evidence');
-  expect(observed.evidenceText).toContain('气温 12℃');
-  expect(observed.sources[0].providerTime).toEqual({ kind: 'observed', value: '2026-11-10T08:00:00.000Z', verbatim: '2026-11-10 16:00 UTC+08:00' });
   const forecast = response([{ title: '北京天气预报', link: 'https://weather.com.cn/beijing', content: '北京 2026-11-12 天气预报：多云' }]);
-  expect(parseSearchResponse(forecast, { kind: 'weather', location: '北京', date: '2026-11-12' }, '2026-11-10T08:10:00.000Z')).toMatchObject({ status: 'evidence', evidenceText: expect.stringContaining('多云'), sources: [{ providerTime: { kind: 'forecast', value: '2026-11-12', verbatim: '2026-11-12' } }] });
-  expect(parseSearchResponse(forecast, { kind: 'weather', location: '北京', date: '2026-11-13' }, '2026-11-10T08:10:00.000Z').status).toBe('limited');
+  expect(parseSearchResponse(current, { kind: 'weather', location: '北京' }, '2026-11-10T08:10:00.000Z').status).toBe('unsupported_response');
+  expect(parseSearchResponse(forecast, { kind: 'weather', location: '北京', date: '2026-11-12' }, '2026-11-10T08:10:00.000Z').status).toBe('unsupported_response');
 });
 
 it('parses standard plain text and rejects unrelated or overlarge profiles', () => {
@@ -197,7 +189,7 @@ it('parses standard plain text and rejects unrelated or overlarge profiles', () 
 it('does not attribute another city or extra text in a weather excerpt to the requested city', () => {
   const mixed = response([{ title: '北京天气', link: 'https://weather.com.cn/beijing', content: '北京当前天气实况：2026-11-10 16:00 UTC+08:00 气温 12℃，鸡西气温 5℃' }]);
   const result = parseSearchResponse(mixed, { kind: 'weather', location: '北京' }, '2026-11-10T08:10:00.000Z');
-  expect(result.status).toBe('limited');
+  expect(result.status).toBe('unsupported_response');
   expect(result.evidenceText).not.toContain('5℃');
 });
 
@@ -259,3 +251,25 @@ it('enforces the total 15-second deadline even when the transport ignores abort'
   expect(Date.now() - started).toBeLessThan(17_000);
   release(new Response(null, { status: 500 }));
 }, 20_000);
+
+it('keeps the shared query busy after weather cancellation until ignored work settles', async () => {
+  const { runReadOnlyQuery } = await import('../src/body/readOnlyQuery');
+  let release!: () => void;
+  const weatherSource = {
+    query: () => new Promise<any>((resolve) => {
+      release = () => resolve({ kind: 'weather', status: 'limited', evidenceText: '', sources: [] });
+    }),
+  };
+  const abort = new AbortController();
+  const pending = runReadOnlyQuery({ kind: 'weather', location: '北京' }, 'fake', abort.signal, vi.fn(), weatherSource);
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  expect((await runReadOnlyQuery({ kind: 'public_search', query: 'OBS' }, 'fake', new AbortController().signal, vi.fn())).status).toBe('busy');
+  abort.abort();
+  expect((await pending).status).toBe('cancelled');
+  expect((await runReadOnlyQuery({ kind: 'public_search', query: 'OBS' }, 'fake', new AbortController().signal, vi.fn())).status).toBe('busy');
+  release();
+  await vi.waitFor(async () => {
+    const result = await runReadOnlyQuery({ kind: 'public_search', query: 'OBS' }, 'fake', new AbortController().signal, async () => new Response(null, { status: 503 }));
+    expect(result.status).not.toBe('busy');
+  });
+});

@@ -1,3 +1,4 @@
+import { createWeatherSource } from '../body/weather';
 /**
  * 插件的共享状态：宿主根插件（index.ts）和 agent 子插件（agent.ts）用同一份（同一个进程，同一个模块实例）。
  *
@@ -145,6 +146,12 @@ export const PRESET_ID = 'dsh-livestream';
 export const localRehearsal = process.env.DSH_LIVESTREAM_LOCAL_REHEARSAL === '1';
 
 export const dataDir = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'dsh-livestream');
+
+export const weatherSource = createWeatherSource({
+  cacheFile: join(dataDir, 'weather-cache-v1.json'),
+  geocoderUrl: process.env.DSH_LIVESTREAM_WEATHER_GEOCODER_URL,
+  onDiagnostic: (code) => console.warn(`[dsh-livestream] weather: ${code}`),
+});
 
 /** 插件包目录（构建产物在 lib/ 或 lib/chunks/，往上找 package.json） */
 export function packageDir(): string {

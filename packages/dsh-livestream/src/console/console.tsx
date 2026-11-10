@@ -287,7 +287,11 @@ const QUERY_STATUS: Record<string, string> = {
 
 function displayQueryTime(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? '时间未知' : date.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' });
+  if (Number.isNaN(date.valueOf())) return '时间未知';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return date.toISOString().slice(0, 10) === value ? value : '时间未知';
+  }
+  return date.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Shanghai' });
 }
 
 function QueryEvidence({ query }: { query: ShowStatus['query'] }) {
@@ -296,10 +300,11 @@ function QueryEvidence({ query }: { query: ShowStatus['query'] }) {
     <div className="dl-query-result" aria-live="polite">
       <p className="dl-query-status">{query.kind === 'weather' ? '天气' : '公开资料'}：{QUERY_STATUS[query.status] ?? query.status}</p>
       {'limitation' in query && query.limitation && <p>{query.limitation}</p>}
+      {query.kind === 'weather' && 'evidenceText' in query && query.evidenceText && <p>{query.evidenceText}</p>}
       {'sources' in query && query.sources.length > 0 && <ul className="dl-query-sources">
         {query.sources.map((source) => <li key={source.url}>
           <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title || source.name}</a>
-          <span>检索：{displayQueryTime(source.retrievedAt)}；{source.providerTime.kind === 'unknown' ? '来源未提供更新时间' : source.providerTime.kind === 'observed' ? `观测：${displayQueryTime(source.providerTime.value)}` : `预报日期：${source.providerTime.value}`}</span>
+          <span>检索：{displayQueryTime(source.retrievedAt)}；{source.providerTime.kind === 'unknown' ? '来源未提供更新时间' : source.providerTime.kind === 'observed' ? `观测：${displayQueryTime(source.providerTime.value)}` : `预报适用时间：${displayQueryTime(source.providerTime.value)}`}</span>
         </li>)}
       </ul>}
     </div>

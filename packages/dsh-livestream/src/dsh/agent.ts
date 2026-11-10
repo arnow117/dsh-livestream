@@ -24,7 +24,7 @@ import { splitByMood } from '../core/moodText';
 import { orderTags } from '../core/orders';
 import { ttsYuan, turnYuan } from '../core/cost';
 import { assertBiliCurrent, beginBiliOperation, inBiliOperation } from '../shared/biliOperations';
-import { asr, cookie, currentMoods, dm, hooks, library, localRehearsal, markAgentReady, onPlatformChange, onQuerySettingsChange, setQueryServiceStatus, settings, show, social, videos } from './runtime';
+import { asr, cookie, currentMoods, dm, hooks, library, localRehearsal, markAgentReady, onPlatformChange, onQuerySettingsChange, setQueryServiceStatus, settings, show, social, videos, weatherSource } from './runtime';
 import { BiliRoom } from '../body/biliRoom';
 import { screenshot } from '../body/obs';
 import { whoIs } from '../body/biliLogin';
@@ -343,7 +343,16 @@ async function completeWithDsh(ctx: AgentContext, model: string, system: string,
   return out.trim();
 }
 
+/** Internal composition seam for isolated acceptance; the host keeps its default source. */
+export function createAgentPlugin(source: typeof weatherSource) {
+  return { name, inject, apply: (ctx: AgentContext) => applyWithWeather(ctx, source) };
+}
+
 export function apply(ctx: AgentContext): void {
+  applyWithWeather(ctx, weatherSource);
+}
+
+function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void {
   hooks.complete = (model, system, user) => completeWithDsh(ctx, model, system, user);
   hooks.push = (sessionId, text, now, topic) => push(ctx, sessionId, text, now, topic);
   hooks.initializeWatch = (sessionId) => {
@@ -413,7 +422,7 @@ export function apply(ctx: AgentContext): void {
     const startedAt = Date.now();
     show.queryFeedback(lease.epoch, lease.signal, { kind: request.kind, status: 'searching', queryId, turn: lease.turn });
     lease.signal.addEventListener('abort', () => show.cancelQuery(lease.epoch, queryId), { once: true });
-    const result = await runReadOnlyQuery(request, key.value, lease.signal);
+    const result = await runReadOnlyQuery(request, key.value, lease.signal, undefined, source);
     result.queryId = queryId;
     if (!lease.valid() || lease.epoch !== show.stage.outputEpoch) return '查询已取消。';
     if (result.status === 'unsupported_response') setQueryServiceStatus('incompatible');

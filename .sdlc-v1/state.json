@@ -123,12 +123,12 @@
         "FEAT-004-T001": {
           "depends_on": [],
           "id": "FEAT-004-T001",
-          "status": "in_progress",
+          "status": "done",
           "title": "接通有来源查询并验证直播生命周期隔离",
-          "updated_at": "2026-11-10T09:03:30Z"
+          "updated_at": "2026-11-10T18:16:04Z"
         }
       },
-      "updated_at": "2026-11-10T09:03:30Z",
+      "updated_at": "2026-11-10T18:16:04Z",
       "validation": {
         "at": null,
         "command": null,
@@ -182,15 +182,15 @@
     "REQ-004": {
       "created_at": "2026-11-10T06:11:54Z",
       "depends_on": [],
-      "description": "直播Agent在真实获准抖音私聊上下文收/回复用户并发送多维表格登记入口，用户主动提交手机号和人脸照片；两Agent以同Skill和真实授权API直读写唯一共享飞书业务DB，登记独立于T1在线。当前无企业号/enterprise.im，官方路径前提不足、替代路径未核实，保持captured。",
+      "description": "保留真实获准抖音私聊收/回复与用户主动登记手机号、人脸照片的目标；两Agent以同Skill和真实授权API直读写唯一共享飞书业务DB，登记独立于T1在线。当前无企业号/enterprise.im，可用私信路径和共享飞书合同待核实，作为条件性待办保持captured，不进入当前研发。",
       "domain": "douyin-private-messaging",
       "feature_id": null,
       "id": "REQ-004",
-      "priority": "P0",
+      "priority": "P2",
       "product_context_ref": ".sdlc-v1/context/REQ-004.product.md",
       "status": "captured",
       "title": "抖音私信互动与访客登记",
-      "updated_at": "2026-11-10T06:11:54Z"
+      "updated_at": "2026-11-10T14:19:34Z"
     },
     "REQ-005": {
       "created_at": "2026-11-10T06:27:24Z",
@@ -218,7 +218,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-006.product.md",
       "status": "in_delivery",
       "title": "直播 Agent 天气查询与公开资料搜索",
-      "updated_at": "2026-11-10T09:03:30Z"
+      "updated_at": "2026-11-10T18:16:04Z"
     },
     "REQ-007": {
       "created_at": "2026-11-10T08:22:08Z",
@@ -241,7 +241,7 @@
         "REQ-002",
         "REQ-005"
       ],
-      "description": "复用既有Papermorph杠杆课件和现有直播控制台及舞台，交付技能资料配置与课程互动；owner配置技能和目录，首版加载技能并受限读取指定资料，新增技能或更换主目录下次新会话生效、活动会话保持快照；沿GLM和yovoice讲解、弹幕问答、答题及调参，具体Task与交互细节待Spec和Plan，不即时生成、执行脚本或开放通用文件权限。",
+      "description": "复用既有Papermorph杠杆课件、现有直播控制台与舞台，合并owner技能/资料配置和课程弹幕互动；首版加载技能并受限读取指定资料，新增技能或更换主目录下次新会话生效、活动会话保持快照。保留GLM和yovoice问答、有条件自动续课、答题及调参；产品规格已接受，依赖REQ-002/005，未登记Feature/Task，不即时生成或执行脚本、不开放通用文件权限。",
       "domain": "livestream-course",
       "feature_id": null,
       "id": "REQ-008",
@@ -249,7 +249,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-008.product.md",
       "status": "captured",
       "title": "既有课件的直播讲解与弹幕互动",
-      "updated_at": "2026-11-10T09:29:14Z"
+      "updated_at": "2026-11-10T14:19:34Z"
     },
     "REQ-009": {
       "created_at": "2026-11-10T09:12:40Z",

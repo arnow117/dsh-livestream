@@ -4,40 +4,54 @@
 
 ### 架构设计
 
-**关联产品上下文**：`.sdlc-v1/context/REQ-006.product.md`。
+**关联**：REQ-006 的 confirmed FR/SCN 是唯一产品规则；分支 `codex/macos-yovoice`，固定差异基线 `67d4df44e3c119b5a799029913cdef6c29c73aeb`。2026-11-11 主 Agent 接受结构化天气 Plan 修订；唯一 `FEAT-004-T001` 的实现及Build检查已接受并通过lifecycle CLI标为done；Feature仍in_progress，下一阶段为独立Validate，尚未发布。源码 HEAD 为 `efa2b20d39bca833488b7936f565a22086cb3888` 加已有工作树；旧离线与真实证据只覆盖其明确范围，新后端实现与实测证据见后文，当前候选未发布。长期方向来源为 none，观察目标引用 REQ-006。REQ-005 播出冻结、REQ-008 课程/技能与 OUT-001 不属于本 Task。
 
-**工程上下文**：`.sdlc-v1/context/FEAT-004.engineering.md`。
+#### 背景与复用决定
 
-**已确认需求**：仅产品上下文的 confirmed 条目；本文引用 FR/SCN，不重新定义产品规则。
+正式抖音预设的原生工具调用、GLM续答和独立MP3合成已有分层证据，但旧MCP天气摘要缺绝对观测时间，原天气成功解析又依赖合成句式，不能支持可信当前天气。当前方案将天气改为窄结构化适配器，公开搜索保留固定 Coding Plan MCP；不扩大工具权限或改写原文授权。原日期交叠修复与本轮失败历史继续承接，不重置不收敛计数。
 
-**分支 / 基线**：`codex/macos-yovoice` / `67d4df44e3c119b5a799029913cdef6c29c73aeb`。
+| 候选 | 实测覆盖与成本 | 决定 |
+|---|---|---|
+| 已有固定 MCP/SDK，含 Reader 评估 | 公开资料可用；天气/Reader未给出可信实况 | 保留 public_search 与 SDK 2.2.0；删除可达的 MCP 天气路径，不接 Reader |
+| Nominatim 区域＋AWC 观测＋MET 预报 | 中国区域/完整多边形、METAR绝对观测时间/摄氏单位、MET预报时间已核实 | 采用窄 adapter，复用 Node fetch、查询归属和现有 UI/语音 |
+| wttr | 实况仅有时刻，缺绝对观测日期 | 不采用，不作自动回退 |
 
-**创建日期 / 状态**：2026-11-10 / Plan 与当前离线实现检查已由主 Agent 接受；可信真实天气、GLM/语音链路及独立 Validate/Review/Ship 未完成，Task 仍为 in_progress。生命周期状态仅以 `state.json` 为准。
+唯一新生产依赖 `@turf/boolean-point-in-polygon@7.4.0`（MIT，官方维护，已核 npm metadata/官方文档），由 package/lock 精确声明；复用其 Polygon/MultiPolygon/holes 判断，不自写 GIS。不引入天气框架、数据库、泛化 provider 平台或新会话运行时。宿主仍为 Harness 0.2.2-rc.1、Node22目标、React18/现有 Drawer，搜索 SDK 只进入 Node bundle，shared 不反向导入 Node。
 
-#### 背景
+#### 天气组件、地点与固定网络契约
 
-当前抖音与本地彩排的 Agent 仅声明 `show_stats`，不能查天气。本 Feature 在既有 GLM Coding Plan → 助手正文 → yovoice → 本地舞台旅程内增加两类有来源查询。长期方向来源为 `none`，预期结果和发布后观察引用 REQ-006，不建立额外路线图。REQ-005 下的后台冻结、REQ-008 Papermorph 课程互动及产品 OUT-001 均不进入本次实现。
+`body/readOnlyQuery.ts` 以一个生产执行器共享严格输入、15秒总截止、单并发/取消机制，按 kind 分派：public_search→原固定 MCP；weather→新 `body/weather.ts` source factory；`body/weatherCache.ts` 只管理公共源缓存。测试经同一工厂组合独立 fetch、cacheFile、服务配置和时钟；必要的 agent 注册组合只做内部依赖注入，无生产 reset、调试路由或模型可编辑 provider。
 
-决策问题是：如何复用成熟查询传输，同时只暴露已选只读能力，并使晚到结果在取消、换目标、下播后失效。约束是固定官方服务、既有凭据、无任意 URL 抓取、无新增运行时和页面、无共享服务操作。主 Agent 已取得两次真实搜索与已观测的输出 profile；公开资料样本可支持许可证结论，天气样本仍不能确认北京此刻实况。天气成功路径与 Coding Plan 持续适用边界仍影响真实验收，不能由连接或调用成功替代。
+地点沿原 `isSupportedWeatherLocation` 格式：四直辖市及明确区县，其他地点需省＋市/县/区；格式不是地点真实性证据。原可信问题/参与者关联继续应用，不从IP、别的观众、模型或旧会话补坐标。
 
-来源与版本：
+- 地理默认 `https://nominatim.openstreetmap.org/search`，固定 `format=jsonv2,countrycodes=cn,addressdetails=1,limit=3,accept-language=zh-CN,polygon_geojson=1`，仅q来自已校验location。核对 `country_code=cn,category=boundary,type=administrative`、叶名及提供的省/直辖市父级；不用不存在的 class。四直辖市仅显式北京↔北京市等别名，允许经核对的 address.city/state；上海真实为 state。省＋叶名、直辖市＋区县分别精确匹配，零/多实体或缺父级须澄清，不能取首条猜。
+- 只接纳完整 Polygon/MultiPolygon：有限合法经纬度、闭合ring及最少点数、有界深度/点数、bbox覆盖；最多1MiB，不简化/截断后继续定位。有限中心坐标及中国支持范围也须核对，区县无观测站不能借邻区或全市机场。
+- 当前观测固定 `https://aviationweather.gov/api/data/metar`，参数仅 bbox、format=json、hours=2。bbox顺序南界纬度、西界经度、北界纬度、东界经度；南/西向下、北/东向上外扩至3位小数。框只筛候选站；实际站必须在原完整polygon内，以 Turf `ignoreBoundary:true` 排除区域外、洞和边界站。
+- 明确日期预报固定 `https://api.met.no/weatherapi/locationforecast/2.0/compact`，lat/lon来自已核对区域中心，最多4位小数；最终发送的四位小数坐标也必须对原完整polygon执行PIP（ignoreBoundary:true），不能因落在bbox内就当作区内。中心/舍入后的点位于洞、边界或区域外时limited，不另找替代点或扩大地域。无日期只走AWC，有日期只走MET；无站不能改用预测冒充实测。
+- 正常最多地理1GET＋天气1GET，总上限3个顺序GET（含条件请求），无并行、分页、重试、扩大地域或MCP/Reader/wttr回退。天气HTTP固定目标/参数、`redirect:error`、每响应1MiB流读取上限、严格UTF-8/JSON/有界结构，signal贯穿读取。仅发公共地名/区域/坐标与识别UA；不发送GLM Authorization、Cookie、Bili密钥、参与者/房间/历史/完整问题。
+- UA为包名/版本与实际项目 `https://github.com/arnow117/dsh-livestream`。可信部署owner可用 `DSH_LIVESTREAM_WEATHER_GEOCODER_URL` 切换兼容 HTTPS `/search` 服务，无userinfo/query/hash/IP literal/localhost/已识别保留内网名称；错误配置不回退。该env不是模型/控制台URL输入，不声称格式校验保证DNS安全。AWC/MET固定不可改。
 
-- 本插件源码基线见上；宿主包实际为 `@deepseek-ai/dsh-*@0.2.2-rc.1`。只读 upstream checkout 为 `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`，不是本 Feature 的修改范围。
-- upstream `packages/web/web`、`tool-web` 已有 provider-neutral search port、schema/result card 与取消信号；默认 provider 不能直接继承 GLM 凭据。`packages/mcp/mcp-client/src/{transport,tools}.ts` 使用 `@modelcontextprotocol/client@2.2.0`，但桥接器全量注册远端工具；`tools.restrict` 不能作为同 scope 自注册工具的过滤证明。`web-fetch-http` 明确支持内网访问，不能暴露为本 Feature 的工具。
-- 官方 [搜索 MCP 说明](https://docs.bigmodel.cn/cn/coding-plan/mcp/search-mcp-server)、[套餐说明](https://docs.bigmodel.cn/cn/coding-plan/overview)、[支持工具说明](https://docs.bigmodel.cn/cn/coding-plan/tool/others)，由主 Agent 于 2026-11-10 核查。官方声明兼容 MCP 客户端，联网搜索计 1.2 积分/次；DSH 未列于支持工具列表，不能承诺套餐权益、免费或新付费回退。
-- 主 Agent 的真实、脱敏 metadata 观测投影：[`metadata.json`](../../../smoke/readonly-tools/metadata.json)，2026-11-10，SDK 2.2.0，固定端点初始化与列工具，共 4 个 HTTP 请求，搜索/模型/TTS 调用均为 0。实际工具名是 `web_search_prime`，与文档 camelCase 名不同；无 `outputSchema`、无 annotations。这是连接/schema 证据，不是搜索或天气成功证据。
-- 主 Agent 在用户明确授权后取得的真实 provider 样本：[`provider-check.json`](../../../smoke/readonly-tools/provider-check.json)，`observedAt=2026-11-10T08:41:09.000Z`，两次串行 `tools/call`，均 `isError:false`，模型/TTS/直播输出均为 0。天气调用 2060ms、公开资料调用 1304ms，仅为 call 阶段观测，不含初始化/列工具，不是 SLA。两个 `content[0].text` 都须恰好两次 JSON 解包才得到 9 行数组，行字段仅见 title/link/content/refer，无独立时间字段。OBS Studio 许可样本返回官方 GitHub 仓库及 obsproject 官网，仓库摘要明确 GPLv2 或以后版本，可作为真实公开资料层成功样本；天气结果混有旧报道、异地气温、未来预报及无关报道，只证明服务可调用。无天气准确性或 GLM/声音/播出通过结论。
-- SDK 2.2.0 已在父工作区安装，其 package 声明 MIT、Node >=20；插件生产依赖仍须显式声明并锁定，不能把父层可解析误当成发布依赖。
+#### 当前观测、预报和来源语义
 
-本文比小型工程示例长，因为 FR-08 涉及查询、模型、语音及播放队列四个异步阶段，并增加真实 MCP、凭据和设置兼容契约；没有按模板制造独立基础设施 Task。
+AWC官方 schema 确认 temp 为摄氏、obsTime 为UNIX秒；缺值不能借schema默认补0，0℃合法。仅采用同一行的有限temp、整数obsTime、ICAO/站名和站坐标。每次（包括缓存命中）验证观测不早于2小时、未来最多5分钟工程容忍；receipt/report time不能替代。wdir=VRB不影响温度，不把CAVOK翻译成晴。
 
-#### 架构与组件
+同ICAO＋同obsTime重复温度去重，该组不同temp才为冲突并limited；不同站温差与同站历史变化正常。有效站按obsTime降序、同刻ICAO升序选一站；不宣称最近、不跨行拼字段或算全市均值。成功明示“区域内［站名/ICAO］附近在［绝对时间］的观测气温，仅代表该站附近，不代表全市/全区平均”。无时间、过期、超前、无区域内站、HTTP400/截断/400条上限迹象limited，不用部分资料伪称完整成功。
 
-##### 固定搜索适配器
+MET仅为模式预报：modelUpdatedAt来自meta.updated_at，适用时点/区间来自timeseries.time/next_N_hours，retrievedAt为原响应体取得时间，三者不互换。时间只接纳已核实的完整UTC Z绝对时间profile并核对历日，不从无时区或日期only推断时刻。按Asia/Shanghai筛请求日期；仅列实际覆盖点/时段与已给单位/字段，明示缺口，不插值、制造全天最高最低、缺值补0或猜未知symbol。缺单位不假定摄氏/mm；无日期覆盖limited，不能用实况替换预报。
 
-- **职责**：复用 SDK 的 Client / StreamableHTTPClientTransport，仅调用经实际 metadata 核对的 `web_search_prime`，把返回资料转成有界、可追溯的本地结果；不实现 MCP 协议，不注册远端工具目录。
-- **接口**：新 `src/body/readOnlyQuery.ts` 接受本地已校验的查询请求及合成取消信号；唯一生产 URL 为 `https://open.bigmodel.cn/api/mcp/web_search_prime/mcp`。以真实插件名/版本标识客户端，Bearer 只在 header；自定义 fetch 强制精确 URL 与 `redirect: 'error'`。模型、设置、结果均不能改变 URL/header/远端工具名；不发送平台凭据、参与者身份或对话历史。
-- **覆盖**：FR-01、FR-03、FR-05、FR-07。
+沿用 shared `QueryRequest/Result/Source` 与原状态枚举，无新时间kind：AWC providerTime=observed/真实obsTime ISO，MET=forecast/真实适用时点或区间，modelUpdatedAt写有界evidenceText；未知仍unknown。每结果最多3来源、evidence总12,000字符，每摘录2,000字符，截断标明。保留实际数据URL必要参数/检索时间、站名坐标与限制，资料是不可信引用，不得改变权限/身份。AWC署名 NOAA Aviation Weather Center；MET署名 MET Norway/CC BY 4.0及数据链接；地理署名 OpenStreetMap contributors/ODbL与版权链接。外链不自动抓取。
+
+现有证据卡把“预报日期”改为“预报适用时间”，区分观测/预报/检索时间；兼容DTO中仅有YYYY-MM-DD的值保留日期，不补小时。必要的有界证据正文通过React转义。公共天气HTTP不需要或接收GLM密钥；会话模型与公开搜索仍沿原GLM凭据admission。
+
+#### 公共缓存、预算与失败
+
+缓存归单host单进程 `${DSH_HOME}/dsh-livestream/weather-cache-v1.json`，schemaVersion=1，只保存公共源及原时间，不存参与者/queryId/lease，不是settings迁移、位置记忆或请求journal。生产host只构造一实例，不做锁服务、reservation或跨进程协调。
+
+正向geo30天、成功空/歧义负向1小时；全应用geo至少间隔1秒，等待计入deadline。MET相同URL成功缓存至少3小时且尊重Expires，刷新时If-Modified-Since；304必须有有效缓存且不得更新原数据/有效时间/modelUpdatedAt/retrievedAt。AWC相同bbox成功缓存5分钟，重用仍核obsTime及区域。无配置读取/轮询预加载。
+
+有界geo16/forecast8/current8/总文件4MiB，每响应仍1MiB；损坏、未知version、过深、错型或超量文件保守limited并给owner受控诊断，不静默无限联网刷新。不得淘汰尚在成功缓存期的同URL来重复请求；不能安全容纳时在发起对应源GET之前有限返回：预检条目数与足以容纳最大有界响应的字节余量，已满时不得先联网再丢响应，避免同URL重复请求。单host串行执行下仅需同一cache的容量检查，无reservation/journal。同目录独占临时文件0600＋rename，拒绝symlink/非普通目标/settings别名，失败保留原文件/进程已有公共缓存、只清自有临时文件，不能因写失败重复刷新。
+
+15秒包括cache IO/限频/HTTP/body读取。取消后不启动后续GET；忽略abort的fetch/body未收束前保持共同busy，所有await后/提交前沿原signal/lease核对。缓存命中不重新授权旧轮次。HTTP/解析错误为受控状态/owner诊断，不公开堆栈或原始异常。公共搜索保留一次call、无重试fallback、SDK schema漂移拒绝。settings关闭/凭据失效继续撤销旧查询。
 
 ##### 查询设置与能力 admission
 
@@ -68,71 +82,11 @@
 - **输出能力状态**：复用主人 state/现有侧栏显示舞台协议能力，区分支持当前协议的非预览输出、仅预览、需刷新旧舞台和未连接；混合连接须分别统计/说明，不能因有一个新输出而隐藏旧连接。支持协议仅表示该连接可接收 owned live 事件，不证明浏览器允许出声或音频已播放。握手、订阅过滤和连接失效唯一契约见下文“舞台能力与连接归属”。
 - **覆盖**：FR-03、FR-04、FR-05、FR-08。
 
-#### 关键设计决定
+#### 固定公开搜索接口与安全
 
-##### 决定 1：窄适配器复用官方 SDK，不复用全量桥接
+唯一端点 `https://open.bigmodel.cn/api/mcp/web_search_prime/mcp`，复用 SDK `Client/StreamableHTTPClientTransport@2.2.0`，固定URL/redirect:error/Bearer header；不向其他源转发。initialize/listTools(refresh)只选唯一 `web_search_prime`，核对已实测input schema（required仅search_query、5个已知string属性、additionalProperties=false），不兼容、重复/缺失/分页未完成拒绝，不注册远端目录。仅固定 search_query=获准query、content_size=medium、location=cn、recency=noLimit；无天气query/domain参数。
 
-| 候选 | 覆盖与成本 | 测试/维护/供应链 | 决定 |
-|---|---|---|---|
-| 固定搜索适配器 + `@modelcontextprotocol/client@2.2.0` | 精确对接现有 Coding Plan 搜索入口；本地两意图共享一次执行器，少量胶水与结果过滤 | 现有 upstream 已使用同版本；MIT，显式生产依赖/lock；SDK 替身和固定网络策略可独立验证 | 采用：引入成熟依赖，复用现有工具/设置/语音链 |
-| 扩展现有 dsh-web search port / dsh-tool-web | provider-neutral 搜索契约可复用，但现成 provider 不支持当前凭据，仍需 GLM MCP adapter；还需 preset 和发布依赖接入 | 官方宿主方案，集成面更大且 `complete` persona 指导仍需显式处理 | 暂不采用；仅在当前窄适配器被实证证明无法满足现有契约时重新评估 |
-| 直接启用通用 dsh-mcp-client | 传输可用，但会注册整个 tools/list，readOnlyHint 不是隔离，restrict 不保证同 scope 工具过滤 | 成熟桥接器，当前版本缺本需求所需 allowlist；为了一个工具引入更广服务依赖 | 不采用；不能靠远端描述自称只读取得权限 |
-
-不自研搜索引擎/MCP，不暴露 `web_fetch`。SDK bundle 必须只进入 Node 侧；`shared` DTO 模块不能反向导入 Node/SDK。package 与 lock 显式固定生产依赖，保持 Node22 和宿主 0.2.2-rc.1 兼容，并检查产物及许可要求。
-
-##### 决定 2：本地稳定输入，共用有界执行器
-
-天气和公开搜索是实际存在的两个变体，共享固定访问、schema 核对、预算、取消、来源和错误机制；仅本地参数校验、查询句构建及时间要求不同。采用普通有类型函数/适配器，不引入 provider 插件体系、DSL 或可执行配置。天气沿搜索证据回答，不伪装成已接入结构化气象 API；数据不足的安全失败是必要行为，不能取代真实成功路径验收。
-
-#### 数据模型 / 关键实体
-
-以下为本地权威语义，具体 TypeScript 定义只维护在 `src/shared/readOnlyQuery.ts`；不得复制远端私有字段猜测。
-
-| 实体 | 核心字段与约束 | 覆盖 |
-|---|---|---|
-| QueryRequest | `kind: weather/public_search`；天气 location（1–40 Unicode 字符）、可选 ISO 日期；搜索 query（1–70 字符）；禁止模型提供身份、URL、远端参数或凭据 | FR-01、FR-02、FR-07 |
-| QueryLease | 宿主内部归属、turn 取消信号、有效输出 epoch；非持久化、不可被模型构造 | FR-08、FR-09 |
-| QuerySource | `name`、`title: string/null`、`url`、`retrievedAt`、`providerTime: {kind,value,verbatim}`；已观测数组 profile 的 title/link/content 分别映射原文标题/URL/摘要，refer 仅远端索引；没有经过实际返回确认的时间角色/值时 `kind=unknown,value=null` | FR-03 |
-| QueryResult | queryId/kind、status、bounded evidenceText、sources、限制说明/稳定 error code；status 区分 evidence/limited/needs_clarification/empty/unavailable/busy/timeout/failed/unsupported_response/cancelled。evidence 只说明取得可核对资料，不等同天气事实、正文、音频或播放已验收 | FR-03～06 |
-
-`providerTime` 只接受来源原文中可明确归属的时间，保留原文；未有真实字段/语义证据不得给私有 JSON key 臆定 observed/published 含义。只有未分类时间文字时保留在 evidenceText，DTO 仍为 unknown。既不按检索时间生成观测值，也不自创天气过期阈值；日期不符、角色/时区不清、来源冲突按 FR-03 降为 limited 并明确限制。
-
-#### API / 接口契约
-
-1. 本地 `weather_lookup({location,date?})` 和 `public_search({query})` 使用同一 `defineTool` 输出 schema。天气 query 由校验后的 location/日期组装为不超过 70 字符的请求，不拼接其他观众/账号资料。缺城市/歧义先澄清；预报不支持或来源不匹配不能用当前资料替代。
-2. 每次真实执行均在 SDK 建立的连接内有界初始化并 `listTools(undefined,{cacheMode:'refresh',signal})`，只选择唯一的 `web_search_prime`；其实际 input schema 必须与已观测 profile 兼容（object、required 仅 search_query、5 个已知 string 属性、additionalProperties=false）。未知必填字段、重复/缺失工具、未完成分页或不兼容 schema 显式 `unsupported_response`，不轮流猜名字/参数，也不注册其他工具。调用 `callTool({name:'web_search_prime',arguments},{signal,timeout,toolDefinition})`。
-3. 只映射 `search_query`、`content_size:'medium'`、`location:'cn'`；当前天气使用 `search_recency_filter:'oneDay'`，明确日期预报与一般公开资料使用 `noLimit`。检索过滤不证明资料新鲜或目标日期覆盖；`location:'cn'` 是服务搜索区域设置，不是观众位置。天气采用简短的“地点 + 明确日期 + 当前天气实况/天气预报 + 更新时间”查询，并在适配器内固定 `search_domain_filter:'weather.com.cn'`；该更简明查询与固定域名策略尚未真实验证，不能承诺会改善命中。首版不向模型/设置开放 domain filter/high/区域选择；固定域名不授权本地抓取页面，也不证明具体城市/日期正确。
-4. 远端没有 outputSchema；仅消费 MCP 标准 text content 与可序列化 structuredContent，视为不可信资料。对已观测 text profile，先检查总字节限制，再对字符串最多执行 2 次 `JSON.parse`；每层都重新检查大小和类型，只接受解包后数组，最多校验 32 行候选，每行 title/link/content 为字符串，refer 若存在仅为远端索引。title、link、content 按原文字段映射为来源标题、URL、摘要；refer 不是来源、引用权威或时间。第三层字符串、损坏 JSON、过大/过多、错误行类型均显式 unsupported_response，不追加解码、不猜其他私有字段；不能对尚有 JSON 转义的原始字符串用 URL 正则补救。标准容器中的普通文本若本身不需 JSON 解包，可沿既有 Markdown/bare URL 方式处理；只有明确的原文链接标题才填 title，否则 title=null、name 为校验后的 hostname。未认识的 structuredContent 私有形状保持 unsupported，不猜字段。
-5. URL 校验拒绝 userinfo、非 HTTP(S)、loopback/private/link-local/reserved IP、localhost/内网名称等；不自动请求任何来源、资源或嵌入内容，不解析模型续答生成的 URL 为来源。允许 hostname 只说明已做格式/地址分类，不能声称已验证其 DNS/公网可达性。先校验全部有界候选的关联性，再选最多 3 个来源，而非先取前三条；公开资料优先匹配问题的原始/官方来源。没有可核对来源返回 insufficient_sources（对外归为 limited/failed）。天气候选须核对显式城市、请求日历日及当前实况/目标日预报的区别：明确异地、日期不符或无关报道不得作为天气事实传给 GLM；未知归属/时间的候选只能说明限制。来源有 URL、isError=false、oneDay 命中或文章今天发布均不足以确认实时天气；原文“今天”只能按该来源已确认的绝对日期理解，不能改为检索日。没有可信当前观测则 status=limited，明确“无法确认此刻天气”，不得给出确定当前温度；不得把鸡西气温归给北京或把 11月9日文章的“今天”当11月10日。上述实际样本中保留日期相关报道作为有限资料也不等于当前观测成功。providerTime 按数据模型处理，不把 refer、检索相对时长或 retrievedAt 填为天气观测时间。
-6. 初始工程预算：单次总 deadline 15 秒（含初始化、list、call、读取），每轮最多一次远端搜索调用，全插件搜索并发 1，忙时直接返回 busy、不排长队；自动重试 0、自动 fallback 0。所有底层工作须传递合成 signal 并在 abort 后收束、关闭自有连接。HTTP/每层解包文本上限 1 MiB、模型 evidenceText 总量 12,000 字符、最多 3 个来源、单个摘录最多 2,000 字符；达到模型展示边界标明截断，不截成伪完整证据。数值是本候选的保守初始工程配置，不是官方实测性能或 SLA，有限真实验证可据证据调整。
-7. owner 设置复用 POST settings 的既有权限和 `{ok:false,error}` 语义；state 返回启用范围、凭据配置/错误和服务“未验证/上次可用/不兼容”状态。配置可用不等于服务一定成功。GET state/页面挂载/保存为关闭均不得请求 MCP；关闭或凭据不可用立即取消旧查询并撤销新 admission。保存失败保持原文件与原内存，沿用已有同目录独占临时文件/rename 保护。
-8. 舞台接口由 `src/stage/protocol.ts` 维护类型，`src/body/server.ts` 的 SSE 入口读取客户端能力并传给 `Stage.subscribe` 的连接信息；`runtime.ts`/`index.ts` 提供安全的主人输出能力投影，既有 `preview` 语义保留。具体字段名在这些类型化边界内收敛；固定能力参数与接纳/失效规则只按下文“舞台能力与连接归属”实现，不另建 build 身份系统或把能力声明当认证。
-9. owner 控制接口 `POST /api/dsh-livestream/query/cancel` 接收 `{sessionId, queryId}`，沿现有 Harness owner 鉴权；模型不获得这个工具。无效输入拒绝，目标不是当前直播会话/最新匹配查询、或查询所绑输出 epoch 已变化时返回 409，不能取消新目标或不相关查询。先取得匹配 lease 并同步失效，再处理中止；重复取消同一已失效查询幂等，不清空其他观众待处理事件，不停止游戏/guest或共享服务。只有原生 session 自身事件与当前 agent 状态能证明仍在该查询 turn 时才请求 `agent.cancel({kind:'user'},{keepInbox:true})`；仅凭最后一次 pre-step 缓存不足时宁可只撤销插件输出。生成已完成时仍必须撤销该查询尚未播放的 TTS、mic 队列及浏览器回调。UI 的“停止生成”保留原生语义，不能用 idle 状态下该操作返回 accepted 来宣称待播回复已撤销；查询区入口承担此时的验收。
-
-#### 时序与数据流
-
-```mermaid
-sequenceDiagram
-    participant H as 现有Topic与Harness轮次
-    participant A as 本地查询工具与输出lease
-    participant M as 固定MCP搜索
-    participant G as 现有GLM
-    participant S as yovoice与舞台
-    H->>A: 当前输入、turn、取消signal
-    A->>A: 启用/凭据/归属/参数/次数校验
-    A->>M: initialize、listTools、唯一允许的callTool
-    M-->>A: 不可信资料/失败
-    alt lease仍有效
-        A-->>G: 有界tool_result、来源与时间限制
-        G-->>A: 带turn的助手正文
-        A->>S: 校验后合成，返回后再次校验，队列执行前校验
-    else 取消、换目标或结束直播
-        A->>A: abort并丢弃晚到结果
-        Note over A,S: 无该轮新增正文、音频或舞台事件
-    end
-```
-
-图只表示本 Feature 的 live 查询输出，不重新定义 B 站游戏线。正文的 lease 检查适用于每个 await 之后；舞台端若已有 say 事件进入待播放状态，也须带归属并在失效时撤销尚未播放的该轮内容。仅停止服务端后续广播不能证明已排队内容不会开播；已开始播放的历史内容按产品规则无需追溯撤回。图未经渲染预览，以上契约为等价文字说明。
+远端text最多两层JSON解包、最多32行title/link/content字符串和可选refer；类型/大小/第三层/损坏拒绝，refer不作时间或来源。普通Markdown/bareURL解析保留，但不对尚转义JSON用正则补救。先核全部有界候选关联再选最多3来源，优先原始/官方公开资料。来源URL拒绝userinfo/非HTTP(S)/IP literal/内网保留名称，不请求来源/资源，也不将GLM生成URL作为证据；格式分类不证明DNS/公网可达性。缺来源/过期/矛盾资料按FR03降级，不把检索时间当发布或观测时间。可选GET405由SDK正常处理，其余HTTP失败保留失败即停。
 
 ##### 舞台能力与连接归属
 
@@ -140,115 +94,50 @@ sequenceDiagram
 
 SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内容、其计时器和 Audio/pendingClick 回调，令旧连接归属失效；每个异步回调在产生字幕或开始播放前再校验。重连先处于等待 hello 的状态，hello 同步当前输出身份后才接纳新连接的有效事件，不重播或重新授权已撤销内容；Stage 的 latest 状态不得缓存并补发 say。已经开始的内容按产品约定可完成，game/guest 保持原语义；创建 Audio 或调用 play 不等于已经播放，已显示字幕也不授权取消后再开始尚未播放的音频。测试必须阻塞 Audio 开始，断流期间取消并同 build 重连，再释放 metadata/play/fallback，断言旧字幕与新播放均为零；另以旧脚本延迟首次 SSE、宿主升级、再释放 hello 的交错证明缺失能力连接收不到新查询语音。只做服务端队列测试或比较两次 hello.build 都不能代替这些验证。
 
-#### 横切质量设计
+#### 需求到契约与验证（全部归T001）
 
-- 错误代码映射为短中文下一步；provider 错误原文不直接进入模型台词/公开日志。资料包明确是不可信引用，不能改变系统身份、权限、工具集合、凭据或配置；不创建资源链接抓取回路。
-- 归属在接纳时冻结，晚到失败也不能广播“失败了”到新舞台。turn 正常结束和取消分开；自然完成后仍可播已接纳语音。取消/目标切换/end ending/fully offair 都必须以观测的新增输出数验证，不能把调用 abort 当结果。
-- 来源口播与 UI 共用 QueryResult，不让 UI 成功状态代替真实语音合成/播放。有限真实验证记录实际 latency、来源/时间字段和限制，不能根据 metadata 成功删除缺口。
-
-#### 风险与取舍
-
-| 风险 | 影响 | 缓解措施 |
+| 规格/场景 | 契约 | 必要验证 |
 |---|---|---|
-| MCP 权益或实际结果不支持所需天气/资料 | 真实旅程受阻 | 尽早由主 Agent 在明确预算内串行真实验证；无结果保留失败证据，不伪装其他客户端、不换付费服务 |
-| 真实天气样本混有北京旧报道、异地气温、未来预报，且无独立时间字段 | 不能确认当前北京天气，URL/oneDay可能造成伪成功 | 已观测双层JSON按字段解包；地点/日期/天气类型逐候选核对，错配不传天气事实；unknown/limited如实说明；新查询/固定域名策略尚未实测，天气成功样本缺口保持未通过 |
-| 取消后 SDK/GLM/TTS/浏览器回调继续完成 | 晚播/跨目标 | turn/output lease、各提交点检查、浏览器待播失效与延迟替身断言；保留必要游戏谢幕兼容 |
-| 断流丢失 invalidate，或旧脚本第一次收到新宿主 hello | 同 build 重连后晚播，或误把旧舞台当支持新协议 | 按“舞台能力与连接归属”显式声明/过滤能力，onerror撤销待播及旧回调；两个交错试验必须覆盖，部署显式刷新确认，不把服务端build/mtime当页面JS身份 |
-| 新依赖由父 node_modules 偶然解析 | 发布后缺包 | 精确生产依赖/lock、隔离构建与包内容/解析检查，不使用 upstream 私有源码 import |
+| FR01/03，SCN01/02/04 | 区域内单站观测与日期模式预报 | 0℃/VRB、秒时间、新鲜度/站点限制、跨日/单位/覆盖、不伪造极值；真实adapter成功 |
+| FR02/07，SCN03/09 | 可信地点→精确行政身份→完整PIP | city/state直辖别名、省/叶错配、歧义、holes/MultiPolygon/边界/邻区站、非法坐标 |
+| FR04/06，SCN01/05/08 | 原生预设/工具admission/QueryResult | 三工具及原文参数、native tool_result续答、UI来源时间、真实GLM/语音/播放分层 |
+| FR05，SCN06 | 固定源/15秒/global busy/缓存/无重试 | 200/204/304/400/429/5xx，损坏/超限/空/过期/缓存reload/原子失败/abort |
+| FR03/07，SCN05/07/09 | public MCP SDK与安全来源 | 原文query/schema/GET405、双层profile/公开许可、可核对URL必要参数/凭据脱敏 |
+| FR08/09，SCN10～13 | QueryTurns/主人取消/lease/舞台能力 | geo/天气延迟与缓存命中后取消；query/model/TTS/队列失效；三模式及断订阅后新主人query；旧舞台/断线交错 |
 
-#### 需求覆盖
+来源可行性证据与早先失败见验证记录。主要风险为过大/缺失行政几何、无站/过旧观测、源截断/变更与cache异常，均不授权跨区借站或切源。严格地名格式和机场站覆盖是首版明确局限。
 
-下表为唯一“验收 → 契约 → Task → 计划验证”关联；所有行均属于 `FEAT-004-T001`，SC-001～03 按对应场景/证据层汇总。
-
-| 规格 / 场景 | 设计契约 | Task 内计划验证 |
-|---|---|---|
-| FR-01 / SCN-01、02 | 稳定天气输入、固定搜索、地点/日期/类型匹配及 limited | 天气/明确日期/不支持日期 fixture；实际北京查询的鸡西页面、旧“今天”、未来预报须排除/受限；真实当前天气成功样本仍缺，不能以合成数据代替 |
-| FR-02 / SCN-03 | 宿主 Topic/message 绑定、逐字地点依据、同参与者澄清 | A/B 交错、缺城市、同名区划、无可靠身份、旧会话；不发出含另一人的城市的远端请求 |
-| FR-03 / SCN-04、05、07 | QuerySource/Result、双层解包数组profile、URL过滤、providerTime unknown | 用脱敏真实profile构造提交fixture，断言两层解包后标题/摘要保真、URL无JSON转义残留、refer不是来源/时间；第三层/损坏/超限/错类型拒绝；天气错配、缺时间和公开许可来源逐字核对 |
-| FR-04 / SCN-01、05 | 同一 Harness native tools→tool_result→续答→现有 say 旅程 | 真实 adapter/loop + 模型协议替身捕获两步请求；再分层记录真实 GLM、yovoice/本地舞台及正式观众端缺口 |
-| FR-05 / SCN-02、06 | deadline/一次/串行/无重试/错误分类 | 假时钟与忽略 abort 的延迟服务；timeout/error/empty/insufficient/schema drift；精确远端调用计数与收束 |
-| FR-06 / SCN-08 | 默认关闭、条件工具集、严格凭据、有效 persona | 旧设置、缺/错/撤销 key、服务存在不回退env；实际模型请求的 schema与提示一致；关闭中途生效 |
-| FR-07 / SCN-09 | 固定URL/远端工具/参数、Node-only SDK、Bili原隔离、通用query反馈入口 | 恶意 tools/list、MCP注入/重定向/资源、Shell/文件/账号/私信/任意URL请求零执行；三模式schema/执行断言，抖音/彩排query不调用Bili专属toolCall/note |
-| FR-08 / SCN-10、11、12 | 请求/正文/TTS/待播统一lease，ending与offair；舞台能力与连接归属 | 在query、GLM续答、TTS完成/队列分别延迟、取消/换目标/完成下播再释放；新增正文/合成提交/舞台事件/新播放数0，谢幕不受误伤；断流丢invalidate后同build重连释放旧Audio回调仍无晚播；旧脚本延迟首连后遇宿主升级仍收不到owned查询语音 |
-| FR-09 / SCN-13 | 断开前旧查询快照失效，订阅连接与有效本地舞台分开 | 分别释放断开前主人/观众查询及待播回调，新输出0；断开后新平台输入0，同一保留会话的新主人本地查询成功；Bili游戏回归 |
+遵守 [Nominatim政策](https://operations.osmfoundation.org/policies/nominatim/)：识别UA、聚合≤1次/秒、缓存、可切换服务、署名，只用于明确天气请求，无自动补全/批量/通用地理工具。遵守 [MET接口/缓存说明](https://api.met.no/weatherapi/locationforecast/2.0/documentation)及[使用条款](https://api.met.no/doc/TermsOfService)。
 
 ### 实施计划
 
-**关联产品上下文**：REQ-006；设计及覆盖以本文上文为准。
+同一 Terra 承接唯一T001的TDD/必要验证/修正；不删除旧失败或用Plan修订重置停止规则。先为真实profile/地域/时间写红灯测试，实现最小adapter与共同dispatcher/缓存，再接现有console/native/E2E fixture并移除旧天气字符串生产路径。
 
-**创建日期 / 状态**：2026-11-10 / 已接受的有效实施方案，Build 待最终验收。
+**最早真实增量（T001）**：在隔离DSH_HOME的生产source factory，对明确中国城市执行一次当前天气与一个覆盖日期预报，复用公共地理缓存，核对polygon、实际观测/预报时间与单位、来源及GET/缓存计数。不等全部回归才检验来源；不连接共享Harness/Stage/DyHub、不改active lib/播出，provider成功不代表GLM或舞台。
 
-#### 背景
+继而用正式 `dsh-livestream-douyin` 预设验证新天气证据的真实GLM自然工具选择/原文参数/续答。原公开题GLM与17.28秒MP3只在未变路径保留适用性，不代替新天气口播/舞台/观众。已有用户授权“这类不用跟我对齐，全权授权给你”允许本研发链主Agent安排有界真实测试，不再逐次预算询问；串行、失败即停、无服务请求重试或外部写入，仍不播出/重启共享服务。worker可以执行本brief明确限定的真实provider增量，真实GLM/TTS由主Agent安排。
 
-由同一 Terra 实现者连续完成一个纵向 Task，涵盖最小查询旅程、必要生命周期修复、设置与证据 UI、测试及使用说明。代码实现前主 Agent 接受此契约；过程中不为单个文件/命令再拆派。
+更新 live-query 固定目标和显式计数，分别记录geocode/current/forecast/MCP search/model/synthesis；缓存命中可0HTTP，移除每个天气必须一次MCP search的前提。保留总5分钟、失败即停、每题模型≤2次/输出≤1024token、每题一次工具、本地隔离scope/DSH_HOME/日志脱敏/资源清理；具体真实测试预算由执行前主Agent自限，不编造用户逐项确认。公共天气cache留在自有忽略目录以免临时会话清理导致重复请求：native验收通过内部runner/source factory的cacheFile依赖注入直接写该文件，正式apply仍使用DSH_HOME默认路径，不新增公开路径配置。DSH_HOME/session继续临时清理，不用symlink/hardlink/轮末复制或持久化整会话目录；离线cache每次独立。导入先前真实公共cache时保留原字节与时间，只算复用既有资料，不算新HTTP成功证据。
 
-#### 目标 / 非目标
+修复 scenario.ts 清空所有source URL search/hash导致Google goto目标丢失的验收投影：有界保留公开目标/必要参数及安全锚点，凭据类参数/已知secret（含嵌套URL）脱敏；无法安全保留要明确不可独立核对。不跟随URL，不改生产搜索授权。新增回归。
 
-- **目标**：满足上表全部场景；先给出可检查的本地隔离旅程，再分层核实真实服务、GLM、yovoice与舞台，保持测试与正式播出结论分开。
-- **非目标**：唯一范围外规则引用产品 OUT-001；不改 upstream、不改变现有模型/声音/共享部署，不把独立 REQ-005/008 纳入本 Task。
+必要验证：
 
-#### 技术栈
+- 单元红绿：行政实体/完整几何/PIP holes/边界/邻区、MET实际四位点的区域归属；bbox外扩/顺序；站时点去重/同组冲突、0℃/VRB、时间单位/覆盖；固定URL/无凭据headers/body上限；缓存reload/过期/容量/损坏/深度/写失败/别名/304、取消及忽略abort下共同busy。
+- 复用实际SDK与原生Harness loop、预设/模型协议fixture；更新queryHarness、API/console、live-query诊断，测试隔离source实例/cache，不新增生产reset。原查询取消/正文/TTS/舞台归属、断订阅和Bili回归全部保留。
+- 相关Vitest与V8 coverage，仅排除既定macosTts.test.ts；新模块加入include，固定基线显式本轮报告，变更行≥80%/分支≥70%。旧402/8skip不覆盖新后端。typecheck/build和包解析在隔离副本，禁止覆盖活跃lib。
+- 现有e2e-query更新当前/日期天气、来源、失败、启停/取消；实际Console/routes/native SDK/AgentLoop/StageServer，外部服务替身，1440×900与375×812，workers1/retries0/现有Chromium/无agent或真实模型。保留Stage能力与旧脚本/断线同build交错测试。共享3080/3081/7390/8757及非fixture外网访问0，归档report/JUnit/trace/截图/日志和失败证据，只清自有资源。
+- README全局LIVE-QUERY-WEATHER/SEARCH/CONTROL导航→Mac详细指南→实际UI入口核对参数来源、默认关闭、GLM与天气凭据区别、站覆盖/时间/缓存/geo部署/署名/恢复；计划命令不能冒充实跑。
 
-沿用 TypeScript 6、Node ESM/Node22 目标、Harness 0.2.2-rc.1、React18/现有 Drawer 与 dl CSS、esbuild、Vitest3.2.4、e2e0.23.0/@e2e-dev/web0.15.5。新增精确生产依赖 `@modelcontextprotocol/client@2.2.0`；无数据库、UI框架或新运行时。
-
-#### 实施层决定
-
-采用默认 TDD：先为真实边界写失败断言，再实现最小路径。最早增量不等待所有回归，但其展示不结束 Task。复用现有 `test/e2e-douyin` 的真实控制台/routes 与隔离资源约定；为缺失的真实 Harness 工具循环增加有界 fixture，不能只 mock `ctx.tools` 后声称模型用过工具。upstream llm-pi-ai mock-server/test-support 可作接口参考，不复制成生产依赖或写 upstream。
-
-#### 风险 / 取舍
-
-真实 provider 需要有限外部授权和权益核实，由主 Agent 管理，worker 不调用；它可与已授权离线实现准备并行，但真实成功依赖不能拖到全部实现末尾才发现。两次无新增证据的实现/修正后遵循父 AGENTS 的停止规则，不靠换名字/拆 Task 重置计数。构建不得覆盖活跃 `lib`。
-
-#### 实施阶段
-
-##### 阶段 1：最小查询旅程
-
-在 `FEAT-004-T001` 中先完成本地工具、固定 SDK adapter/替身、实际 Harness 工具循环与 safe evidence 投影；只补该旅程必需的配置和归属接口。**最早可检查结果**：隔离控制台输入“北京天气如何”，模型协议替身实际收到工具 schema，发起 `weather_lookup`，固定 MCP 替身收到一次允许调用，随后模型收到来源 tool_result 并产生正文，控制台/舞台展示正在查及来源；该 fixture 的新舞台以既定能力握手，记录非preview输出能力和本次连接/输出归属。提供运行入口、fixture产物、版本/工作树、请求/事件断言；它只证明隔离完整链路，不证明 GLM、实际天气或 yovoice声音。覆盖 FR-01、03、04；设计：固定适配器、证据与归属组件。
-
-主 Agent 已完成用户授权的两次真实 provider 调用，并据此收敛上述双层 JSON profile 与天气过滤契约；公开资料层有 OBS 许可证成功样本，当前天气层仍不满足成功条件。将该脱敏结果的最小、带来源合成版本纳入已提交测试资产，不依赖父工作区原始证据才能运行。更简明天气 query/固定天气域名策略仍待以后获准的有限真实验证；实现者不得自行发真实搜索、GLM或TTS。没有可信当前天气结果时明确记录该层未通过，继续不依赖它的隔离工作，不猜字段、不新增调用。
-
-##### 阶段 2：完整故事与异步边界
-
-同一 Task 完成两意图的设置/凭据状态、persona/每轮能力一致性、错误/空态、参与者澄清，以及上表全部失效时点和 Bili/断订阅回归。SSE服务端能力过滤、主人输出状态和浏览器连接失效按唯一舞台契约完成，包含两种新增交错试验。新增来源/输出状态控件仅复用既有页面，检查键盘/焦点、desktop1440×900与narrow375×812。覆盖 FR-01～09；设计：上文全部组件。
-
-##### 阶段 3：验证、使用文档与收尾
-
-复用项目实际命令入口，补提交测试资产、按固定基线生成变更覆盖率，隔离构建与包解析，记录使用指南实际操作范围。真实外部层由主 Agent 独立串行执行并注明缺口；Build 证据不替代正式独立 Validate/Review。覆盖 SC-001～03；设计：需求覆盖表。
-
-#### 需求覆盖
-
-见架构设计末尾的唯一关联表；没有额外准备/收尾 Task，三个实施阶段均由同一 `FEAT-004-T001` 拥有。
+独立Validate/Review/Ship仍需对应候选commit，不能以limited/fixture/MP3/连接关闭SC002缺口。回滚采用关闭查询和既有授权的代码回退，不删settings/credentials或停止共享服务，不借删缓存规避限频。
 
 ### 工程任务
 
-**输入**：上述设计与实施计划；Requirement 已 ready。
+保留唯一 `FEAT-004-T001 [US1/US2/US3] 接通有来源查询并验证直播生命周期隔离`，无新Task/依赖/状态。完成条件为上述FR/SCN关联与来源/原生/UI/安全/生命周期检查具备当前相符证据，包/构建/覆盖通过，经主接受；未通过真实层具体标注，不称完整上线。
 
-**组织**：仅一个完整纵向 Task，无并行 Task、无依赖。
+本次新增/修订代码边界：`src/body/readOnlyQuery.ts`、新 `weather.ts/weatherCache.ts`；`src/dsh/agent.ts`仅查询依赖组合，`runtime.ts`仅dataDir/owner诊断组合；`src/console/console.tsx`仅天气证据/时间/帮助/署名；shared/readOnlyQuery.ts仅必要兼容说明；包package.json/根pnpm-lock.yaml加入已批准Turf。保留既有QueryTurns日期修正，不更改其权限语义、preset/credentials resolver/Stage协议或其他业务。
 
-#### 用户故事 1～3：有来源的只读查询与有效输出
-
-- **FEAT-004-T001 [US1/US2/US3] 接通有来源查询并验证直播生命周期隔离**。
-- **输出**：两意图在同一现有旅程内可用，所有必要安全/失败/生命周期分支具备确定性证据；未执行的真实层明确保留，不能将全部 Feature 标为验收通过。
-- **代码范围**：`packages/dsh-livestream/src/shared/readOnlyQuery.ts`、`src/body/readOnlyQuery.ts`（新）；现有 `src/dsh/{runtime,index,agent}.ts`、`src/body/{show,stage,server}.ts`（server为SSE握手/订阅过滤入口）、`src/stage/{protocol,store}.ts`、`src/console/{console.tsx,client.tsx}`（样式位于现有 client 内）、`cordis.patch.yml`；仅与查询接纳/输出失效有关的 `src/core/attention/topics.ts` 或 `core/topicText.ts` 增量。上述 `src/` 均相对包根。依赖范围为包 `package.json`、根 `pnpm-lock.yaml`；测试范围为该包 `test/`、`vitest.config.ts` 与必要 e2e query 配置/launcher；构建脚本仅在隔离输出确有需要时作最小变更。新文件名称是计划，不是已存在资产；未列业务目录不授权顺带重构。
-- **文档范围**：根 `README.md` 全局 usage 入口增加稳定 `LIVE-QUERY-WEATHER`、`LIVE-QUERY-SEARCH`、`LIVE-QUERY-CONTROL` 导航，链接现有 `examples/macos-yovoice/README.md` 的详细操作。说明 actor、现有控制台入口、主人启用/凭据/服务条件、示例城市/日期、默认关闭、失败/撤销/缺时间和支持范围，并写明旧舞台需显式刷新、主人如何核对输出/preview/需刷新状态。参数唯一来源是 shared schema、固定 provider profile、stage protocol及该详细指南；协议能力参数由舞台JS声明，不要求主人手改URL，key只给引用名。保留旧 Mac/声音/抖音 usage 导航，不复制产品规格。
-- **完成条件**：上文每一行有对应运行结果；设置兼容/安全失败/真实工具循环/晚到输出和既有三模式隔离通过；新增舞台能力过滤与两种断线/升级交错均有业务断言，缺能力客户端不能当已验证输出；包依赖与隔离构建/typecheck通过；变更源码行80%/分支70%采用现有 coverage-diff；没有用提示词代替调用/输出断言。必要真实层缺证据时上报具体缺口，不伪称全链路完成；由主 Agent 按产品 SC-002 判定后续验收。
-- **验证范围**：下列计划为本 Task 的必要验证，不是本轮执行记录。
-  - Vitest 覆盖 QueryRequest/Result/profile、严格secret、设置持久化与失败保护、SDK固定请求、预算/并发/取消、正文/TTS/队列/stage失效。provider profile fixture 覆盖已证实的两层JSON字符串/9行结构、title/link/content映射和refer忽略、第三层/损坏/超大小/超行数/错误行类型拒绝，以及北京查询混入鸡西、前日“今天”、未来预报时返回limited而非当前温度；普通文本fallback不得接收仍转义的JSON。复用并扩充 douyinAgent/localRehearsal/agentTargetRetirement/showTargetRetirement 等现有测试；新生产模块加入 coverage include。全部使用临时 DSH_HOME、假key与自有动态端口，断言共享3080/3081/7390/8757及真实外部访问数0。
-  - Harness 集成 fixture 走实际 Agent loop/native tools及实际模型 adapter，以真实协议替身驱动 schema → tool-call → tool_result → 续答；捕获各步 requests。真实 Show/Stage 与合成/音频替身验证归属，不用 e2e-douyin 的 push/synthesize stub 冒充全链路。必须检查 query、模型续答、TTS返回/排队三个释放时点，包含服务忽略abort，取消后新增输出数0。
-  - 通过真实 `StageServer` SSE handler/`Stage.subscribe` 检查能力参数缺失、未知、正确，以及preview与混合新旧连接；只把owned live事件发给能力匹配连接，legacy game/guest行为保留，不降级补发，不缓存/重放say。主人状态精确区分各连接能力；不能只测伪造订阅选项而绕过server实际入口。
-  - tester-army/e2e 的已提交 query 旅程覆盖启用/保存/刷新、缺凭据、天气与公开搜索成功、失败/空态/来源不足、关闭和取消；保留实际Console/routes，fixture拥有Stage与服务替身。Chromium沿已有缓存，不自动下载；两种 viewport；workers1/retries0/read-only strict cache、纯locator无agent步骤，模型预算0。归档 `packages/dsh-livestream/.e2e/feat-004-{build,validate}/` 的report/JUnit/trace/截图/fixture日志，保留失败产物，数据/端口只清理本次所有的资源。
-  - 在同一已提交e2e query fixture验证“舞台能力与连接归属”中的两个交错：阻塞真实stage store的Audio开始，SSE断流丢invalidate、同build重连后释放metadata/play/fallback，旧字幕/新播放均为0；旧脚本延迟首次SSE跨宿主版本变化后仍没有能力声明，收不到新查询语音，主人状态需刷新。记录实际请求能力、连接/输出身份、事件接纳及播放调用断言；截图/hello.build比较或浏览器缓存推断不能代替这些结果。断线后已开始内容的例外、legacy game/guest及正常新连接输出一并回归，无新增基础设施Task。
-  - 使用项目已验证入口：`npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check`；Vitest/coverage入口和e2e完整调用形状见 project.md。Build核实本版本CLI支持后，将coverage输出指向 `coverage/feat-004-build/`，独立Validate用 `coverage/feat-004-validate/`；变更覆盖固定基线为本文基线，必须显式给本轮report，不能用FEAT-001默认旧报告。新增选项/配置须实际验证后写操作指南，不把计划当执行证据。
-  - `test/macosTts.test.ts` 明确排除：此前触发系统真实 `/usr/bin/say` 且 MP3/ffprobe 问题尚未解决，当前不修改该路径。运行剩余相关 suite/coverage，记录实际收集数/排除项，不能写“全套通过”；其他新失败按证据归因，不能继续扩大排除。
-  - 构建在包的隔离复制目录执行已存在 `node build.mjs` 入口，包含所需src/stage/assets/package/patch；依赖解析指向本轮锁定的隔离依赖环境。输出只写该副本lib；禁止在活跃包目录运行 pnpm build，installed plugin的lib symlink仍被共享Harness使用。检查四个bundle、Node-only SDK、发布package依赖/打包内容；只读现有活跃lib，不覆盖或重载服务。
-  - README按文档入口实际操作并记录环境/输入/参数来源/终态；合成使用与真实目标分开。真实provider天气/资料、真实GLM工具续答、yovoice音频与本地播放分别记录，正式观众端另列未执行，未经授权不正式播出、不批量花费。保留主Agent已有metadata观测层，不升级其证明范围。
-- **依赖/执行顺序**：无Task依赖；同一Terra按三个实施阶段连续完成与修正。首个可开始的Task为本Task。没有第二个实现者、额外基础设施或未来Task占位。
-
-#### 回滚与发布观察
-
-主人关闭两项查询即可撤销新 admission并取消在途查询；不影响既有模型/声音配置和订阅。代码回滚使用经确认的上一版本部署流程，不重写用户设置；新增字段旧版本可忽略，不删 credentials、不操作共享进程。真正加载新插件/重启/正式播出均由主 Agent 在现有授权内协调，worker不执行。加载新版本后显式刷新旧舞台，并从主人输出能力状态与实际SSE请求核对所需协议；缺能力/仅preview/需刷新时不报告查询音频已可播放，不以首次hello.build或mtime替代。该检查不授权本阶段操作共享舞台。
-
-产品观察计划只引用 REQ-006“发布后观察计划”；技术侧观察固定预算是否适用、source/time缺失、schema变化、错误类别、被丢弃晚到输出及权限拒绝计数。失败按现有Requirement/工程记录回流，不另建状态/指标数据库。
+测试边界：包test/readOnlyQuery、weather/cache、受影响queryHarness/queryPreset/API/console、test/live-query/**、test/e2e-query/**、vitest.config.ts及必要query E2E配置/launcher。文档边界：根README、examples/macos-yovoice/README及.env.example。主Agent维护本上下文和state，worker不得修改state/index/branch、提交推送或改upstream。阶段结果报告实际命令/版本/工作树/缺口，请求状态仅按brief allow-list；Build证据不代替独立Validate。
 
 ## 实现记录（实际）
 
@@ -279,11 +168,101 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 - **隔离构建**：源码复制到 `/private/tmp/feat004-build-stQngL/repo`，使用隔离依赖运行 `npm_config_manage_package_manager_versions=false pnpm --offline --store-dir /private/tmp/feat004-build-stQngL/store --filter dsh-livestream check`、包目录 `node build.mjs`、`npm pack --dry-run --json --ignore-scripts --cache /private/tmp/feat004-build-stQngL/npm-cache` 均退出 0。四个 bundle、`stage/index.html`、CSS 和 patch 存在；两个 Node 入口可导入，SDK 解析到隔离环境的 2.2.0；浏览器 bundle 不包含 SDK。一次包检查误写为 `lib/stage/index.html` 失败，核实实际包路径为 `stage/index.html` 后检查通过。活跃包 `lib` 未构建或覆盖。
 - **真实层缺口**：本 Task 未调用真实 MCP/GLM/TTS/yovoice 或正式播出。主 Agent 此前两次授权的只读 provider 样本仅证明公开 OBS 查询可得来源；天气混杂旧/异地结果，新查询和过滤未做真实调用，可信当前天气未验证。真实 GLM 工具续答、yovoice 合成与播放、正式观众端仍需独立授权和验证；不可将离线替身视为 Feature 全链路通过。独立 Validate/Review/Ship 尚未执行。
 
+- **首次真实限量执行**：用户明确批准后，主 Agent 从固定本机凭据引用加载 key，在隔离入口执行 `node test/live-query/run.mjs --real --approve=search:2,model:4,tts:1,seconds:300`，退出 1；没有重试或追加请求。实际 GLM 请求 3 次、搜索 1 次、yovoice 0 次：首题“北京当前天气”经真实 `weather_lookup` 和 GLM 两步续答，取得中国天气网链接但观测/预报时间未知，结果 limited，模型说明无法确认当前天气；此为工具调用与有限资料续答的真实证据，不是可信天气成功。第二题在首次模型请求后停止，现有记录仅有 phase=scenario_2/failure=stopped，未保留实际工具参数或结束原因，根因未知，不能推断公开搜索服务失败或生产参数校验错误。该轮未合成音频、未播放舞台或向观众播出，脚本子进程已退出、临时会话已清理；共享服务未重启。脱敏证据 [acceptance-real-20261110.json](../../../smoke/readonly-tools/acceptance-real-20261110.json)，SHA-256 `8fc708409d9428c1cb403d6657715d5555600088ad3b5cb5cb142b3cacf9ddd3`，对应 efa2b20 加当时未提交验收入口；后续诊断改动不继承此次真实通过结论。失败即停约定已执行，后续真实调用需重新明确预算，Task 继续 in_progress。
+
+- **追加授权内第1轮诊断**：主 Agent 执行同一真实入口，退出1，实际模型3/搜索1/语音0。天气仍limited并完成GLM续答；第二题确实调用public_search，参数为string、无额外字段，但不匹配固定原问题文字，failureCode=tool_input_rejected、queryStatus=not_started，因此不是该题的搜索服务失败。参数的非原问题内容按约定省略，未据占位符猜词。脱敏 [result.json](../../../smoke/readonly-tools/diagnostic-round-1/result.json) 与逐题文件保留；执行前 [source manifest](../../../smoke/readonly-tools/diagnostic-round-1-source.json) 绑定 efa2b20 加85个生产/入口/配置文件的实际SHA。该轮没有生产preset，正式预设效果仍未知；主Agent据当前有效方案安排隔离组合修正，未放宽生产校验或自动重试，临时会话与子进程均结束。
+
+- **追加授权内第2轮：正式preset真实增量**：在主Agent接纳当前preset组合和29项定向回归后，以同一单轮限制运行真实入口，退出0：模型4/搜索2/语音1，两个独立抖音preset scope均释放。天气weather_lookup仍limited，GLM准确说明资料不足；公开题public_search实际参数为原文“OBS Studio许可证”，返回evidence并完成GLM续答；yovoice取得MP3，ffprobe确认48000Hz单声道、17.280秒。两轮追加合计模型7/搜索3/语音1，未超内部预算。脱敏 [result](../../../smoke/readonly-tools/diagnostic-round-2/result.json)、逐题记录及音频保留；[source manifest](../../../smoke/readonly-tools/diagnostic-round-2-source.json)绑定86个实际文件SHA。该增量证明正式preset的真实工具/续答和独立本地合成，未证明实际舞台播放、观众播出或可信天气成功。公开答案的来源归属仍需核对：当前证据URL去query会丢失google.com/goto的跳转目标，不能仅据口播认定官方来源已经验证。Task仍in_progress，未自动更新运行中的DSH。
+
+### 真实验收入口续接：离线实现与证据
+
+- **版本和写入边界**：在 `codex/macos-yovoice` / `efa2b20d39bca833488b7936f565a22086cb3888` 的现有工作树上接续同一 T001；新增 `test/live-query/` 入口和测试、修改 `queryTurns.ts` 的已定位日期交叠、更新 usage。没有更改其他生产模块、生命周期状态或在用 `lib`；原有未提交产品/状态修改保留。当前结果不是独立 Validate/Review，也不请求 Task 状态变更。
+- **先红后绿**：`/private/tmp/feat004-resume-date-red.log` 是以 HEAD 原始 `queryTurns.ts` 和新回归在单独临时目录复现的红灯，退出 1：27 项中 2 项失败，分别为“北京当前天气”和“北京目前天气”；前天、明天及混合时间意图均保持拒绝。修复只排除当前/目前文字中的交叠，不更改参与者、地点、日期或 lease 规则。原生双题 fixture 首次还实测模型地址以 `?beta=true` 结尾，以及在未结束隔离 Show 时直接更换 session 会失去查询能力；入口据此精确允许地址，并先结束自有 Show 再创建第二个 session。
+- **可运行入口**：在隔离副本包目录运行 `node test/live-query/run.mjs`，退出 0，输出两题分别调用 `weather_lookup` / `public_search`，结果 `limited` / `evidence`，模型发送 4、搜索 2、合成 0；来源 URL/时间、限制、替身答复和执行阶段保存在其输出所指临时 `result.json`。天气 limited 不是当前天气成功，替身结果不是实际 GLM 或真实资料证据。未设置真实模式、未读取真实 key、未连接真实端点、未访问共享端口；音频、舞台播放和观众播放均未验证。
+- **离线安全和协议检查**：`./node_modules/.bin/vitest run test/queryTurns.test.ts test/live-query --maxWorkers 1` 曾退出 0（6 文件 46 项），覆盖固定请求预算、非法目标与端口、最多一段 120 字、工具结果失败后禁止模型续答、软截止、隔离 session、真实 `YovoiceClient` 在失败与调用者取消后仅清理本次 job，以及默认模式不传入环境中的假凭据。随后针对 MCP session header 的实际 SDK GET 和真实参数缺失/错误预算拒绝运行 `./node_modules/.bin/vitest run test/live-query/mcp-adapter.test.ts test/live-query/entry.test.ts --maxWorkers 1`，退出 0（3 项）；没有真实网络请求。入口在总时限内为清理预留 30 秒，强制结束子进程时报告清理未知；语音音频文件不代表播放。
+- **累计检查**：隔离副本 `DSH_HOME=/private/tmp/feat004-resume-test-home GLM_CODING_PLAN_API_KEY= DSH_LIVESTREAM_LOCAL_REHEARSAL=0 ./node_modules/.bin/vitest run --coverage --coverage.reportOnFailure --coverage.reportsDirectory coverage/feat-004-resume-build --exclude test/macosTts.test.ts --maxWorkers 1` 在允许自有 loopback 的环境退出 0，74 文件、401 通过、8 跳过，日志 `/private/tmp/feat004-resume-coverage-loopback.log`。第一次沙箱运行退出 1，`listen EPERM 127.0.0.1` 导致依赖自有监听的测试失败/跳过，保留 `/private/tmp/feat004-resume-coverage.log`；不将它归因于业务逻辑。隔离副本 `npm_config_manage_package_manager_versions=false pnpm --offline --store-dir /private/tmp/feat004-build-stQngL/store --filter dsh-livestream check` 退出 0；包目录 `node build.mjs` 在该副本退出 0，生成四个 bundle，未触碰共享 lib。已核对隔离副本与工作树 `src/` 一致，并将覆盖报告路径映射到工作树；`node packages/dsh-livestream/test/coverage-diff.mjs 67d4df44e3c119b5a799029913cdef6c29c73aeb /private/tmp/feat004-resume-coverage-mapped.json` 退出 0，行 791/851（92.95%）、分支 462/588（78.57%）。累计覆盖后补充了 MCP GET、入口拒绝断言，并把待合成文字改为先脱敏再截断；最终相关 6 文件 46 项定向重跑通过，生产源码未再变化。
+- **尚未完成**：本次没有运行真实模型、MCP 搜索、yovoice 或舞台；真实层必须先由主 Agent 审核入口并获得明确预算授权。未重复未改变 UI 路径的既有 10 项浏览器 E2E；其证据不覆盖本次日期措辞的真实服务行为，也不替代后续独立 Validate/Review。当前脚本只是待评审候选，不能据离线通过推断真实天气充分、真实模型按预期调用工具或播放成功。
+
+**累计检查输入范围更正**：主 Agent 的输入比对发现，上述 401 项通过的隔离副本使用了较旧的 `test/queryPreset.test.ts`，缺少当前 HEAD 的 persona/schema 断言，故不能将该次完整结果表述为覆盖当前全部测试输入。按补正指令同步该测试后，双方 SHA-256 均为 `9386a471e609ee321c20aa6e5929aa835a56f78e8dd8f851afc4c3d09e1e40eb`；隔离副本中运行 `DSH_HOME=/private/tmp/feat004-resume-test-home GLM_CODING_PLAN_API_KEY= DSH_LIVESTREAM_LOCAL_REHEARSAL=0 ./node_modules/.bin/vitest run test/queryPreset.test.ts --maxWorkers 1` 退出 1，三个 preset 均因 persona 不包含 `weather_lookup` 失败。该测试读取的 `cordis.patch.yml` 也存在输入差异：工作树 SHA-256 为 `379225ac785037ae708f15b3378c4d1d14972ac7358fcbfb89ce13973fd8a0b2`，隔离副本为 `2ea63f5e58782c00808ab5cec032fcb8804d1676853661bbf3ba4498fcfd40ba`；工作树文件包含所需提示，隔离副本返回旧文本。此次补正未同步该配置或改变生产文件，待主 Agent 决定后续复核。保留 401 项原结果及先前失败，不把不同输入的测试通过或失败归属到当前工作树。
+
+**2026-11-10 续接修正与当前累计证据**：主 Agent 授权将当前 HEAD 已有的 `cordis.patch.yml` 同步到隔离副本；不修改工作树配置或断言。此前旧配置与新测试组合的 3 项失败保留在本段上方；同步后 `DSH_HOME=/private/tmp/feat004-resume-test-home GLM_CODING_PLAN_API_KEY= DSH_LIVESTREAM_LOCAL_REHEARSAL=0 ./node_modules/.bin/vitest run test/queryPreset.test.ts --maxWorkers 1` 退出 0、3 项通过（`/private/tmp/feat004-resume-preset-green.log`）。
+
+独立 review 核实 MCP SDK 2.2.0 可把固定端点的 GET 405 解释为不支持可选 SSE；之前 transport 把它当错误停止。实际 SDK fixture 改为 GET 405 后先复现 `failed` 而非 `limited`（退出 1，`/private/tmp/feat004-resume-mcp405-red.log`），然后只允许该固定端点的 GET 405 原样交还 SDK；固定端点 POST 405 和 GET 503 仍停止。`./node_modules/.bin/vitest run test/live-query/mcp-adapter.test.ts test/live-query/transport.test.ts test/queryPreset.test.ts --maxWorkers 1` 退出 0、17 项通过（`/private/tmp/feat004-resume-mcp405-green.log`）；实际 SDK 完成一次 `tools/call`，模型请求 0、搜索调用 1。该兼容试验不证明真实服务当前返回 405，也没有访问真实端点或新增 fallback。
+
+对当前工作树与隔离副本的 `src/`、`test/`、preset patch 和依赖/构建/测试配置逐文件 SHA-256 比对，174 项、差异 0；完整检查前后均一致。随后以 `DSH_HOME=/private/tmp/feat004-resume-test-home GLM_CODING_PLAN_API_KEY= DSH_LIVESTREAM_LOCAL_REHEARSAL=0 YOVOICE_API_TOKEN= YOVOICE_URL= ./node_modules/.bin/vitest run --coverage --coverage.reportOnFailure --coverage.reportsDirectory coverage/feat-004-current-build --exclude test/macosTts.test.ts --maxWorkers 1` 在隔离副本和自有 loopback 环境运行，退出 0：74 文件、402 项通过、8 项跳过；日志 `/private/tmp/feat004-current-coverage-loopback.log`。覆盖报告路径按先前方法映射到工作树后，`node packages/dsh-livestream/test/coverage-diff.mjs 67d4df44e3c119b5a799029913cdef6c29c73aeb /private/tmp/feat004-current-coverage-mapped.json` 退出 0：行 791/851（92.95%），分支 462/588（78.57%）。上一轮 401 项结果仍为历史证据，不代替此轮当前输入检查。
+
+生产 `src/`、构建入口及依赖未因本次 405 修正变化；上一轮同源码的隔离 typecheck 和 build 证据继续适用。UI 未变化，不重复既有浏览器 E2E；真实 GLM/MCP/yovoice、舞台及观众播放仍未获授权或未验证，Task 不因此关闭。
+
+### 结构化天气生产适配器最早真实增量（2026-11-11 本地时间）
+
+同一Terra在隔离source factory与独立公共缓存执行当前上海和2026-11-11预报；主读取并接纳[`structured-adapter-increment.json`](../../../smoke/readonly-tools/structured-adapter-increment.json)。真实请求严格串行，geo/AWC/MET各1次、均HTTP200，总3GET，GLM/TTS/共享端口/直播输出均0。当前结果为区域内浦东站ZSPD于2026-11-10T17:00:00Z的10℃（只代表站附近）；预报保留实际覆盖时点和MET模型更新时间2026-11-10T13:20:19Z，未制造全天极值。这证明当时未变的生产地理/观测/预报路径及真实数据可用，不证明正式预设GLM、缓存304、控制台或舞台播放。后续304窗口红绿、集成与累计检查仍在同一Task，不因增量通过标done。
+
+### 结构化天气来源核实（2026-11-11 本地时间）
+
+在用户“这类不用跟我对齐，全权授权给你”的测试授权内，主 Agent 使用有界、串行、失败即停的公开只读请求核实天气服务；不调用额外模型或语音，不连接/修改共享 Harness、Stage 或采集器，不向直播间播出。以下证据是来源可行性检查，尚非新适配器的生产或舞台验收：
+
+- [`source-diagnostic.json`](../../../smoke/readonly-tools/source-diagnostic.json)：现有 MCP 北京天气摘要缺明确绝对观测时间；旧字符串成功 parser 亦过于依赖合成句式。`limited` 合理，但该路径不能满足可信实况成功验收。
+- [`reader-weather-check.json`](../../../smoke/readonly-tools/reader-weather-check.json)：固定天气页的 Reader 结果以新闻为主，未得到可核对实况；不引入 Reader 或任意 URL 工具。
+- [`structured-weather-probe.json`](../../../smoke/readonly-tools/structured-weather-probe.json)：Nominatim 唯一北京市行政区；MET 返回含 `meta.updated_at`、有效时点和摄氏单位的真实预报。MET 数据为预报，不能冒充当前观测；相同全球预报 URL 至少间隔三小时并遵守缓存策略。
+- [`wttr-weather-probe.json`](../../../smoke/readonly-tools/wttr-weather-probe.json)：当前条件只有时刻，没有绝对观测日期；不从其他日期推断，不采用为当前观测来源。
+- [`aviation-weather-probe.json`](../../../smoke/readonly-tools/aviation-weather-probe.json)、[`aviation-metar-fields.json`](../../../smoke/readonly-tools/aviation-metar-fields.json)：NOAA/NWS AWC 的公开 METAR 返回北京、上海、天津、重庆站温度与秒级 UTC `obsTime`，官方 schema 确认 `temp` 为摄氏；0℃是合法值。
+- [`shanghai-region-probe.json`](../../../smoke/readonly-tools/shanghai-region-probe.json)、[`shanghai-metar-bbox-probe.json`](../../../smoke/readonly-tools/shanghai-metar-bbox-probe.json)：上海是 `category=boundary/type=administrative/addresstype=state` 的 MultiPolygon；官方文档 bbox 顺序为南界纬度、西界经度、北界纬度、东界经度（即 `lat0,lon0,lat1,lon1`），三位小数，真实 bbox 查询得到两站共八条时序观测。同一时间不同站温度不同是正常空间差异，不能当作同一站来源冲突。行政区精确多边形与站坐标筛选、最新观测选择、来源署名和缓存仍须实现并验证。
+
+资料依据：[AWC API](https://aviationweather.gov/data/api/)、[MET 接口](https://api.met.no/weatherapi/locationforecast/2.0/documentation)、[Nominatim 政策](https://operations.osmfoundation.org/policies/nominatim/)。Nominatim 仅在主人/观众明确询问天气时解析地名，应用聚合不超过每秒一次，缓存结果并署名 OSM；不作为通用地理搜索工具开放。新后端设计必须保持当前天气与预报的类型和时间区别，不以 HTTP 200 或来源探测替代产品 FR-01/03/04 验收。
+
+### 结构化天气候选的最终 Build 检查（2026-11-11）
+
+同一Terra返回功能源冻结；主接纳其限定范围的证据：隔离副本与工作树180项源码/测试/preset/依赖配置SHA一致，78文件470 passed/8 skipped（仅排除既定macosTts.test.ts）；固定基线差异覆盖行94.33%、分支83.41%；desktop/narrow E2E 10/10，隔离tsc/build通过，Turf打入Node bundle，默认离线与tts:0入口通过。日志/报告：`/private/tmp/feat004-date-final-coverage.log`、`/private/tmp/feat004-date-final-coverage-worktree.json`、`/private/tmp/feat004-build-stQngL/repo/packages/dsh-livestream/.e2e/feat-004-build/`。旧461/8skip和36项入口结果是此前输入的历史证据，不冒充本次新增日期控件回归。
+
+复核修正有红绿证据：MET最终四位点区域PIP；304只延长缓存请求间隔而保留原源时间；条目/字节容量预检使溢出URL连续重问均0HTTP；迟到fetch/503/过大响应的body清理未结束时维持共同busy；站点Polygon/MultiPolygon/holes/边界排除及同刻冲突、零度、实际时间；Console兼容date-only不补造08:00。MET严格UTC Z与历日校验在先前源快照已存在，主较早读取的宽松Date.parse判断已撤回，没有作为当前新生产缺陷或重复修正记录。完整日历/无zone等负例追加证明原行为。
+
+主首次从当前checkout启动真实入口时，在请求前因新增Turf尚未安装而失败，未取得场景结果；进程报告cleanup unknown，保留空产物路径`/tmp/dsh-query-artifacts-0lzrnJ`。随后只读模块加载对照为checkout ERR_MODULE_NOT_FOUND、已测隔离副本成功；静态ESM依赖解析失败发生于请求代码执行前，不归因为模型/天气失败。没有对失败服务请求重试。改用已检查隔离副本前重新核对91项实际入口输入SHA全一致，并执行默认离线入口exit0。当前checkout依赖未修改，隔离安装曾因既有ignored-builds策略非零的历史保留，不能把它写成安装成功；实际部署仍需验证锁定依赖/构建。
+
+### 正式预设真实 GLM 两题验收（2026-11-11 本地时间）
+
+主在已验证的隔离副本执行 `node test/live-query/run.mjs --real --approve=search:2,model:4,tts:0,seconds:300`，exit0；91项实际入口输入SHA与工作树一致，绑定[`source manifest`](../../../smoke/readonly-tools/weather-native-glm-20261111-source.json)。两次新建scope均dispose，预设为dsh-livestream-douyin，三工具集合/schema/有效persona核对全true，原文参数未改写且没有强制模型工具选择。
+
+- 北京当前天气：原生weather_lookup({location:北京})，status=evidence；GLM答首都机场附近0℃并说明NOAA来源和不代表全市。主核对同次持久公共cache中ZBAA观测为0℃、obsTime=2026-11-10T17:30:00Z，与QuerySource时间及答复一致；不是把检索时间当观测。
+- OBS Studio许可证：原生public_search使用原文query，status=evidence，GLM答GPLv2；完整官方来源URL保留，独立核对[OBS帮助FAQ](https://obsproject.com/help)支持该结论。此次不再有Google goto参数被全部抹除导致来源丢失的问题。
+- 实际总计model4、MCP1、geocode1、current1、forecast0、TTS0，audio=not_requested；Stage/观众播放显式not_tested。此前上海日期预报只证明真实source层，不据此冒称该日期的真实GLM口播。普通TTS路径旧17.28秒音频证据保留未变范围，不重复合成凑数。
+
+脱敏结果：[`result.json`](../../../smoke/readonly-tools/weather-native-glm-20261111/result.json)、[`scenario-1.json`](../../../smoke/readonly-tools/weather-native-glm-20261111/scenario-1.json)、[`scenario-2.json`](../../../smoke/readonly-tools/weather-native-glm-20261111/scenario-2.json)。真实执行前共享服务CPU只读检查为Harness0.4%、yovoice0%、DyHub0%；未重启、更新active lib、改在用依赖或播出。首次ps在沙箱受限，随后只读提权检查成功。此次不请求新的测试预算，沿用用户全权授权。
+
+主接受本轮实现及以上分层Build证据，核对同一Terra的canonical请求与help契约后，通过lifecycle CLI将T001设为done；next实际返回Validate。独立Validate/Review/Ship、正式舞台及真实观众播放仍未执行，Feature/Requirement未据此标完成或发布。
+
+### 早期诊断与正式预设组合的历史证据
+
+以下保留各次快照的事实和失败历史；其中“当前”“未验证”“需追加预算”均指当时快照，不是现行授权或进度。现行方案及最终470项/真实GLM证据见前文，用户全权测试授权继续有效。
+
+**真实执行后诊断增量（离线）**：针对上文已授权真实运行只保留首题、第二题缺少工具和结束事实的问题，验收入口在每题开始时创建结果，清理临时会话前以私有权限原子写入 `scenario-1.json` / `scenario-2.json`；最终 `result.json` 同样包含已完成或失败的题目。字段包括预期/实际工具、仅限固定公开问题文字的参数、已知参数类型和额外字段数、query 状态、原生 turn/end kind、受控失败代码、适用的整数 HTTP 状态、每题与总请求计数。其他参数文字以省略标记代替，不保存原始请求/响应、headers、完整 session、key 或堆栈；首题资料和答复继续保留。若记录文件写入失败，入口停止，不能据此假设诊断已保存。
+
+`/private/tmp/feat004-diagnostics-red2.log` 保留修复前两种第二题离线失败均只留下首题的红灯；修正后在同一隔离副本运行 `./node_modules/.bin/vitest run test/live-query --maxWorkers 1`，退出 0：6 文件、26 项通过（`/private/tmp/feat004-diagnostics-final.log`）。五种实际 Harness/插件替身场景覆盖公开参数不匹配、参数含假密钥、模型 HTTP 503、MCP HTTP 503、参数类型错误；均保留首题并停止后续发送。新增测试核对失败题目的独立文件内容、密钥不出现在结果中，以及离线 fixture 选项不能进入真实模式。诊断分类的中间测试发现 MCP 503 同时产生 tool error，已优先保留可直接观测的 HTTP 状态，随后定向重跑通过。
+
+在隔离副本包目录运行 `node test/live-query/run.mjs`，退出 0（`/private/tmp/feat004-diagnostics-final-offline.log`）；两题仍仅使用替身，模型发送 4、搜索 2、语音 0，临时会话清理完成，输出目录含每题诊断文件。相关文件随后检查为 mode 0600、内容与汇总中的对应题目一致；这是离线使用证据，不是对真实第二题原因的判断。本轮仅改变测试入口及其指南，没有修改生产源码、provider、生产工具协议或现有 state；未重跑生产未变的全量覆盖/typecheck/build，也未调用任何真实模型、搜索或语音服务。此前真实第二题的原因仍未知，后续真实调用仍需新的明确预算授权。
+
+**正式抖音预设组合：离线实现和证据**：在同一验收入口从当前 `cordis.patch.yml` 读取 `dsh-livestream-douyin`，严格只将 persona 和直播 agent 两个预设模块映射为进程内 builtin，再由现有 Loader、AgentPresetRegistry、Persona 和原生 AgentLoop 为每题创建独立 session scope。每次在内存 Show 建立查询归属前用 sentinel 阻止 director 定时器创建；不启动 StageServer、平台连接或输入，不加载在用插件 lib。每题先核对实际组合的工具和有效提示，再执行原固定问题，最后单独结束自有 Show 并 dispose 对应 scope。没有强制模型选择工具、改写问题或放宽生产查询授权。
+
+首个入口测试红灯 `/private/tmp/feat004-preset-runner-red.log` 记录旧入口没有实际预设标识；补充 schema 核对前的红灯保留于 `/private/tmp/feat004-preset-schema-red.log`。第一次协议替身问题原文核对只考虑内容数组、未识别 Anthropic 字符串内容，随后按实际两种 wire 形状核对并通过；没有据此改动问题文字。检查前将源码、测试、preset patch 和依赖/运行配置同步至隔离副本并逐文件 SHA-256 比对，共 176 个相关输入、差异 0。
+
+隔离副本 `./node_modules/.bin/vitest run test/live-query test/queryPreset.test.ts --maxWorkers 1` 退出 0，7 文件、29 项通过（`/private/tmp/feat004-preset-runner-final.log`）。默认 `node test/live-query/run.mjs` 退出 0（`/private/tmp/feat004-preset-runner-final-offline.log`）：两题各实际挂载该 preset、各自 dispose scope；可用 schema 严格为 `public_search`、`show_stats`、`weather_lookup`，包括公开查询原文/70 字及天气地点约束，不含 B 站、OBS 等特权工具。scope 的有效 persona 及模型协议替身接收的 system 均核对原文核心、来源时间、limited/unknown、不朗读长链接；替身收到固定问题原文且没有强制工具选择。两题分别得到 limited / evidence 的合成结果，模型发送 4、搜索 2、合成 0。失败即停、脱敏诊断、语音任务清理及 405 兼容的定向回归也通过；两份独立题目文件与汇总一致、权限 0600。以上只证明离线替身与实际 preset 组合，不证明真实 GLM 会遵从提示或真实公开资料查询成功。
+
+本轮未调用真实服务、未更改生产源码/patch/依赖或 state，也未运行不受本次测试入口变化影响的全量 suite、typecheck、build 或 UI E2E。上一轮 402 项生产检查只适用于其相同生产源码和配置，不冒充覆盖本次新增测试入口；真实第二题已知请求参数不在原问题范围，未调用搜索服务，仍需后续受控真实验证，不推断 provider 故障。
+
 ## 评审记录（实际）
+
+2026-11-11 结构化天气设计独立只读复核（非正式 commit Review）发现 P2：geocoder中心在bbox内并不保证位于完整行政区域内。主接受，已明确MET实际发送的最终四位小数点同样需原polygon的PIP检查，不通过即limited；主已核对同一Terra的实现、针对性红绿和最终470项累计检查，此设计P2关闭；不是正式commit Review。其余所审地域、时间、截止/busy、公共cache与凭据边界未发现可证实设计阻塞。
+
+后续独立核心复核发现缓存容量耗尽后先GET再丢响应的P2；同一实现者已改为请求前容量检查，主核两种容量红灯（原连续重问2次GET）及修正后0GET/累计通过，关闭此增量发现。主另核body迟到/错误/超限清理三例红绿与全局busy行为。以下较早增量审阅结论按当时快照保留，不替代最新Build证据，也不作为正式Review记录。
+
+- **失败诊断增量接纳**：主 Agent 核对当前 11 个验收入口/测试文件与隔离副本无差异，检查实际日志为 6 文件、26 项通过，默认离线入口及逐题 0600 原子证据写入已验证。只扩充内部诊断和测试，生产源码、preset 与依赖未再改变，沿用对应代码的 402 项累计证据，不把旧完整 suite 当成新增诊断场景的证据。当前入口直接挂载原生 Harness 与插件工具，未挂载直播 persona preset；其真实观测只证明该隔离组合的工具调用/续答，不证明生产直播人设、口播风格、舞台播放或正式观众结果。首次真实第二题根因仍未知，没有用离线参数拒绝示例冒充现场根因。后续真实调用需在明确追加预算内执行，未提交、部署或标记 Task done。
+
+- **本轮 Build 增量接纳**：主 Agent 已核对工作树与隔离副本的 267 个非忽略文件，运行/测试相关输入无差异；其余差异仅为 SDLC/usage 文档和本功能未引用的实验制品。当前完整检查为 74 文件、402 通过、8 原有跳过（唯一排除 macosTts），变更覆盖行 92.95% / 分支 78.57%。此前旧隔离 preset/断言导致的结果不冒充当前配置通过，补验和失败历史见上。独立只读增量评审发现的 MCP GET 405 兼容 P2 已由同一实现者修正，原 reviewer 核对精确条件及红绿证据后关闭；这不是正式 SDLC Review。生产修正、限量验收入口与离线证据获接纳；真实调用预算尚未获准，Task 保持 in_progress，未部署或覆盖运行中的 lib。
 
 - **主 Agent 离线接纳**：已核对最终三轮澄清与原生同轮失效修正、有效 preset 提示及实际日志：69 文件、376 通过、8 原有跳过，新增提示/上下文路径的 Harness/Loader 窄测 25 通过，变更覆盖行 92.83% / 分支 77.74%，最新隔离 typecheck 与 diff 检查通过。既有 10 项浏览器证据仅用于未改变的交互路径，不能替代真实 GLM 遵从、天气数据或语音验收。保留全部实际失败与修正记录；未据离线结果请求 Task done、未提交/部署或结束当前直播。后续仍需获得相应提交/外部运行授权及有效证据，不将这次接纳写成正式 Review。
 - **状态**：Plan 内一次有界独立协议设计复审已执行并接受处理方案；Build 离线检查见上，独立 Validate 与正式 `sdlc-review` 尚未执行。
 - **范围、发现与处理**：主 Agent 的 fresh-context `query_protocol_review` cycle 1 使用 doubt-driven-development，识别两项真实兼容遗漏：断流丢失 invalidate 可让旧 Audio 回调在同 build 重连后晚播；首次 hello 接纳宿主 build 及 mtime 不能证明页面 JS 能力。主 Agent 已选择显式能力与断线撤销契约，Build 已实现并提供上述隔离检查证据，仍须独立验证和代码评审。未发起第二轮设计复审或增加 Task。
+
+主另接纳Onboard对project.md的局部事实刷新：固定天气来源/可信geocoder配置、公共cache与native验收入口，未修改业务源码或状态。README/指南中的旧“真实GLM未验证”结论已由主按本次限定证据纠正。
 
 ## 发布与观察记录（实际）
 

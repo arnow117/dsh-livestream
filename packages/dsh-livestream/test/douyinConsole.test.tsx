@@ -17,6 +17,7 @@ describe('console platform settings with real handlers', () => {
   let runtime: typeof import('../src/dsh/runtime');
   const env = { ...process.env };
   let eventSource: { onmessage?: (event: { data: string }) => void };
+  let statusListener: (event: { data: string }) => void;
   let holdNextQuery = false;
   let queryHeld: (() => void) | undefined;
   let releaseQuery: (() => void) | undefined;
@@ -41,7 +42,9 @@ describe('console platform settings with real handlers', () => {
     vi.stubGlobal('EventSource', class {
       onmessage?: (event: { data: string }) => void;
       constructor() { eventSource = this; }
-      addEventListener() {}
+      addEventListener(name: string, listener: (event: { data: string }) => void) {
+        if (name === 'status') statusListener = listener;
+      }
       close() {}
     });
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -90,6 +93,29 @@ describe('console platform settings with real handlers', () => {
     const input = field(id);
     await act(async () => { input.value = value; Simulate.change(input); });
   };
+
+  it('displays a date-only source without inventing a time', async () => {
+    const show = runtime.show.status();
+    const sendDate = async (value: string) => {
+      await act(async () => statusListener({ data: JSON.stringify({
+        ...show,
+        query: {
+          kind: 'weather', status: 'evidence', queryId: 'fixture-date', evidenceText: '', limitation: '',
+          sources: [{ name: 'fixture', title: null, url: 'https://example.org/',
+            retrievedAt: '2026-11-10T04:00:00Z', providerTime: { kind: 'forecast', value, verbatim: value } }],
+        },
+      }) }));
+    };
+    await sendDate('2026-11-11');
+    const query = element.querySelector('[aria-label="查询状态与来源"]')!;
+    expect(query.textContent).toContain('预报适用时间：2026-11-11');
+    expect(query.textContent).not.toContain('08:00');
+    await sendDate('2026-02-30');
+    expect(query.textContent).toContain('预报适用时间：时间未知');
+    await sendDate('2026-11-11T04:00:00Z');
+    expect(query.textContent).toContain('12:00');
+    await act(async () => statusListener({ data: JSON.stringify(show) }));
+  });
 
   it('saves a validated target, preserves a failed draft and limits Douyin controls', async () => {
     await change('live-platform', 'douyin');

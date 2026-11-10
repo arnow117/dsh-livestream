@@ -28,6 +28,8 @@ export default defineConfig({
         'src/core/topicText.ts',
         'src/body/show.ts',
         'src/body/readOnlyQuery.ts',
+        'src/body/weather.ts',
+        'src/body/weatherCache.ts',
         'src/body/stage.ts',
         'src/body/server.ts',
         'src/body/broadcast.ts',

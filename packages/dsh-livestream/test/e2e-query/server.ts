@@ -13,6 +13,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools';
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native';
 import AgentRegistry from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
+import { createWeatherSource } from '../../src/body/weather';
 
 const port = Number(process.argv[2]);
 const dir = await mkdtemp(join(tmpdir(), 'dsh-query-web-'));
@@ -22,6 +23,7 @@ process.env.QUERY_FIXTURE_MODEL_KEY = 'fake-model';
 delete process.env.GLM_CODING_PLAN_API_KEY;
 let credential = '';
 let mode = 'normal';
+let weatherOffset = 0;
 let selectedPreset = '';
 let sessionCount = 0;
 let sharedRequests = 0;
@@ -60,6 +62,7 @@ let ttsPending = false;
 let currentAgent: any;
 const modelRequests: any[] = [];
 const mcpRequests: any[] = [];
+const weatherRequests: string[] = [];
 const stageEvents: any[] = [];
 const observedEvents: any[] = [];
 const model = createServer((req, res) => {
@@ -73,7 +76,8 @@ const model = createServer((req, res) => {
     const toolResult = blocks.find((block: any) => block.type === 'tool_result');
     const content = typeof last?.content === 'string' ? last.content : blocks.filter((block: any) => block.type === 'text').map((block: any) => block.text).join(' ');
     const ownerText = /<主人>([\s\S]*?)<\/主人>/.exec(content)?.[1] ?? '';
-    const tool = /天气/.test(ownerText) ? { name: 'weather_lookup', input: { location: '北京' } }
+    const date = ownerText.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+    const tool = /天气/.test(ownerText) ? { name: 'weather_lookup', input: { location: '北京', ...(date ? { date } : {}) } }
       : /许可证/.test(ownerText) ? { name: 'public_search', input: { query: 'OBS Studio 许可证' } } : null;
     const resultText = typeof toolResult?.content === 'string' ? toolResult.content : JSON.stringify(toolResult?.content ?? '');
     const answer = resultText.includes('public_search') && resultText.includes('\"status\":\"evidence\"')
@@ -115,6 +119,25 @@ globalThis.fetch = async (input, init) => {
     sharedRequests++;
     throw new Error('shared service request blocked');
   }
+  if (url.hostname === 'nominatim.openstreetmap.org' && url.pathname === '/search') {
+    weatherRequests.push('geocode');
+    return Response.json([{
+      name: '北京市', category: 'boundary', type: 'administrative',
+      address: { city: '北京市', country_code: 'cn' }, lat: '40', lon: '116.5',
+      boundingbox: ['39', '41', '115', '118'],
+      geojson: { type: 'Polygon', coordinates: [[[115, 39], [118, 39], [118, 41], [115, 41], [115, 39]]] },
+    }]);
+  }
+  if (url.hostname === 'aviationweather.gov' && url.pathname === '/api/data/metar') {
+    weatherRequests.push('current');
+    if (mode === 'hold') await new Promise<void>((resolve) => { releaseMcp = resolve; });
+    if (mode !== 'weather-evidence') return Response.json([]);
+    return Response.json([{ icaoId: 'ZBAA', name: '北京测试站', lat: 40, lon: 116.5, temp: 20, obsTime: Math.floor((Date.now() + weatherOffset) / 1000) }]);
+  }
+  if (url.hostname === 'api.met.no' && url.pathname === '/weatherapi/locationforecast/2.0/compact') {
+    weatherRequests.push('forecast');
+    return Response.json({ properties: { meta: { updated_at: '2026-11-11T00:00:00Z', units: { air_temperature: 'celsius' } }, timeseries: [{ time: '2026-11-12T04:00:00Z', data: { instant: { details: { air_temperature: 12 } } } }] } });
+  }
   if (url.href !== 'https://open.bigmodel.cn/api/mcp/web_search_prime/mcp') {
     if (url.hostname === '127.0.0.1' && [port, modelPort, stagePort, bridgePort].includes(Number(url.port))) return originalFetch(input, init);
     externalRequests++;
@@ -124,15 +147,7 @@ globalThis.fetch = async (input, init) => {
   mcpRequests.push(body);
   if (body?.id === undefined) return new Response(null, { status: 202 });
   const schema = { type: 'object', properties: Object.fromEntries(['search_query', 'search_domain_filter', 'search_recency_filter', 'content_size', 'location'].map((key) => [key, { type: 'string' }])), required: ['search_query'], additionalProperties: false };
-  const rows = mode === 'empty' ? [] : body.params?.arguments?.search_domain_filter
-    ? [{
-      title: '北京天气',
-      link: 'https://weather.com.cn/beijing',
-      content: mode === 'weather-evidence'
-        ? `北京当前天气实况：${new Date().toISOString().slice(0, 10)} 00:00 UTC+00:00 气温 20℃`
-        : '北京天气资料，无观测时间',
-    }]
-    : [{ title: 'OBS Studio', link: 'https://github.com/obsproject/obs-studio', content: 'OBS Studio is licensed under GPL version 2 or later.' }];
+  const rows = mode === 'empty' ? [] : [{ title: 'OBS Studio', link: 'https://github.com/obsproject/obs-studio', content: 'OBS Studio is licensed under GPL version 2 or later.' }];
   if (mode === 'hold' && body.method === 'tools/call') await new Promise<void>((resolve) => { releaseMcp = resolve; });
   const result = body.method === 'initialize'
     ? { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
@@ -156,7 +171,12 @@ const host = await import('../../src/dsh/index');
 const runtime = await import('../../src/dsh/runtime');
 const plugin = await import('../../src/dsh/agent');
 const { StageServer } = await import('../../src/body/server');
-await ctx.plugin(plugin);
+const weatherSource = createWeatherSource({
+  cacheFile: join(dir, 'dsh-livestream', 'weather-cache-v1.json'),
+  now: () => Date.now() + weatherOffset,
+  fetchImpl: globalThis.fetch,
+});
+await ctx.plugin(plugin.createAgentPlugin(weatherSource));
 (runtime.show as any).hooks.synthesize = async () => {
   if (mode === 'hold-tts') {
     ttsPending = true;
@@ -243,6 +263,7 @@ const app = createServer(async (req, res) => {
     credential = 'fixture-key';
     process.env.GLM_CODING_PLAN_API_KEY = credential;
     mode = 'normal';
+    weatherOffset += 6 * 60_000;
     runtime.updateSettings({ readOnlyQueries: { weather: true, publicSearch: false } });
     const id = `stage-query-${++sessionCount}`;
     currentAgent = await ctx.agentLoop.create(SessionId(id), { provider: 'fixture', model: 'model' });
@@ -280,13 +301,13 @@ const app = createServer(async (req, res) => {
     await stage.start();
     return res.end('ok');
   }
-  if (url.pathname === '/__mode') { mode = body; return res.end('ok'); }
+  if (url.pathname === '/__mode') { mode = body; weatherOffset += 6 * 60_000; return res.end('ok'); }
   if (url.pathname === '/__cancel') { currentAgent?.cancel({ kind: 'user' }); return res.end('ok'); }
   if (url.pathname === '/__release') { releaseMcp?.(); releaseMcp = undefined; return res.end('ok'); }
   if (url.pathname === '/__release-tts') { releaseTts?.(); releaseTts = undefined; await speechPromises.at(-1); return res.end('ok'); }
   if (url.pathname === '/__fixture') {
     res.setHeader('content-type', 'application/json');
-    return res.end(JSON.stringify({ selectedPreset, modelRequests, mcpRequests, stageEvents, observedEvents, subscriptions, sharedRequests, externalRequests, ttsPending, agentStatus: currentAgent?.status, stageUrl: runtime.server.url, status: runtime.show.status() }));
+    return res.end(JSON.stringify({ selectedPreset, modelRequests, mcpRequests, weatherRequests, stageEvents, observedEvents, subscriptions, sharedRequests, externalRequests, ttsPending, agentStatus: currentAgent?.status, stageUrl: runtime.server.url, status: runtime.show.status() }));
   }
   const handler = routes.get(url.pathname);
   if (!handler) { res.writeHead(404); return res.end(); }

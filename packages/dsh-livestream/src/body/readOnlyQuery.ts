@@ -1,6 +1,8 @@
 import { isIP } from 'node:net';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type { QueryRequest, QueryResult, QuerySource } from '../shared/readOnlyQuery';
+import { isSupportedWeatherLocation } from './weather';
+export { isSupportedWeatherLocation } from './weather';
 
 const MAX_BYTES = 1024 * 1024;
 const MAX_ROWS = 32;
@@ -99,64 +101,8 @@ function relatesToQuestion(row: SearchRow, question: string): boolean {
 export function parseSearchResponse(response: unknown, request: QueryRequest, retrievedAt: string): QueryResult {
   const rows = decodeRows(response);
   const result: QueryResult = { kind: request.kind, status: 'unsupported_response', evidenceText: '', sources: [] };
-  if (!rows) return result;
+  if (request.kind !== 'public_search' || !rows) return result;
   if (!rows.length) return { ...result, status: 'empty' };
-
-  if (request.kind === 'weather') {
-    const sources: QuerySource[] = [];
-    const matches = new Map<string, { source: QuerySource; excerpt: string }>();
-    for (const row of rows) {
-      const url = publicUrl(row.link);
-      if (!url || !(url.hostname === 'weather.com.cn' || url.hostname.endsWith('.weather.com.cn'))
-        || !`${row.title} ${row.content}`.includes(request.location)) continue;
-      const source: QuerySource = {
-        name: url.hostname,
-        title: null,
-        url: url.href,
-        retrievedAt,
-        providerTime: { kind: 'unknown', value: null, verbatim: null },
-      };
-      if (sources.length < MAX_SOURCES) sources.push(source);
-      for (const sentence of row.content.split(/[。！？\n]/)) {
-        const prefix = request.date
-          ? `${request.location} ${request.date} 天气预报`
-          : `${request.location}当前天气实况`;
-        const trimmed = sentence.trim();
-        if (!trimmed.startsWith(prefix)) continue;
-        const remainder = trimmed.slice(prefix.length);
-        if (request.date) {
-          if (!/^[:：]\s*(?:晴|多云|阴|小雨|中雨|大雨|小雪|中雪|大雪)(?:转(?:晴|多云|阴|小雨|中雨|大雨|小雪|中雪|大雪))?\s*$/.test(remainder)) continue;
-          const forecast = remainder.replace(/^[:：]\s*/, '').trim();
-          const key = `${request.location}|forecast|${request.date}|${forecast}`;
-          if (!matches.has(key)) {
-            matches.set(key, { source: { ...source, title: row.title ? boundedText(row.title, 500) : null, providerTime: { kind: 'forecast', value: request.date, verbatim: request.date } }, excerpt: sentence.trim() });
-          }
-          continue;
-        }
-        const match = remainder.match(/^[:：]\s*(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC([+-]\d{2}:\d{2})\s+气温\s*(-?\d{1,2}(?:\.\d)?)(?:℃|°C)\s*$/);
-        if (!match) continue;
-        const offsetHours = Number(match[3].slice(1, 3));
-        const offsetMinutes = Number(match[3].slice(4));
-        if (offsetHours > 14 || offsetMinutes > 59 || (offsetHours === 14 && offsetMinutes !== 0)) continue;
-        const observed = Date.parse(`${match[1]}T${match[2]}:00${match[3]}`);
-        const retrieved = Date.parse(retrievedAt);
-        if (!Number.isFinite(observed) || !Number.isFinite(retrieved)) continue;
-        const sign = match[3][0] === '+' ? 1 : -1;
-        const localDay = new Date(retrieved + sign * (offsetHours * 60 + offsetMinutes) * 60_000).toISOString().slice(0, 10);
-        if (observed > retrieved || localDay !== match[1]) continue;
-        const observedAt = new Date(observed).toISOString();
-        const key = `${request.location}|observed|${observedAt}|${Number(match[4])}`;
-        if (!matches.has(key)) {
-          matches.set(key, { source: { ...source, title: row.title ? boundedText(row.title, 500) : null, providerTime: { kind: 'observed', value: observedAt, verbatim: `${match[1]} ${match[2]} UTC${match[3]}` } }, excerpt: sentence.trim() });
-        }
-      }
-    }
-    if (matches.size === 1) {
-      const match = [...matches.values()][0];
-      return { ...result, status: 'evidence', sources: [match.source], evidenceText: match.excerpt.slice(0, MAX_EXCERPT), ...(request.date ? {} : { limitation: '数据仅代表注明的观测时间，不能用检索时间证明此刻仍然相同。' }) };
-    }
-    return { ...result, status: 'limited', sources, limitation: request.date ? '无法确认该日期的天气预报。' : '无法确认地点、日期和此刻天气。' };
-  }
 
   const excerpts: string[] = [];
   const sources: QuerySource[] = [];
@@ -200,14 +146,6 @@ function compatibleSchema(schema: unknown): boolean {
     && SEARCH_PROPERTIES.every((name) => input.properties[name]?.type === 'string');
 }
 
-/** Accept only an explicitly supplied administrative hierarchy, without guessing place names. */
-export function isSupportedWeatherLocation(location: string): boolean {
-  if (typeof location !== 'string') return false;
-  const municipality = /^(?:北京|上海|天津|重庆)(?:市(?:[\u4e00-\u9fff]{1,12}(?:区|县))?)?$/;
-  const provinceAndLocality = /^[\u4e00-\u9fff]{2,8}省[\u4e00-\u9fff]{1,12}(?:市|县|区)$/;
-  return municipality.test(location) || provinceAndLocality.test(location);
-}
-
 function validRequest(request: QueryRequest): boolean {
   const text = request.kind === 'weather' ? request.location : request.query;
   const limit = request.kind === 'weather' ? 40 : 70;
@@ -228,6 +166,7 @@ export async function runReadOnlyQuery(
   credential: string,
   callerSignal: AbortSignal,
   fetchImpl: typeof fetch = fetch,
+  weatherSource?: { query(request: Extract<QueryRequest, { kind: 'weather' }>, signal: AbortSignal): Promise<QueryResult> },
 ): Promise<QueryResult> {
   const initial: QueryResult = { kind: request.kind, status: 'failed', evidenceText: '', sources: [] };
   if (callerSignal.aborted) return { ...initial, status: 'cancelled' };
@@ -238,6 +177,27 @@ export async function runReadOnlyQuery(
 
   const timeout = AbortSignal.timeout(15_000);
   const signal = AbortSignal.any([callerSignal, timeout]);
+  if (request.kind === 'weather') {
+    if (!weatherSource) {
+      searchActive = false;
+      return { ...initial, status: 'unavailable' };
+    }
+    const work = Promise.resolve().then(() => weatherSource.query(request, signal)).finally(() => { searchActive = false; });
+    let removeAbort = () => {};
+    const aborted = new Promise<QueryResult>((resolve) => {
+      const finish = () => resolve({ ...initial, status: callerSignal.aborted ? 'cancelled' : 'timeout' });
+      signal.addEventListener('abort', finish, { once: true });
+      removeAbort = () => signal.removeEventListener('abort', finish);
+      if (signal.aborted) finish();
+    });
+    try {
+      return await Promise.race([work, aborted]);
+    } catch {
+      return { ...initial, status: callerSignal.aborted ? 'cancelled' : timeout.aborted ? 'timeout' : 'failed' };
+    } finally {
+      removeAbort();
+    }
+  }
   const client = new Client({ name: 'dsh-livestream', version: '0.0.1' });
   let pendingFetches = 0;
   let finished = false;
@@ -304,15 +264,11 @@ export async function runReadOnlyQuery(
     const listing = await client.listTools(undefined, { cacheMode: 'refresh', signal });
     const matches = listing.tools.filter((tool) => tool.name === REMOTE_TOOL);
     if (matches.length !== 1 || !compatibleSchema(matches[0].inputSchema)) return { ...initial, status: 'unsupported_response' };
-    const query = request.kind === 'weather'
-      ? `${request.location} ${request.date ? `${request.date} 天气预报` : '当前天气实况'} 更新时间`
-      : request.query;
     const arguments_ = {
-      search_query: query,
+      search_query: request.query,
       content_size: 'medium',
       location: 'cn',
-      search_recency_filter: request.kind === 'weather' && !request.date ? 'oneDay' : 'noLimit',
-      ...(request.kind === 'weather' ? { search_domain_filter: 'weather.com.cn' } : {}),
+      search_recency_filter: 'noLimit',
     };
     const response = await client.callTool({ name: REMOTE_TOOL, arguments: arguments_ }, { signal, timeout: 15_000, toolDefinition: matches[0] });
     if (signal.aborted) return { ...initial, status: callerSignal.aborted ? 'cancelled' : 'timeout' };

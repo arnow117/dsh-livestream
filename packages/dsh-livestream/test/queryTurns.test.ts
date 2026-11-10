@@ -213,3 +213,17 @@ it('accepts one complete weather question beside unrelated input, without joinin
   const conflict = turns.begin({}, 3, 's', 'e', new AbortController().signal, [{ id: 'conflict' }]);
   expect(turns.authorizesWeather(conflict, '北京', '2026-11-12')).toBe(false);
 });
+
+it.each([
+  ['北京当前天气', true],
+  ['北京目前天气', true],
+  ['北京前天天气', false],
+  ['北京明天天气', false],
+  ['北京当前天气和明天天气', false],
+  ['北京目前天气和前天天气', false],
+] as const)('keeps time intent distinct for %s', (text, allowed) => {
+  const turns = new QueryTurns();
+  turns.remember('question', [{ participant: 'a', text }]);
+  const question = turns.begin({}, 1, 's', 'e', new AbortController().signal, [{ id: 'question' }]);
+  expect(turns.authorizesWeather(question, '北京')).toBe(allowed);
+});
