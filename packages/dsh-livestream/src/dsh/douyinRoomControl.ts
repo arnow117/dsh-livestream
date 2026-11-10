@@ -61,6 +61,8 @@ export class DouyinRoomControl {
   private readonly nonce = randomBytes(16).toString('hex');
   private counter = 0;
   private generation = 0;
+  private disposed = false;
+  private readonly cancellations = new Set<() => void>();
   private running = false;
   private activeOperation: { type: 'connect' | 'stop'; target: string } | null = null;
   private error: string | undefined;
@@ -95,32 +97,69 @@ export class DouyinRoomControl {
   advance(): void { this.counter += 1; }
   detach(): void { this.generation += 1; this.advance(); }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.generation += 1;
+    for (const cancel of this.cancellations) cancel();
+  }
+
+  private assertActive(): void {
+    if (this.disposed) throw new Error('直播插件已卸载');
+  }
+
+  private ownsMarker(marker: AdmittedMarker): boolean {
+    return !this.disposed && !this.running && this.journal.marker === marker;
+  }
+
+  private wait<T>(work: () => Promise<T>, timeoutMs: number, timeoutMessage: string, abort?: AbortController): Promise<T> {
+    this.assertActive();
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const finish = (complete: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.cancellations.delete(cancel);
+        complete();
+      };
+      const cancel = () => {
+        abort?.abort();
+        finish(() => reject(new Error('直播插件已卸载')));
+      };
+      const timer = setTimeout(() => {
+        abort?.abort();
+        finish(() => reject(new Error(timeoutMessage)));
+      }, timeoutMs);
+      this.cancellations.add(cancel);
+      try {
+        this.assertActive();
+        work().then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
+      } catch (error) {
+        finish(() => reject(error));
+      }
+    });
+  }
+
   private origin(): string {
     return normalizeDouyinBridgeUrl(process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL ?? 'http://127.0.0.1:8757');
   }
 
   private async request(origin: string, path: string, data?: unknown): Promise<{ status: number; value: unknown }> {
     const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const work = async () => {
         const response = await this.fetcher(new URL(path, origin), {
           redirect: 'error', signal: abort.signal,
           ...(data === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) }),
         });
+        this.assertActive();
         return { status: response.status, value: await readLimited(response) };
       };
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          abort.abort();
-          reject(new Error('request timed out'));
-        }, data === undefined ? QUERY_TIMEOUT_MS : MUTATION_TIMEOUT_MS);
-      });
-      return await Promise.race([work(), timeout]);
+      return await this.wait(work, data === undefined ? QUERY_TIMEOUT_MS : MUTATION_TIMEOUT_MS, 'request timed out', abort);
     } catch {
+      this.assertActive();
       throw new Error('采集服务请求失败或超时，请检查服务状态');
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   }
 
@@ -200,6 +239,7 @@ export class DouyinRoomControl {
   }
 
   private async dispatch(marker: AdmittedMarker, path: string, data: unknown, start: { wall: number; monotonic: number }): Promise<{ status: number; value: unknown }> {
+    this.assertActive();
     if (!this.clockContinuous(start)) throw new Error('系统时间变化，无法安全发送采集操作');
     this.journal.write(marker);
     if (this.clock.wall() > marker.dispatchNotAfter || !this.clockContinuous(start)) {
@@ -211,6 +251,7 @@ export class DouyinRoomControl {
 
   async query(roomId: string): Promise<{ bridge: RoomControlSnapshot['bridge']; collector: CollectorState }> {
     try {
+      this.assertActive();
       const marker = this.journal.marker;
       let origin: string | null = null;
       try { origin = this.origin(); } catch { /* The persisted origin remains the only safe read target. */ }
@@ -222,17 +263,17 @@ export class DouyinRoomControl {
       }
       if (!origin) return { bridge: 'offline', collector: 'unknown' };
       if (!this.running && marker && marker.origin === origin) {
-        if (marker.settled) {
+        if (marker.settled && this.ownsMarker(marker)) {
           this.journal.clear();
         } else if (marker.type === 'account' && marker.accountName) {
           const accounts = await this.accounts(origin);
           const created = accounts.find((account) => account.name === marker.accountName && !marker.accountIds.includes(account.id));
-          if (created) this.journal.clear();
+          if (created && this.ownsMarker(marker)) this.journal.clear();
         } else if (marker.type === 'connect' && marker.phase === 'http') {
           const observed = await this.room(origin, marker.roomId);
           const isNew = observed?.startedAt && (marker.preflightMissing
             || (marker.preflightStartedAt !== null && observed.startedAt > marker.preflightStartedAt));
-          if (isNew) this.journal.clear();
+          if (isNew && this.ownsMarker(marker)) this.journal.clear();
         }
         // Uptime is derived from the bridge wall clock. Endpoint samples cannot
         // establish that clock stayed continuous while this process was down.
@@ -252,6 +293,7 @@ export class DouyinRoomControl {
   }
 
   async connect(roomId: string, subscribe: (origin: string) => Promise<'connected' | 'error'>): Promise<void> {
+    this.assertActive();
     if (this.locked) throw new Error('采集操作尚未确认，不能再次连接');
     this.running = true;
     this.activeOperation = { type: 'connect', target: roomId };
@@ -271,6 +313,7 @@ export class DouyinRoomControl {
         const name = `${ACCOUNT_PREFIX}${randomBytes(12).toString('hex')}`;
         const marker = this.marker('account', 'account', origin, roomId, preflight, accounts, name, epoch);
         const response = await this.dispatch(marker, '/api/accounts', { name }, start);
+        this.assertActive();
         const created = object(object(response.value)?.account);
         if (response.status !== 200 || object(response.value)?.ok !== true || !created || created.name !== name
           || typeof created.id !== 'string' || !created.id || created.id.length > 128
@@ -287,6 +330,7 @@ export class DouyinRoomControl {
         if (!account) throw new Error('无法确认匿名采集账号，请使用独立匿名采集目录');
         const marker = this.marker('connect', 'http', origin, roomId, preflight, accounts, null, epoch);
         const response = await this.dispatch(marker, '/api/rooms/connect', { roomId, accountId: account.id }, start);
+        this.assertActive();
         const result = object(response.value);
         const handlerError = [400, 409, 500].includes(response.status) && result
           && Object.keys(result).length === 1 && typeof result.error === 'string'
@@ -308,6 +352,7 @@ export class DouyinRoomControl {
         }
       }
       accounts = await this.accounts(origin);
+      this.assertActive();
       if (generation !== this.generation) {
         if (this.journal.marker) this.journal.clear();
         return;
@@ -324,28 +369,23 @@ export class DouyinRoomControl {
         this.journal.clear();
         throw new Error('采集操作发送时限已过，请重试');
       }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let initialized: 'connected' | 'error';
-      try {
-        initialized = await Promise.race([
-          subscribe(origin),
-          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('采集订阅初始化结果未确认')), WS_TIMEOUT_MS); }),
-        ]);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
+      const initialized = await this.wait(() => subscribe(origin), WS_TIMEOUT_MS, '采集订阅初始化结果未确认');
+      this.assertActive();
       this.journal.clear();
       if (initialized === 'error') throw new Error('采集订阅初始化失败，请检查后重试');
     } catch (error) {
-      this.error = (error as Error).message;
+      if (!this.disposed) this.error = (error as Error).message;
       throw error;
     } finally {
-      this.running = false;
-      this.activeOperation = null;
+      if (!this.disposed) {
+        this.running = false;
+        this.activeOperation = null;
+      }
     }
   }
 
   async stop(roomId: string): Promise<void> {
+    this.assertActive();
     if (this.locked) throw new Error('采集操作尚未确认，不能停止');
     this.running = true;
     this.activeOperation = { type: 'stop', target: roomId };
@@ -357,14 +397,17 @@ export class DouyinRoomControl {
       const epoch = await this.bridgeEpoch(origin);
       const marker = this.marker('stop', 'stop', origin, roomId, null, [], null, epoch);
       const response = await this.dispatch(marker, `/api/rooms/${roomId}/disconnect`, {}, start);
+      this.assertActive();
       if (response.status !== 200 || object(response.value)?.ok !== true) throw new Error('停止采集的结果未确认');
       this.journal.clear();
     } catch (error) {
-      this.error = (error as Error).message;
+      if (!this.disposed) this.error = (error as Error).message;
       throw error;
     } finally {
-      this.running = false;
-      this.activeOperation = null;
+      if (!this.disposed) {
+        this.running = false;
+        this.activeOperation = null;
+      }
     }
   }
 }

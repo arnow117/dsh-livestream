@@ -2,7 +2,7 @@ import { build } from 'esbuild';
 import { mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 
-const output = '.e2e/feat-003-voice-build';
+const output = '.e2e/feat-003-correction-1-voice-build';
 await mkdir(output, { recursive: true });
 await build({ entryPoints: ['test/e2e/client.tsx'], outfile: `${output}/client.js`, bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic' });
 await build({

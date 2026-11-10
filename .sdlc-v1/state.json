@@ -91,10 +91,10 @@
           "id": "TASK-003",
           "status": "done",
           "title": "统一原生房间控制与安全恢复",
-          "updated_at": "2026-11-10T04:01:35Z"
+          "updated_at": "2026-11-10T04:34:02Z"
         }
       },
-      "updated_at": "2026-11-10T04:01:35Z",
+      "updated_at": "2026-11-10T04:34:02Z",
       "validation": {
         "at": null,
         "command": null,
@@ -143,7 +143,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-003.product.md",
       "status": "in_delivery",
       "title": "统一直播控制台的平台与房间管理",
-      "updated_at": "2026-11-10T04:01:35Z"
+      "updated_at": "2026-11-10T04:34:02Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

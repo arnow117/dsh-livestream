@@ -3,7 +3,7 @@ import { web } from '@e2e-dev/web';
 
 const app = {
   url: 'http://127.0.0.1:0',
-  command: { executable: 'node', args: ['test/e2e-douyin/start.mjs', '{port}'], log: '.e2e/feat-003/fixture.log' },
+  command: { executable: 'node', args: ['test/e2e-douyin/start.mjs', '{port}'], log: '.e2e/feat-003-correction-1/fixture.log' },
 };
 export default {
   tests: 'test/e2e-douyin/*.e2e.ts',
@@ -17,6 +17,6 @@ export default {
   assertionTimeout: 5000,
   workers: 1,
   retries: 0,
-  output: '.e2e/feat-003',
+  output: '.e2e/feat-003-correction-1',
   trace: 'on',
 } satisfies E2EConfig;

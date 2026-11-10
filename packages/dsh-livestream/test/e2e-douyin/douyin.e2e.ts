@@ -131,6 +131,7 @@ test('confirms the shared effect before stopping only the selected room', async 
   await expect.poll(async () => (await fixture(app.baseUrl)).stopRequests).toBe(1);
   await expect.poll(async () => (await fixture(app.baseUrl)).bridgeStatus).toBe('stopped');
   await expect(screen.getByText(/房间状态：已停止/)).toBeVisible();
+  await expect(screen.getByText('连接状态：没连接')).toBeVisible();
   await app.screenshot('room-stopped');
   expect((await fixture(app.baseUrl)).sharedRequests).toBe(0);
   expect(blocked).toEqual([]);
@@ -143,6 +144,12 @@ test('keeps the target protected when a start result is unknown', async ({ app, 
   await request(app.baseUrl, '__unknown-start');
   await screen.getByRole('button', '连接', { exact: true }).tap();
   await expect.poll(async () => (await (await fetch(`${app.baseUrl}/api/dsh-livestream/state`)).json()).roomControl.operation.state).toBe('unknown');
+  await expect(screen.getByText('操作结果未确认', { exact: true })).toBeVisible();
+  await expect(screen.getByText(/抖音房间 90071992547409931234 受到保护/)).toBeVisible();
+  await expect(screen.getByText(/结果未确认前不能更换目标、重试或停止采集/)).toBeVisible();
+  await expect(screen.getByText(/检查服务后刷新状态/)).toBeVisible();
+  await expect(screen.getByText('采集服务请求失败或超时，请检查服务状态', { exact: true })).toHaveCount(1);
+  await expect(screen.getByRole('button', '保存', { exact: true })).toBeDisabled();
   await expect(screen.getByRole('button', '连接', { exact: true })).toBeDisabled();
   expect((await fixture(app.baseUrl)).startRequests).toBe(1);
   expect((await fixture(app.baseUrl)).subscriptions).toBe(0);

@@ -83,6 +83,7 @@
 - 网络失败、HTTP deadline、非法/过大响应或进程崩溃均保留 unknown；不能把 abort 当取消。DSH 重启加载 marker，换新 revision，保留目标/操作保护，不自动重放。即使 settings 与 marker 不一致也不能忽略旧 marker；先按其原始 canonical origin/target 做只读核对。
 - GET 404 或 stop 200 不能单独消除 uncertain connect：其 openRoom 可能仍在等待且随后启动。不得为“修复”再次 connect、stop 或 create，也不提供清空 unknown 按钮；允许仅断开本插件接收，不因此解除外部 unknown。
 - 只读 reconcile 仅在得到可证明的新 session（对比 preflight 的 room startedAt/status；采用固定上游 session.set 与返回之间无 await 的事实）时确认 connect 已完成；同旧 session、缺失/相等 startedAt 或无法归属的证据保持 unknown。account-create 仅接受可正向识别的新匿名记录，或可靠服务重启后重新读取；不得盲目重复创建。
+- reconcile 在异步读取完成后、同步清理前必须再次核对 captured marker 仍是当前同次操作与阶段，且 controller 未 running/disposing；HTTP→WS 即使沿用 opId 也不能让旧 HTTP 证据清除 WS 阶段。两个页面的旧查询不得清除后续操作的 marker。controller 归属一次宿主 apply 生命周期；卸载取消自有等待、失效 generation，禁止后续发送、订阅和日志修改，已发送但未知的 marker 保留。再次 apply 使用当前持久保护，不复活旧异步任务；旧实例的 finally/确认结果不得改写新实例状态或日志。
 - 另一个解锁依据是可靠 bridge restart proof：记录 GET stats 的请求时间区间和 `floor(uptimeSec)`，推导保守服务启动区间 `I=[requestStart-(uptimeSec+1)s, responseEnd-uptimeSec*s]`。新区间必须整体晚于 marker 的最晚可能发送/生效边界，且与旧服务区间不重叠；版本、origin 或时钟连续性无法确认、时间跳变、区间重叠时一律保持 unknown。人工重启后仍须刷新取证，不将 Date 时钟变化当重启。
 - marker 在每个可能启动采集的发送阶段前持久记录/更新 `dispatchNotAfter` 与覆盖该 HTTP/WS 初始化截止的 `activeUntil`，HTTP→WS延展之间不能出现无日志窗口；发送必须处于有限 dispatch 窗口且 wall/monotonic 连续性有效，逾期不发送。重启证明使用 `activeUntil` 这一保守上界，覆盖 fsync→发送之间重启及可能在途请求，不能仅用 admission 时间。只对已证明未发送的分支清理 marker；无法证明则保留安全可恢复状态。
 - **取舍/覆盖**：接受少量不确定场景需要人工重启外部服务再核实，换取不会误解锁和串房间；不自研分布式框架。AC-06/08/09。
@@ -162,6 +163,7 @@ sequenceDiagram
 - **身份/安全**：沿用 owner identity；未认证 GET 与 POST 必须在完整安装路径检查 401/拒绝，fixture 测试身份不能代替生产鉴权。全局 service 与用户 profile 不属于 controller。
 - **状态一致性**：UI target draft 与 active snapshot 分离；轮询可读但不 mutation；异步结果附操作/目标/revision 归属；保留 source generation、Bili lease、target epoch 和 ending 处理，避免新 controller 取代已有保护。
 - **设计**：既有 `dl-*`、文本/语义与 responsive 规则优先；新增 inline warning/unknown/retry 提示，不暴露内部 journal/protocol 实现细节。复用已确认 mouse/Enter/焦点范围，完整键盘段不开展新实验。
+- **未知结果呈现**：明确标出“操作结果未确认”、当前受保护房间及不能重试/切换的原因，显示有依据的恢复提示；具体错误单独去重，不以两遍普通请求失败替代 unknown 状态。停止终态的语义截图等待既有 SSE 的订阅 idle 后再捕获。
 - **可验证性**：controller 注入 HTTP、clock、store 边界，测试用真实宿主 handler 与确定性受控 collector；关键结论必须断言外部请求目标/次数、磁盘内容及最终业务状态，不能只断言提示文字。
 
 #### 风险与取舍
@@ -306,9 +308,43 @@ npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-
 - 本 Plan 仅静态读取源码/测试/固定上游/API和 package/config，核对 lifecycle `start-feature` / `add-task`、Vitest run 与 e2e run `--help`。未运行业务检查、Mermaid预览、浏览器或服务，不能宣称AC通过。
 - 正式Validate必须在当前集成业务树干净且Task完成时绑定候选commit；固定覆盖基线为f59a586，不能重用旧Feature报告。该目录内文字更新不自动使旧业务证据覆盖新要求。
 
+### 独立 Validate（2026-11-10，当前交付范围）
+
+- **结论：PASS**；被测业务提交 `6df2c24653793f100c43de19c9ec7e30e1c0c508`，固定差异基线 `f59a586c69c81b800cf9a11f57268c528d980484`。执行前业务树干净，TASK-003 为 done；不把 Build 结果作为本次证明。运行 UTC 04:04–04:06（本地 12:04–12:06），Node 26.13.0、pnpm 12.18.0、Vitest 3.2.4、e2e 0.23.0、HeadlessChrome 156.0.8078.4。桌面 1440×900、窄屏 375×812；严格只读 cache、workers 1、retries 0、trace on、套件限时 600000 ms，无 agent/model 步骤。
+- 首次受限沙箱运行：coverage 命令 exit 1，62 文件中 4 失败，299 passed / 5 failed / 16 skipped，4 个未处理错误；loopback `listen EPERM` 导致 source/collector 测试超时或跳过，另 `macosTts` ffprobe 报无有效 MP3 帧。首次 Douyin Web exit 2，绑定 loopback `EPERM`，0 测试。原始输出分别为 `packages/dsh-livestream/.e2e/feat-003-validate-vitest.log`、`feat-003-validate-douyin.log`。随后允许隔离回环后执行同一完整套件和 Web；包括先前音频失败在内均通过。这里证明受限运行失败在允许回环的环境下未复现，不单凭复测断言音频失败的具体根因。
+
+| 实际命令（仓库根目录，除 Web 外） | 退出 / 结果 |
+|---|---|
+| `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-003-validate`（允许本地回环） | 0；62 文件，312 passed、8 skipped；完整套件兼 coverage，日志 `.e2e/feat-003-validate-vitest-escalated.log`。 |
+| `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check` | 0；TypeScript 检查通过。 |
+| `node packages/dsh-livestream/test/coverage-diff.mjs f59a586c69c81b800cf9a11f57268c528d980484 packages/dsh-livestream/coverage/feat-003-validate/coverage-final.json` | 0；变更行 651/726 = 89.67%，分支 401/494 = 81.17%，分别达到 80%/70%。 |
+| `node build.mjs`（独立 `/private/tmp/dsh-feat003-validate.S5G05R`，仅复制 src/build/package、链接现有 node_modules） | 0；构建四个入口，临时目录已删除，生产 lib 未覆盖。 |
+| `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000`（包目录，允许本地回环） | 0；12/12，开始 12:05:01，20.79s；日志 `.e2e/feat-003-validate-douyin-escalated.log`。 |
+| `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-voice-regression.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000`（包目录，允许本地回环） | 0；6/6，开始 12:05:46，9.56s；日志 `.e2e/feat-003-validate-voice.log`。 |
+
+| 当前 AC | 状态 | 本次实际证据（均为隔离 synthetic 范围） |
+|---|---|---|
+| 01 | COVERED | `douyinConsole` 与双视口 atomic-target / douyin Web：主页草稿、已保存目标、输入及权限提示。 |
+| 02 | COVERED | `roomControlQuery`、`douyinConsole`、`roomTargetPersistence` 和 atomic-target Web：原子保存、stale revision、失败草稿与刷新保留。 |
+| 03 | COVERED | `liveTarget`、`douyinConsole` 和双视口 Web：字符串精度、URL/无效输入和平台保存。 |
+| 04 | COVERED | `douyinSource` 与 Web：健康/连接中不等于 live，目标 live 确认后事件进本地舞台，旧目标隔离。 |
+| 05 | COVERED | `douyinControlRecovery`、`roomControlIntegration`、`douyinRoutes` 和 Web：匿名账号、拒绝/未知、空态和不虚报连接。 |
+| 06 | COVERED | `roomControlIntegration`、`douyinSource`、`douyinControlRecovery` 和 Web：显式重试重建、断开不自动重订阅、未知操作保护。 |
+| 07 | COVERED | `roomControlIntegration` 和 Web：仅断开不发 stop，确认后先 detach、仅发送 `/api/rooms/123/disconnect`；请求目标与数量可核对，未操作全局服务。 |
+| 08 | COVERED | `douyinControlRecovery`、`douyinControlJournal`、`roomControlQuery`：迟到创建、404/stop、重载 unknown、持久化失败、ABA 与正向 session/account 证据。uptime/重启不单独自动解锁；无连续时钟证明时继续保护。 |
+| 09 | COVERED | `roomControlQuery`、`biliConnectLease`、`obsLease`、`broadcastLifecycle`、`showEndingDisconnect`、target retirement 与 Web 目标切换回归。 |
+| 10 | COVERED | 同次完整 suite 的 Bili cancel/lease、彩排、声音/路由回归及双视口 voice Web 6/6；TTS provider 为替身，两个既有离线 macOS say 测试除外。 |
+| 11 | COVERED | 双视口 Web 18/18、页面溢出/错误与 sharedRequests 断言、已有 Enter/焦点子集；根 README 与抖音指南导航及匿名/unknown 限制已对照 synthetic 操作。完整键盘旅程按用户决定延期。 |
+
+- Web 原始 JUnit、trace、截图与 fixture 日志归档于 `packages/dsh-livestream/.e2e/archive/feat-003-validate-6df2c246/{feat-003,feat-003-voice}/`；Build 原始目录在覆盖前保存于 `packages/dsh-livestream/.e2e/archive/feat-003-before-validate-6df2c246/`，先前失败证据仍保留。coverage JSON 位于 `packages/dsh-livestream/coverage/feat-003-validate/coverage-final.json`。旧 Build 记录所引 `.e2e/feat-003{,-voice}/` 原快照见 before-validate 归档。
+- 资源：fixture 使用临时 DSH_HOME、动态 loopback、stage stub；Web 浏览器和 fixture 均断言共享 3080/3081/7390/8757 请求为 0。Douyin app 60635/60636、bridge 60643/60651 的日志记录 shutdown；voice app 60948/60949，voice fixture 日志为空。UTC 04:06:32 以 `lsof` 检查上述六端口及四共享端口无监听（exit 1），按运行相关命令筛查无残留进程；未启动、停止或重启共享服务。测试没有访问真实房间、凭据、用户 profile、GLM、yovoice 或云服务；两条既有短 macOS `say` 测试使用系统语音，未播放。
+- **范围限制**：真实 Harness owner 鉴权、安装 UI 与 fresh unpack 留 Ship；真实房间、礼物、长期稳定、GLM、真实 TTS/听感、外部并发账号/房间 mutation、完整键盘旅程均未证明。所有账号匿名且控制期间不由外部并发修改为部署前提；本次不将 synthetic 通过外推到真实部署。
+
 ## 评审记录（实际）
 
-- 尚未进行本Feature独立Review。主Agent先前采用的只读协议分析是Plan输入，不是实现审查；最终Review需核对当前diff、文档参数、覆盖/截图和真实安装证据边界。
+- 2026-11-10，独立 `unified_review` 对 baseline `f59a586…` 到已验证 `6df2c24653793f100c43de19c9ec7e30e1c0c508` 累计审查，结论 changes_requested；主 Agent 已记录并将同一 TASK-003 合法恢复为 in_progress。尚未发布或安装候选。
+- 必须修正：P1，异步 reconcile 的旧 marker 响应可清除后续新操作日志，需清理时再核对同次操作/阶段及当前 controller 状态；P2，controller 缺卸载生命周期，预检或 HTTP 后仍可发 mutation/重新订阅，需取消自有等待并保护已发送日志；P2，unknown 被两遍普通错误替代，需明确未知状态、保护范围/原因和恢复说明且去重。独立 reviewer 的两项零网络内存探针复现前两项；首次封装加载失败后修正探针，两探针 exit 0，未改生产源码。
+- 已覆盖累计 diff、D1–D3、DTO、owner 路由、journal、source/Hub/Show、Bili 取消、匿名部署、usage 参数及双视口截图；未发现有证据支持的重复实现或其他可避免工程债。停止截图的“已停止＋连接中”处于既有一秒 SSE 更新窗口，当前证据不证明持续错误；后续截图应等待 subscription idle。真实部署/fresh-unpack/owner 与实房间范围仍待后续对应检查，完整键盘继续延期。
 
 ## 发布与观察记录（实际）
 
@@ -329,3 +365,19 @@ npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-
 - `node packages/dsh-livestream/test/coverage-diff.mjs f59a586c69c81b800cf9a11f57268c528d980484 packages/dsh-livestream/coverage/feat-003-build/coverage-final.json`：exit 0，变更行 651/726（89.67%），分支 401/494（81.17%）。`npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check`：exit 0；`git diff --check`：exit 0。`node build.mjs` 在独立 `/private/tmp/dsh-feat003-final.zXIvyW` 副本中链接现有依赖并执行，exit 0；未覆盖生产 `lib`，临时构建目录已删除。
 - `pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000`：exit 0，桌面/窄屏共 12/12；`.e2e/feat-003/junit.xml` 与对应 trace/截图。`pnpm exec e2e run --config e2e-voice-regression.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000`：exit 0，6/6；`.e2e/feat-003-voice/junit.xml`。环境均 `npm_config_manage_package_manager_versions=false`、严格只读 cache、无 agent/model 步骤，浏览器和 fixture 进程均断言共享端口 3080/3081/7390/8757 请求为 0。synthetic 旅程覆盖 usage 的保存、连接、同页重试、断开和停止；真实 Harness owner 鉴权/实际安装、真实房间、真实礼物、长期稳定性、真实模型和语音仍未验证。
 - 最终独立 fixture app 端口 59687/59688、bridge 59693/59701，声音 fixture 59864/59865；fixture log 记录 shutdown，`lsof -nP -iTCP:<各端口> -sTCP:LISTEN` exit 1、无监听。未触碰共享服务；独立临时目录已清理。完整键盘旅程依用户决定延期。
+
+### TASK-003 Review 修正批次 1（2026-11-10）
+
+- 基于已验证候选 `6df2c24653793f100c43de19c9ec7e30e1c0c508` 的未提交修正；累积覆盖基线仍为 `f59a586c69c81b800cf9a11f57268c528d980484`。未修改 state、REQ、旧 Feature、上游或共享后端，未 commit/push。修正涉及的源码、测试与配置 SHA-256 清单保存在 `packages/dsh-livestream/.e2e/feat-003-correction-1-build/source-sha256.txt`；运行时实际模型元数据不可见。
+- **P1 marker 清理归属**：异步对账后仅在 controller 未运行、未卸载且持有的 journal marker 仍为捕获时同一对象时清理；HTTP→WS 即使 opId 相同也不会把旧阶段视为当前 marker。`douyinControlOwnership.test.ts` 对 account/connect 分别构造两个旧查询，先清旧 marker，再产生新 unknown，最后释放第二个旧响应并核对新 marker 仍在内存和磁盘；另测同 opId 的 HTTP→WS 阶段变化及卸载后迟到查询。
+- **P2 生命周期**：controller 由每次 `apply()` 新建并通过对应 `ctx.effect` 清理。卸载使 generation 失效、取消并 abort 自有 HTTP 等待和 WS 初始化等待；卸载后禁止发送、订阅及修改日志，已发送但未知的 marker 保留。定向测试覆盖 connect/stop 预检卸载、HTTP 回应待定、HTTP 成功后账号复查阶段、WS 等待期间卸载和晚到结果；`roomControlLifecycle.test.ts` 经真实注册 handler 检查正常再次 apply、未决 marker 的再次 apply、revision 更新及旧响应不能清除新实例保护。abort 不作为远端取消证明。
+- **P2 unknown 展示**：主页以独立“操作结果未确认”说明受保护的抖音房间、不得更换目标/重试/停止的原因及恢复提示；具体错误去重。双视口 Web 断言文案、保存/连接禁用、实际 mutation 次数及零共享请求。停止终态截图等待订阅状态回到 idle；不承诺重启必然解锁。
+- 执行前将原 Build/Validate Web、bundle、覆盖率及 Validate 日志复制至 `.e2e/archive/feat-003-before-review-correction-1/`；修正输出独立使用 `.e2e/feat-003-correction-1*` 与 `coverage/feat-003-correction-1`。未重开完整键盘旅程。
+
+### TASK-003 Review 修正验证（实际，待重新独立 Validate/Review）
+
+- `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream exec vitest run --coverage --coverage.reportsDirectory coverage/feat-003-correction-1`：exit 0；64 文件、322 通过、8 既有跳过，日志 `.e2e/feat-003-correction-1-build/vitest.log`。既有两项短文本 macOS `say`/ffprobe 系统回归执行；无 GLM、yovoice、豆包或真实直播间调用。
+- `node packages/dsh-livestream/test/coverage-diff.mjs f59a586c69c81b800cf9a11f57268c528d980484 packages/dsh-livestream/coverage/feat-003-correction-1/coverage-final.json`：exit 0，累积变更行 702/778（90.23%）、分支 452/552（81.88%）。`npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check` 和 `git diff --check` 均 exit 0。
+- `node build.mjs` 在 `/private/tmp/dsh-feat003-correction-1.HhjXYc` 隔离副本中使用现有依赖执行，exit 0；后续 `diff -qr src <副本>/src` exit 0，确认同一源码；副本已删除，未覆盖生产 lib。
+- 包目录 `npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-douyin.config.ts --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000`：exit 0，桌面/窄屏共 12/12；声音配置同命令将 config 换为 `e2e-voice-regression.config.ts`：exit 0，6/6。严格只读 cache、无 agent/model 步骤，浏览器及 fixture 均断言共享端口请求为 0。结果、JUnit、trace 和截图在 `.e2e/feat-003-correction-1/`、`.e2e/feat-003-correction-1-voice/`。
+- fixture app 端口 64087/64088、bridge 64095/64101、声音 fixture 64289/64290；shutdown 后专属端口 `lsof` 无监听（exit 1）。主 Agent 保留的 yovoice PID 61390 和 DyHub PID 61490 以 `ps` 只读核对仍在（exit 0）；未连接、停止或修改两者。真实 Harness owner 鉴权、实际安装、实房间、真实礼物/长期稳定和真实模型/语音仍待后续验证。

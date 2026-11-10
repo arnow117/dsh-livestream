@@ -72,9 +72,11 @@ let stageRequests = 0;
 (runtime.show as any).hooks.push = async (_session: string, prompt: string) => { prompts.push(prompt); return true; };
 (runtime.show as any).hooks.synthesize = async () => null;
 const routes = new Map<string, (request: Request) => Response | Promise<Response>>();
+let disposeRoomControl = () => {};
 host.apply({
   effect(effect: () => unknown, label?: string) {
-    if (['state', 'settings', 'room control', 'connect', 'disconnect', 'collector stop', 'onair', 'offair', 'events', 'simulate'].includes(label ?? '')) effect();
+    if (label === 'dsh-livestream room control') disposeRoomControl = effect() as () => void;
+    else if (['state', 'settings', 'room control', 'connect', 'disconnect', 'collector stop', 'onair', 'offair', 'events', 'simulate'].includes(label ?? '')) effect();
   },
   provide() {},
   connection: { fetch: { register(route: { path: string; fetch: (request: Request) => Response }) { routes.set(route.path, route.fetch); return () => {}; } } },
@@ -187,6 +189,7 @@ const app = createServer(async (req, res) => {
 app.listen(port, '127.0.0.1');
 const shutdown = () => {
   console.log(`fixture shutdown: app ${port}, bridge ${address.port}`);
+  disposeRoomControl();
   runtime.show.dispose();
   for (const socket of sockets.clients) socket.terminate();
   sockets.close();

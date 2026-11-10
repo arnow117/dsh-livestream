@@ -103,7 +103,7 @@ commands:
 | 核心验证能力 | 已有确定性 API/持久化/请求参数、stage 零事件、错误恢复、取消、键盘与宽度断言及截图。provider 替身音频不能证明真实音频可解码、听感或生产播放；主 Agent 的真实浏览器/yovoice 有界检查单独记录，截图不代替业务断言。 |
 | 模型、身份与预算 | E2E 仅精确 locator，无 `agent.*`、模型 provider 或真实凭据，模型调用预算 0；fixture 注入测试身份/环境。业务 GLM 模型由部署配置维持，不因 TTS 改变。不得将真实 token 或认证 URL 写入产物。 |
 | 环境与资源隔离 | 两套 E2E 均用 `127.0.0.1:0`、runner `{port}`/app.command、临时 DSH_HOME；新桥接也使用专属 ephemeral WS/HTTP 端口。新旧 fixture 都将 stage URL 指向自身 `/__stage` stub，测试拦截 `127.0.0.1/localhost` 的 3080/3081/7390/8757 并断言零访问，避免 iframe 静默访问共享 Stage。fixture 只清理自有资源，不能操作用户 Chrome、真实 profile、GLM/TTS、共享 Harness/Stage/DyHub。 |
-| 产物 | `coverage/feat-001/` 为旧兼容默认，当前功能用 `coverage/feat-003-build/` / `feat-003-validate/`。当前 Web 输出 `.e2e/feat-003/`、`.e2e/feat-003-voice/`；旧 Feature 报告保留在各自编号目录。保存 report/JUnit/trace/截图/fixture.log，launcher bundle 位于 `.e2e/feat-003-build/`、`.e2e/feat-003-voice-build/`；旧失败证据归档 `.e2e/archive/`。包内 `.e2e/`、`coverage/` 忽略，原始报告不入 Git/state。 |
+| 产物 | `coverage/feat-001/` 为旧兼容默认，当前功能用 `coverage/feat-003-build/` / `feat-003-validate/`。当前 Web 输出 `.e2e/feat-003-correction-1/`、`.e2e/feat-003-correction-1-voice/`；旧 Feature 报告保留在各自编号目录。保存 report/JUnit/trace/截图/fixture.log，launcher bundle 位于 `.e2e/feat-003-correction-1-build/`、`.e2e/feat-003-correction-1-voice-build/`；旧失败证据归档 `.e2e/archive/`。包内 `.e2e/`、`coverage/` 忽略，原始报告不入 Git/state。 |
 | 缓存与独立验证 | 配置显式 `cache.mode: read-only`、`strict: true`、workers=1、retries=0；每测试 120 秒，动作/断言各 5 秒，实际命令另限整次 10 分钟。严格缓存不保证零模型调用，零调用来自无 Agent 步骤/模型配置；正式 Validate 独立运行已提交测试，不能以实现者证据或浏览器探索替代。 |
 | CI | 未发现 `.github/` 或仓库内 CI 配置；目前为本机命令验证。 |
 | 准备边界 | 本次 onboard 未执行业务检查；实际命令/退出结果、测试数、覆盖率数值、候选版本与阶段只保留在 Feature 工程证据，project.md 仅索引稳定入口。 |

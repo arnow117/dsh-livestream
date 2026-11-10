@@ -540,6 +540,9 @@ export function Console() {
   const show = status ?? host?.show ?? null;
   const settings = host?.settings;
   const douyin = settings?.livePlatform === 'douyin';
+  const unknownOperation = roomControl?.operation.state === 'unknown' ? roomControl.operation : null;
+  const protectedRoom = unknownOperation?.target ?? settings?.douyinRoomId;
+  const unknownDetail = unknownOperation?.error ?? roomError;
   let roomIsSaved = false;
   try {
     roomIsSaved = platformDraft === settings?.livePlatform && (platformDraft === 'douyin'
@@ -702,7 +705,7 @@ export function Console() {
           <label htmlFor="live-room">{platformDraft === 'douyin' ? '抖音房间号或完整直播间地址' : 'B 站直播间房间号'}</label>
           <div className="dl-row">
             <input id="live-room" value={room} placeholder={platformDraft === 'douyin' ? '数字房间号或 https://live.douyin.com/数字' : '直播间网址最后那串数字'} onChange={(event) => setRoom(platformDraft === 'douyin' ? event.target.value : event.target.value.replace(/\D/g, ''))} />
-            <button disabled={busy || !room} onClick={saveRoom}>保存</button>
+            <button disabled={busy || !room || !!unknownOperation} onClick={saveRoom}>保存</button>
             {conn === 'idle' && !connectPending
               ? <button disabled={busy || !roomIsSaved || (!!roomControl && roomControl.operation.state !== 'idle') || (localRehearsal && !douyin)} onClick={() => roomAction('connect', { action: 'connect' })}>连接</button>
               : <button onClick={() => roomAction('disconnect')}>断开订阅</button>}
@@ -712,12 +715,19 @@ export function Console() {
           <p className="dl-hint" aria-live="polite">连接状态：{connectPending ? '连接中' : CONN_TEXT[conn] ?? conn}</p>
           {douyin && <p className="dl-hint">采集服务：{roomControl?.bridge === 'online' ? '可用' : roomControl?.bridge === 'offline' ? '不可用' : '正在检查'}；房间状态：{COLLECTOR_TEXT[roomControl?.collector ?? 'unknown']}</p>}
           {douyin && <p className="dl-hint">断开订阅只停止本插件接收，采集可能继续运行。</p>}
-          {douyin && roomControl?.operation.state === 'unknown' && <p role="alert" className="dl-error">{roomControl.operation.error}</p>}
+          {unknownOperation && (
+            <div role="alert" className="dl-error">
+              <strong>操作结果未确认</strong>
+              <p>抖音房间 {protectedRoom || '未确定'} 受到保护：结果未确认前不能更换目标、重试或停止采集。</p>
+              {unknownDetail && <p>{unknownDetail}</p>}
+              {unknownOperation.recoveryHint && <p>{unknownOperation.recoveryHint}</p>}
+            </div>
+          )}
           {douyin && settings?.douyinRoomId && <div className="dl-row">
             <label className="dl-check"><input type="checkbox" checked={confirmStop} onChange={(event) => setConfirmStop(event.target.checked)} /> 确认停止抖音 {settings.douyinRoomId} 的采集，会影响使用该房间的其他程序</label>
             <button disabled={!confirmStop || busy || roomControl?.operation.state !== 'idle'} onClick={() => roomAction('collector/stop', { confirmSharedEffect: true })}>停止此房间采集</button>
           </div>}
-          {roomError && <p role="alert" className="dl-error">{roomError}</p>}
+          {roomError && !unknownOperation && <p role="alert" className="dl-error">{roomError}</p>}
           {!roomIsSaved && <p className="dl-hint">请先保存房间，再连接。</p>}
           {localRehearsal && platformDraft === 'bilibili' && <p className="dl-hint">本地彩排模式不能连接 B 站直播间。</p>}
           {!douyin && settings?.roomId ? (

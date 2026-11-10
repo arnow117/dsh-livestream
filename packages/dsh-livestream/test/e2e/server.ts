@@ -57,9 +57,11 @@ let failNextSave = false;
 const unsubscribe = runtime.show.stage.subscribe(() => { stageEvents++; }, false);
 stageEvents = 0;
 const routes = new Map<string, (request: Request) => Response | Promise<Response>>();
+let disposeRoomControl = () => {};
 host.apply({
   effect(effect: () => unknown, label?: string) {
-    if (['dsh-livestream credentials', 'state', 'settings', 'tts preview'].includes(label ?? '')) effect();
+    if (label === 'dsh-livestream room control') disposeRoomControl = effect() as () => void;
+    else if (['dsh-livestream credentials', 'state', 'settings', 'tts preview'].includes(label ?? '')) effect();
   },
   provide() {},
   connection: { fetch: { register(route: { path: string; fetch: (request: Request) => Response }) { routes.set(route.path, route.fetch); return () => {}; } } },
@@ -131,6 +133,9 @@ const http = createServer(async (req, res) => {
   }
 });
 http.listen(port, '127.0.0.1');
-const shutdown = () => http.close(() => { unsubscribe(); void rm(dir, { recursive: true, force: true }).then(() => process.exit(0)); });
+const shutdown = () => {
+  disposeRoomControl();
+  http.close(() => { unsubscribe(); void rm(dir, { recursive: true, force: true }).then(() => process.exit(0)); });
+};
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

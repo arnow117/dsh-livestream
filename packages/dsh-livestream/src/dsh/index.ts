@@ -38,9 +38,7 @@ interface HostContext {
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const fail = (message: string, status = 400) => json({ ok: false, error: message }, status);
-const roomControl = new DouyinRoomControl(dataDir);
-
-function roomControlSnapshot(): RoomControlSnapshot {
+function makeRoomControlSnapshot(roomControl: DouyinRoomControl): RoomControlSnapshot {
   const platform = settings.livePlatform;
   return {
     controlRevision: roomControl.revision,
@@ -89,7 +87,7 @@ async function controlBody<T>(request: Request): Promise<T | null> {
   }
 }
 
-function state() {
+function makeState(roomControl: DouyinRoomControl) {
   let douyinBridgeUrl: string;
   try {
     douyinBridgeUrl = normalizeDouyinBridgeUrl(process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL ?? 'http://127.0.0.1:8757');
@@ -103,7 +101,7 @@ function state() {
     settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined },
     runtime: { localRehearsal, ttsBackend: settings.tts.backend },
     douyinBridgeUrl,
-    roomControl: roomControlSnapshot(),
+    roomControl: makeRoomControlSnapshot(roomControl),
     stageUrl: server.url,
     characters: packs.list('characters'),
     templates: packs.list('templates'),
@@ -234,6 +232,10 @@ async function resumeLive(ctx: HostContext, stopped: () => boolean): Promise<voi
 }
 
 export function apply(ctx: HostContext): void {
+  const roomControl = new DouyinRoomControl(dataDir);
+  const roomControlSnapshot = () => makeRoomControlSnapshot(roomControl);
+  const state = () => makeState(roomControl);
+  ctx.effect(() => () => roomControl.dispose(), 'dsh-livestream room control');
   ctx.effect(() => {
     const secret = async (name: string) => {
       const credentials = ctx.get?.('credentials');
