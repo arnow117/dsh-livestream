@@ -135,6 +135,40 @@
         "commit": "8a9572d163da5128eab8fdd22034ebdc1eca31fc",
         "result": "fail"
       }
+    },
+    "FEAT-006": {
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-11T02:19:50Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-006.engineering.md",
+      "id": "FEAT-006",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-010",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "planned",
+      "tasks": {
+        "FEAT-006-T001": {
+          "depends_on": [],
+          "id": "FEAT-006-T001",
+          "status": "todo",
+          "title": "交付直播会话目录、Skill 与受限资料配置完整旅程",
+          "updated_at": "2026-11-11T02:19:50Z"
+        }
+      },
+      "updated_at": "2026-11-11T02:19:50Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
     }
   },
   "requirements": {
@@ -273,13 +307,13 @@
       ],
       "description": "主人在现有直播控制台保存工作目录、显式 Skill 来源和指定资料范围；从该控制台发起的下一次新直播会话固定采用已保存快照，并核对 Skill 实际加载与指定资料受限只读读取。仅 owner 可管理，不增加 Shell/写入/插件安装/通用文件权限；课程按 REQ-008 消费此能力。",
       "domain": "livestream-capabilities",
-      "feature_id": null,
+      "feature_id": "FEAT-006",
       "id": "REQ-010",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
-      "status": "ready",
+      "status": "in_delivery",
       "title": "直播会话的工作目录与 Skill 设置",
-      "updated_at": "2026-11-11T01:51:56Z"
+      "updated_at": "2026-11-11T02:19:50Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
