@@ -311,3 +311,7 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 - **MEDIUM（已处置：修订表述）**：上文「需求到契约与验证」表 FR05 行原声称验证 200/204/304/400/429/5xx；实际专测仅覆盖 200/304/5xx，AWC 204 空观测分支（`src/body/weather.ts:138` 缓存空结果返回 limited）无测试驱动，400/429 经 `!response.ok` 同分支间接覆盖。行为经评审代码走查未发现缺陷；主 Agent 选择修订该行表述为实际覆盖（见上表），204 专测与来源 URL 去重一并登记为残留，留待下次触碰天气代码的修正段补齐，不为本项单独触发重验证。
 - **LOW（已知局限，暂不修）**：`src/body/readOnlyQuery.ts` 结构化 JSON 行路径挑选来源时不按 URL 去重（纯文本回退路径有 `seen` 去重），同一链接多行可重复进入 sources 挤占 3 来源预算，且 `console.tsx:305` 以 source.url 作 React key 产生重复 key。属展示质量，无安全或事实正确性后果；与 MEDIUM 残留同一批处理。
 - 其余镜头结论：模块边界/安全（固定端点、1MiB 上限、凭据隔离、publicUrl 校验、缓存 0600 原子写、转义与脱敏）/服务端（规范化拒绝负例 8 组、同轮冻结、失效检查覆盖提交前/正文接纳前/TTS 前/队列前/舞台广播、取消路由三重匹配）/客户端（时间区分、date-only 不补造）/qa 抽查关键路径断言均到位。
+
+### 合并候选上的验证重建（2026-11-11，通过）
+
+FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效（业务路径变化须重新验证）。FEAT-006 的独立 Validate 在合并候选 04746f6bc0062eb8313e07f37be993768e9e3eee（= e20f22da 业务内容 + FEAT-006 实现，本 Feature 生产文件在该候选上与已评审内容的一致性由 FEAT-006 评审对本 Feature diff 的覆盖承接）上执行了全套件与本 Feature 全部入口：完整 Vitest（含本 Feature 全部测试）84 文件 544 通过/8 跳过 exit 0、e2e-query 10/10、离线原生入口 exit 0、真实原生入口单次 exit 0（两题 evidence、第 2 题逐字原文、预算内 model 4/4/mcp 1/2/tts 0）。六项必要检查在合并候选上全部保持通过；证据明细存于 FEAT-006.engineering.md 同日验证记录与 smoke/readonly-tools/validate-feat-006/。本 Feature 状态按该证据在合并 HEAD 重建 validation（pass）与 review（approved，评审主体为本文件上文的正式 sdlc-review 结论；共享文件在 FEAT-006 变更后的行为由 FEAT-006 独立验证的三套回归与 e2e-query 复核）。
