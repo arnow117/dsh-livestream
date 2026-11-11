@@ -101,7 +101,7 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 | FR01/03，SCN01/02/04 | 区域内单站观测与日期模式预报 | 0℃/VRB、秒时间、新鲜度/站点限制、跨日/单位/覆盖、不伪造极值；真实adapter成功 |
 | FR02/07，SCN03/09 | 可信地点→精确行政身份→完整PIP | city/state直辖别名、省/叶错配、歧义、holes/MultiPolygon/边界/邻区站、非法坐标 |
 | FR04/06，SCN01/05/08 | 原生预设/工具admission/QueryResult | 三工具及原文参数、native tool_result续答、UI来源时间、真实GLM/语音/播放分层 |
-| FR05，SCN06 | 固定源/15秒/global busy/缓存/无重试 | 200/204/304/400/429/5xx，损坏/超限/空/过期/缓存reload/原子失败/abort |
+| FR05，SCN06 | 固定源/15秒/global busy/缓存/无重试 | 200/304/5xx 专测；204 空观测分支与 400/429 无专测、经 `!response.ok`/空结果路径间接覆盖（正式评审 MEDIUM 记录为残留，行为走查未发现缺陷），损坏/超限/空/过期/缓存reload/原子失败/abort |
 | FR03/07，SCN05/07/09 | public MCP SDK与安全来源 | 原文query/schema/GET405、双层profile/公开许可、可核对URL必要参数/凭据脱敏 |
 | FR08/09，SCN10～13 | QueryTurns/主人取消/lease/舞台能力 | geo/天气延迟与缓存命中后取消；query/model/TTS/队列失效；三模式及断订阅后新主人query；旧舞台/断线交错 |
 
@@ -303,3 +303,11 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 6. e2e-query（workers 1/retries 0/trace on/max-duration 600000）退出 0：10/10 通过（JUnit failures=0/errors=0），fixture 日志各停止行 sharedRequests=0 externalRequests=0，报告/JUnit/trace/截图留存 .e2e/feat-004-build/。
 
 脱敏证据（0600）：smoke/readonly-tools/validate-feat-004-2/real-mode-20261111-{result,scenario-1,scenario-2}.json；key 泄漏扫描 14 个产物文件均未发现。收尾核对：git status 无新增已跟踪修改；无自启进程残留；本轮临时 artifact 目录已清理；共享服务未触碰、未播出。结论：修正段 1 后六项必要检查全部通过，上轮 fail 项复验通过；真实 GLM 对逐字原文参数的遵循仍为单次样本，非确定假设保持不变；舞台/观众播放继续不在本轮范围（tts:0，audio=not_requested、not_tested）。
+
+### 正式 sdlc-review（2026-11-11，approved，执行环境：Claude Code 原生子代理）
+
+独立评审绑定候选区间 67d4df44..e20f22da（验证 commit e20f22da），全程只读、未运行测试/构建、未触网络；评审时工作树干净、src/test 与候选逐字节一致。结论：未发现 CRITICAL/HIGH。
+
+- **MEDIUM（已处置：修订表述）**：上文「需求到契约与验证」表 FR05 行原声称验证 200/204/304/400/429/5xx；实际专测仅覆盖 200/304/5xx，AWC 204 空观测分支（`src/body/weather.ts:138` 缓存空结果返回 limited）无测试驱动，400/429 经 `!response.ok` 同分支间接覆盖。行为经评审代码走查未发现缺陷；主 Agent 选择修订该行表述为实际覆盖（见上表），204 专测与来源 URL 去重一并登记为残留，留待下次触碰天气代码的修正段补齐，不为本项单独触发重验证。
+- **LOW（已知局限，暂不修）**：`src/body/readOnlyQuery.ts` 结构化 JSON 行路径挑选来源时不按 URL 去重（纯文本回退路径有 `seen` 去重），同一链接多行可重复进入 sources 挤占 3 来源预算，且 `console.tsx:305` 以 source.url 作 React key 产生重复 key。属展示质量，无安全或事实正确性后果；与 MEDIUM 残留同一批处理。
+- 其余镜头结论：模块边界/安全（固定端点、1MiB 上限、凭据隔离、publicUrl 校验、缓存 0600 原子写、转义与脱敏）/服务端（规范化拒绝负例 8 组、同轮冻结、失效检查覆盖提交前/正文接纳前/TTS 前/队列前/舞台广播、取消路由三重匹配）/客户端（时间区分、date-only 不补造）/qa 抽查关键路径断言均到位。
