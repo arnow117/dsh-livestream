@@ -152,17 +152,17 @@
         "by": null,
         "decision": "pending"
       },
-      "status": "planned",
+      "status": "in_progress",
       "tasks": {
         "FEAT-006-T001": {
           "depends_on": [],
           "id": "FEAT-006-T001",
-          "status": "todo",
+          "status": "done",
           "title": "交付直播会话目录、Skill 与受限资料配置完整旅程",
-          "updated_at": "2026-11-11T02:19:50Z"
+          "updated_at": "2026-11-11T04:22:50Z"
         }
       },
-      "updated_at": "2026-11-11T02:19:50Z",
+      "updated_at": "2026-11-11T04:22:50Z",
       "validation": {
         "at": null,
         "command": null,
@@ -313,7 +313,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
       "status": "in_delivery",
       "title": "直播会话的工作目录与 Skill 设置",
-      "updated_at": "2026-11-11T02:19:50Z"
+      "updated_at": "2026-11-11T04:22:50Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
