@@ -290,3 +290,16 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 2. **提示强化**：`public_search` 工具 description 与 query 参数说明（`src/dsh/agent.ts`，两个直播 preset 共用同一注册）及 `dsh-livestream-douyin` persona（`cordis.patch.yml`）统一改为：「query 必须逐字复制用户当前问题原文，不得改写、翻译、省略、添加或概括，最多 70 字」，并给出正例「OBS Studio许可证」。仅改说明文本，schema、参数定义、执行路径未动。
 
 先红后绿：实现前 8 项等价变体红灯（大小写、多余/连续空白、中英文标点、全半角标点），拒绝类负例当时即全绿；实现后定向 9 文件 83 项、全量 78 文件 487 通过/8 跳过（+17 恰为新测试）、coverage-diff 行 94.38%/分支 83.41%、typecheck、e2e-query 10/10（sharedRequests=0/externalRequests=0）全部退出 0。真实原生入口第 1 次调用（预算 1/2，无重试）退出 0：两题均 evidence，第 2 题实参为逐字原文 `{"query":"OBS Studio许可证"}`（string、无额外字段、failureCode=null），GLM 答 GPLv2；第 1 题天气链路继续 evidence（geocode 0 缓存命中/current 1）；总计 model 4/mcp 1/tts 0。脱敏证据 `smoke/readonly-tools/correction-feat-004-public-search/{result,scenario-1,scenario-2}.json`（0600），key 仅经环境变量注入。边界确认：规范化不含 NFKC（全角拉丁字母/数字不折叠）；query 省略原文中实际存在的空白仍拒绝（折叠而非删除）。真实通过为单次样本，模型遵循保持非确定假设，由独立 Validate 复核后才能关闭 SCN05/09。
+
+### 独立 Validate 复验（2026-11-11，通过：修正段 1 后全部必要检查通过，执行环境：Claude Code 原生子代理）
+
+本复验只读于实现，绑定业务候选 e20f22da85b31572f2cc186e77f24ddc3bda1cb0（记录时点的提交后 HEAD 为其仅文档差异的后代，业务内容一致；已核对 fd48d0a→e20f22d 仅含修正段 1 的 authorizesSearch 等价规范化、public_search 提示强化与 17 项新测试）。开始时 Turf 解析复核 exit 0。全部命令本轮实际执行，未复用历史证据：
+
+1. 完整 Vitest+V8 coverage（DSH_HOME=/private/tmp/feat004-validate2-home、排除 macosTts.test.ts、maxWorkers 1）退出 0：78 文件、487 通过、8 跳过，与修正段全量结果一致（487=470+17 恰为新测试）；报告 coverage/feat-004-validate-2/。
+2. coverage-diff 基线 67d4df44 退出 0：行 1159/1228（94.38%）、分支 709/850（83.41%）。
+3. typecheck 退出 0。
+4. 离线原生入口退出 0：weather_lookup（北京当前天气，limited，geocode 1/current 1/model 2）与 public_search（query 原文「OBS Studio许可证」，evidence，search 1/model 2），总数 model 4/mcp 1，证据 smoke/readonly-tools/validate-feat-004-2/offline-mode-20261111-result.json。
+5. 真实原生入口（--approve=search:2,model:4,tts:0,seconds:300，key 仅经环境变量注入，本轮仅运行 1 次无重试）退出 0：第 1 题天气 evidence（geocode 0 为公共缓存命中属预期，current 1/model 2，failureCode=null，来源含 AWC METAR bbox、Nominatim、OSM copyright 均可独立核对）；第 2 题 public_search evidence，实参为逐字原文 {"query":"OBS Studio许可证"}（string、无额外字段、failureCode=null），MCP search 1、来源 3 条。总计 model 4/4、search 1/2、tts 0/0，预算内；scopesDisposed=2，cleanup=finished。上一轮 Validate 记录 fail 的真实公开资料层（SCN05/09）本轮取得真实证据：等价规范化与提示强化后模型实际发送逐字原文，authorizesSearch 通过。
+6. e2e-query（workers 1/retries 0/trace on/max-duration 600000）退出 0：10/10 通过（JUnit failures=0/errors=0），fixture 日志各停止行 sharedRequests=0 externalRequests=0，报告/JUnit/trace/截图留存 .e2e/feat-004-build/。
+
+脱敏证据（0600）：smoke/readonly-tools/validate-feat-004-2/real-mode-20261111-{result,scenario-1,scenario-2}.json；key 泄漏扫描 14 个产物文件均未发现。收尾核对：git status 无新增已跟踪修改；无自启进程残留；本轮临时 artifact 目录已清理；共享服务未触碰、未播出。结论：修正段 1 后六项必要检查全部通过，上轮 fail 项复验通过；真实 GLM 对逐字原文参数的遵循仍为单次样本，非确定假设保持不变；舞台/观众播放继续不在本轮范围（tts:0，audio=not_requested、not_tested）。
