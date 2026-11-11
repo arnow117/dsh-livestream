@@ -118,7 +118,7 @@
         "by": null,
         "decision": "pending"
       },
-      "status": "in_progress",
+      "status": "validated",
       "tasks": {
         "FEAT-004-T001": {
           "depends_on": [],
@@ -128,12 +128,12 @@
           "updated_at": "2026-11-10T18:16:04Z"
         }
       },
-      "updated_at": "2026-11-11T02:15:32Z",
+      "updated_at": "2026-11-11T02:44:38Z",
       "validation": {
-        "at": "2026-11-11T02:15:32Z",
+        "at": "2026-11-11T02:44:38Z",
         "command": "cd packages/dsh-livestream && GLM_CODING_PLAN_API_KEY=<env-injected> node test/live-query/run.mjs --real --approve=search:2,model:4,tts:0,seconds:300",
-        "commit": "8a9572d163da5128eab8fdd22034ebdc1eca31fc",
-        "result": "fail"
+        "commit": "2d3ac8b6b304b983f2e47a11cd6f67e9e87f3e8e",
+        "result": "pass"
       }
     },
     "FEAT-006": {
@@ -250,9 +250,9 @@
       "id": "REQ-006",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-006.product.md",
-      "status": "in_delivery",
+      "status": "validated",
       "title": "直播 Agent 天气查询与公开资料搜索",
-      "updated_at": "2026-11-11T02:15:32Z"
+      "updated_at": "2026-11-11T02:44:38Z"
     },
     "REQ-007": {
       "created_at": "2026-11-10T08:22:08Z",
