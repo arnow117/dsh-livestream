@@ -272,18 +272,17 @@
     "REQ-008": {
       "created_at": "2026-11-10T08:22:08Z",
       "depends_on": [
-        "REQ-002",
-        "REQ-005"
+        "REQ-002"
       ],
-      "description": "复用既有Papermorph杠杆课件、现有直播控制台与舞台，合并owner技能/资料配置和课程弹幕互动；首版加载技能并受限读取指定资料，新增技能或更换主目录下次新会话生效、活动会话保持快照。保留GLM和yovoice问答、有条件自动续课、答题及调参；产品规格已接受，依赖REQ-002/005，未登记Feature/Task，不即时生成或执行脚本、不开放通用文件权限。",
+      "description": "复用既有Papermorph杠杆课件、现有直播控制台与舞台，合并owner技能/资料配置（由REQ-010/FEAT-006交付的能力承接）和课程弹幕互动；首版加载技能并受限读取指定资料，新增技能或更换主目录下次新会话生效。保留GLM和yovoice问答、有条件自动续课、答题及调参。运行约束（用户2026-11-11确认）：正式播出以专用屏幕全屏显示舞台的运行模式承载，REQ-005的失焦修复推迟不阻塞本条；SCN-20窗口状态证据范围相应限定，REQ-005后续交付时再扩展。产品规格已接受，依赖已重划为REQ-002。",
       "domain": "livestream-course",
       "feature_id": null,
       "id": "REQ-008",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-008.product.md",
-      "status": "captured",
+      "status": "ready",
       "title": "既有课件的直播讲解与弹幕互动",
-      "updated_at": "2026-11-10T14:19:34Z"
+      "updated_at": "2026-11-11T06:34:28Z"
     },
     "REQ-009": {
       "created_at": "2026-11-10T09:12:40Z",
