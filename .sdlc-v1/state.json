@@ -114,11 +114,11 @@
       },
       "requirement_id": "REQ-006",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-11T05:07:37Z",
+        "by": "claude-code-native-subagent/FEAT-004-sdlc-review",
+        "decision": "approved"
       },
-      "status": "validated",
+      "status": "reviewed",
       "tasks": {
         "FEAT-004-T001": {
           "depends_on": [],
@@ -128,11 +128,11 @@
           "updated_at": "2026-11-10T18:16:04Z"
         }
       },
-      "updated_at": "2026-11-11T02:44:38Z",
+      "updated_at": "2026-11-11T05:07:37Z",
       "validation": {
-        "at": "2026-11-11T02:44:38Z",
-        "command": "cd packages/dsh-livestream && GLM_CODING_PLAN_API_KEY=<env-injected> node test/live-query/run.mjs --real --approve=search:2,model:4,tts:0,seconds:300",
-        "commit": "2d3ac8b6b304b983f2e47a11cd6f67e9e87f3e8e",
+        "at": "2026-11-11T05:07:37Z",
+        "command": "cd packages/dsh-livestream && GLM_CODING_PLAN_API_KEY=<env-injected> node test/live-query/run.mjs --real --approve=search:2,model:4,tts:0,seconds:300（合并 HEAD 全套件与回归见 FEAT-006 验证记录）",
+        "commit": "af3e9b66ca10793861b47a76a6761700599e8c86",
         "result": "pass"
       }
     },
@@ -152,7 +152,7 @@
         "by": null,
         "decision": "pending"
       },
-      "status": "in_progress",
+      "status": "validated",
       "tasks": {
         "FEAT-006-T001": {
           "depends_on": [],
@@ -162,12 +162,12 @@
           "updated_at": "2026-11-11T04:22:50Z"
         }
       },
-      "updated_at": "2026-11-11T04:22:50Z",
+      "updated_at": "2026-11-11T05:07:37Z",
       "validation": {
-        "at": null,
-        "command": null,
-        "commit": null,
-        "result": "pending"
+        "at": "2026-11-11T05:07:37Z",
+        "command": "隔离副本 vitest --coverage（84文件544通过/8跳过）+ coverage-diff 81.11%/74.17% + e2e-session-context 4/4 + 三套回归 6/12/10 + SC-002 发行组合 49/49（详见 FEAT-006.engineering.md 验证记录）",
+        "commit": "af3e9b66ca10793861b47a76a6761700599e8c86",
+        "result": "pass"
       }
     }
   },
@@ -252,7 +252,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-006.product.md",
       "status": "validated",
       "title": "直播 Agent 天气查询与公开资料搜索",
-      "updated_at": "2026-11-11T02:44:38Z"
+      "updated_at": "2026-11-11T05:07:37Z"
     },
     "REQ-007": {
       "created_at": "2026-11-10T08:22:08Z",
@@ -311,9 +311,9 @@
       "id": "REQ-010",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
-      "status": "in_delivery",
+      "status": "validated",
       "title": "直播会话的工作目录与 Skill 设置",
-      "updated_at": "2026-11-11T04:22:50Z"
+      "updated_at": "2026-11-11T05:07:37Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
