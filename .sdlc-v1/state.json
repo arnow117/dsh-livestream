@@ -265,6 +265,21 @@
       "status": "cancelled",
       "title": "直播模式的技能与工作目录配置",
       "updated_at": "2026-11-10T09:29:14Z"
+    },
+    "REQ-010": {
+      "created_at": "2026-11-11T01:38:21Z",
+      "depends_on": [
+        "REQ-002"
+      ],
+      "description": "主人在现有直播控制台保存工作目录、显式 Skill 来源和指定资料范围；从该控制台发起的下一次新直播会话固定采用已保存快照，并核对 Skill 实际加载与指定资料受限只读读取。仅 owner 可管理，不增加 Shell/写入/插件安装/通用文件权限；课程按 REQ-008 消费此能力。",
+      "domain": "livestream-capabilities",
+      "feature_id": null,
+      "id": "REQ-010",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
+      "status": "captured",
+      "title": "直播会话的工作目录与 Skill 设置",
+      "updated_at": "2026-11-11T01:38:21Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
