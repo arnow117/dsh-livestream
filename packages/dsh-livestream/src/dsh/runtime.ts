@@ -84,6 +84,8 @@ export interface Settings {
   pace: Pace;
   /** 黑名单：主人拉黑的观众。她不欢迎、不回、不记、不看主页、不私信；别的程序（私信、运营）读这个文件也照着跳过 */
   blocked: BlockedViewer[];
+  /** 直播会话上下文保存记录（FEAT-006）：结构见 shared/sessionContext；损坏值原样保留并显示 invalid */
+  sessionContext?: unknown;
 }
 
 export interface BlockedViewer {
@@ -292,6 +294,12 @@ export const hooks: {
   complete: null,
   log: (level, message) => (level === 'warn' ? console.warn : console.log)(`[dsh-livestream] ${message}`),
 };
+
+/**
+ * FEAT-006：绑定会话的受限工具注册入口。agent 子插件加载后填这里，宿主路由（index.ts）创建管理会话后调用；
+ * 通过运行时回调接线而不是让 index.ts 静态 import agent 子插件（否则 dsh-tools 会进所有宿主端 bundle）。
+ */
+export const sessionTools: { bind: ((agent: any) => boolean) | null } = { bind: null };
 
 async function ttsAuth(voice: string): Promise<TtsAuth | null> {
   const [apiKey, appId, accessKey] = await Promise.all([hooks.secret(SECRETS.ttsApiKey), hooks.secret(SECRETS.ttsAppId), hooks.secret(SECRETS.ttsAccessKey)]);

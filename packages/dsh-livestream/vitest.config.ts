@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    exclude: ['test/e2e/**', 'test/e2e-douyin/**', '.e2e/**', '**/node_modules/**'],
+    exclude: ['test/e2e/**', 'test/e2e-douyin/**', 'test/e2e-query/**', 'test/e2e-session-context/**', '.e2e/**', '**/node_modules/**'],
     coverage: {
       provider: 'v8',
       reportsDirectory: 'coverage/feat-001',
@@ -10,6 +10,7 @@ export default defineConfig({
       include: [
         'src/shared/ttsSettings.ts',
         'src/shared/readOnlyQuery.ts',
+        'src/shared/sessionContext.ts',
         'src/shared/liveTarget.ts',
         'src/shared/roomControl.ts',
         'src/shared/biliOperations.ts',
@@ -42,6 +43,10 @@ export default defineConfig({
         'src/body/biliAccount.ts',
         'src/body/biliRoom.ts',
         'src/dsh/runtime.ts',
+        'src/dsh/sessionContext.ts',
+        'src/dsh/sessionContextPaths.ts',
+        'src/dsh/sessionContextSkills.ts',
+        'src/dsh/sessionContextSessions.ts',
         'src/dsh/douyinRoomControl.ts',
         'src/dsh/douyinControlJournal.ts',
         'src/dsh/index.ts',
@@ -51,6 +56,7 @@ export default defineConfig({
         'src/body/macosTts.ts',
         'src/body/yovoiceTts.ts',
         'src/console/console.tsx',
+        'src/console/SessionContextSettingsPanel.tsx',
       ],
     },
   },

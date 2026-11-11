@@ -1,4 +1,18 @@
 import { mergeQuerySettings } from '../shared/readOnlyQuery';
+import { validateSessionContextSaveRequest, type SessionContextRecord, type SessionContextStateView } from '../shared/sessionContext';
+import {
+  SESSION_CONTEXT_ISSUE_TEXT,
+  currentRecord,
+  readSnapshot,
+  refreshHealth,
+  recheckSessionContext,
+  snapshotForSession,
+  stateView as sessionContextStateView,
+  setResumeNote,
+  validateSaveCandidate,
+  verifyManagedOnair,
+} from './sessionContext';
+import { createManagedSession } from './sessionContextSessions';
 import { resolveQueryCredential } from './queryCredential';
 import { queryTurns, type QueryTurn } from './queryTurns';
 /**
@@ -29,13 +43,14 @@ import { assertBiliCurrent, beginBiliOperation, biliOperationsActive, inBiliOper
 import { normalizeDouyinBridgeUrl } from '../core/platforms/douyin/douyinSource';
 import { DouyinRoomControl } from './douyinRoomControl';
 import type { RoomControlSnapshot } from '../shared/roomControl';
-import { agentReady, asr, broadcast, cookie, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, queryServiceStatus, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { agentReady, asr, broadcast, cookie, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, sessionTools, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, queryServiceStatus, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
 
 interface HostContext {
   effect(effect: () => () => void, label?: string): unknown;
+  get?(name: string): any;
   [service: string]: any;
 }
 
@@ -101,10 +116,12 @@ function makeState(roomControl: DouyinRoomControl) {
     ok: true,
     show: show.status(),
     broadcast: broadcast.status(),
-    settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined },
+    settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined, sessionContext: undefined },
     runtime: { localRehearsal, ttsBackend: settings.tts.backend },
     douyinBridgeUrl,
     roomControl: makeRoomControlSnapshot(roomControl),
+    // FEAT-006：显式去掉内部 bindings，owner 只见 saved/config/health/active 视图
+    sessionContext: sessionContextStateView() as SessionContextStateView,
     stageUrl: server.url,
     characters: packs.list('characters'),
     templates: packs.list('templates'),
@@ -185,6 +202,12 @@ async function resumeLive(ctx: HostContext, stopped: () => boolean): Promise<voi
     await inBiliOperation(lease, async () => {
       const saved = takeLive();
       if (!saved || saved.platform === 'douyin' || typeof saved.roomId === 'string') return;
+      // FEAT-006：管理会话显式跳过自动恢复；旧安装未使用新增配置时保留原恢复行为
+      if (currentRecord() || readSnapshot(saved.sessionId).ok) {
+        setResumeNote('已恢复直播会话设置，请手动开始新会话');
+        show.closeStale(saved);
+        return;
+      }
       if (Date.now() - saved.at > RESUME_WITHIN_MS) {
         show.closeStale(saved);
         return;
@@ -394,6 +417,29 @@ export function apply(ctx: HostContext): void {
     if (patch.boardText !== undefined) next.boardText = String(patch.boardText).replace(/\r/g, '').slice(0, 1000);
     if (patch.noticeText !== undefined) next.noticeText = String(patch.noticeText).replace(/\s+/g, ' ').trim().slice(0, 200);
     if (patch.blocked !== undefined) next.blocked = cleanBlocked(patch.blocked);
+    // FEAT-006：整组替换的会话上下文保存；同一请求混其他设置时任一字段无效则整体不提交
+    let sessionContextRecord: SessionContextRecord | undefined;
+    const rawSessionContext = (patch as { sessionContext?: unknown }).sessionContext;
+    if (rawSessionContext !== undefined) {
+      const validated = validateSessionContextSaveRequest(rawSessionContext);
+      if (!validated.ok) {
+        return json({ ok: false, error: SESSION_CONTEXT_ISSUE_TEXT[validated.issue.code] ?? validated.issue.code, issue: validated.issue }, 400);
+      }
+      const candidate = await validateSaveCandidate(validated.request);
+      if (!candidate.ok) {
+        return json({ ok: false, error: candidate.error, ...(candidate.issue ? { issue: candidate.issue } : {}) }, candidate.status);
+      }
+      // 最终同步临界区：再次比较 context revision；updateSettings 从当时最新 settings 合并 patch
+      const current = currentRecord();
+      const expected = validated.request.expectedRevision;
+      if (!current) {
+        if (expected !== 0) return json({ ok: false, error: '设置已变化，请刷新后重试', code: 'revision_conflict' }, 409);
+      } else if (current.kind === 'saved') {
+        if (current.record.revision !== expected) return json({ ok: false, error: '设置已变化，请刷新后重试', code: 'revision_conflict' }, 409);
+      }
+      // 损坏记录：显式替换即可恢复，不比较 revision
+      sessionContextRecord = { ...candidate.record, revision: (current && current.kind === 'saved' ? current.record.revision : 0) + 1 };
+    }
     const own = (patch as { ownRoom?: boolean }).ownRoom;
     if (own !== undefined && settings.roomId) {
       const rooms = new Set(settings.ownRooms);
@@ -416,11 +462,13 @@ export function apply(ctx: HostContext): void {
     const repaint = (next.character && next.character !== settings.character) || (next.template && next.template !== settings.template);
     // 换了 Python 或模型：关掉正在跑的识别进程，下次用新的
     const resetAsr = (next.asrPython !== undefined && next.asrPython !== settings.asrPython) || (next.asrModel !== undefined && next.asrModel !== settings.asrModel);
+    if (sessionContextRecord !== undefined) next.sessionContext = sessionContextRecord;
     try {
       updateSettings(next);
     } catch {
       return fail('保存设置失败', 500);
     }
+    if (sessionContextRecord !== undefined) await refreshHealth();
     if (targetChanged) {
       roomControl.advance();
       invalidateTarget();
@@ -437,6 +485,34 @@ export function apply(ctx: HostContext): void {
     if (next.template && show.gameSource) placeGame(show.gameSource);
     return json(state());
   }, 'settings');
+
+  // FEAT-006：owner 显式重查（不保存、不创建会话）；最多每秒一次、单在途
+  route('/api/dsh-livestream/session-context/recheck', ['POST'], async () => {
+    const result = await recheckSessionContext();
+    if (!result.ok) return json({ ok: false, error: result.note ?? '暂时不能重查' }, 429);
+    return json(state());
+  }, 'session context recheck');
+
+  // FEAT-006：控制台显式新会话（管理路径）；输入仅 {workspaceId?}
+  route('/api/dsh-livestream/sessions', ['POST'], async (request) => {
+    const input = await controlBody<{ workspaceId?: unknown }>(request);
+    if (!input) return fail('新会话请求无效');
+    const outcome = await createManagedSession(ctx, { workspaceId: input.workspaceId, platform: settings.livePlatform });
+    if (!outcome.ok) {
+      const response: Record<string, unknown> = { ok: false, error: outcome.error };
+      const current = sessionContextStateView();
+      if (outcome.status === 409 || outcome.status === 503) response.sessionContext = current;
+      return json(response, outcome.status);
+    }
+    // 创建完成立即按 Agent ctx 注册受限工具（首次工具集合解析前完成）；绑定入口由 agent 子插件经运行时回调提供
+    const agents = ctx.get?.('agents');
+    const found = typeof agents?.get === 'function' ? agents.get(outcome.sessionId) : undefined;
+    const agent = found?.session ? found : found?.agent;
+    if (!agent || !sessionTools.bind?.(agent)) {
+      return json({ ok: false, error: '会话已创建，但受限工具绑定失败；本场不能使用 Skill 与资料，请重新创建会话', sessionId: outcome.sessionId, sessionContext: outcome.sessionContext }, 409);
+    }
+    return json({ ok: true, sessionId: outcome.sessionId, sessionContext: outcome.sessionContext, state: state() });
+  }, 'sessions');
 
   route('/api/dsh-livestream/query/cancel', ['POST'], async (request) => {
     const input = await controlBody<{ sessionId?: unknown; queryId?: unknown }>(request);
@@ -555,6 +631,9 @@ export function apply(ctx: HostContext): void {
   route('/api/dsh-livestream/onair', ['POST'], async (request) => {
     const { sessionId, gameSessionId } = await body<{ sessionId?: string; gameSessionId?: string }>(request);
     if (!sessionId) return fail('缺她直播用的会话');
+    // FEAT-006：管理会话核对绑定 ready、平台与 native cwd 后才开播；保存、重查、创建会话本身均不触发 onair
+    const managed = await verifyManagedOnair(sessionId);
+    if (!managed.ok) return fail(managed.error, 409);
     show.goLive(sessionId, localRehearsal || settings.livePlatform === 'douyin' ? undefined : gameSessionId || undefined);
     // 先推上流、后开播的：这一场一开始就不是彩排
     if (broadcast.streaming) show.markBroadcast();

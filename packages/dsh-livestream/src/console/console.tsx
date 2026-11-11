@@ -10,8 +10,10 @@ import QRCode from 'qrcode';
 import type { TtsSettings } from '../shared/ttsSettings';
 import type { QueryResult, QuerySettings } from '../shared/readOnlyQuery';
 import type { RoomControlSnapshot } from '../shared/roomControl';
+import type { SessionContextStateView } from '../shared/sessionContext';
 import { parseDouyinRoomId } from '../shared/liveTarget';
 import { usesNewConsole } from '../body/voices';
+import { SessionContextSettingsPanel } from './SessionContextSettingsPanel';
 
 // ── DSH 服务 ──────────────────────────────────────────
 
@@ -103,7 +105,7 @@ interface BroadcastStatus {
   startedAt: number | null;
   ownedActivity?: boolean;
 }
-interface HostState {
+export interface HostState {
   ok: boolean;
   show: ShowStatus;
   broadcast: BroadcastStatus;
@@ -113,6 +115,8 @@ interface HostState {
   douyinBridgeUrl?: string;
   roomControl: RoomControlSnapshot;
   settings: { livePlatform: 'bilibili' | 'douyin'; douyinRoomId: string; roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; readOnlyQueries: QuerySettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
+  /** FEAT-006：会话上下文视图（saved/health/active），内部 bindings 不回显 */
+  sessionContext?: SessionContextStateView;
   stageUrl: string;
   characters: PackEntry[];
   templates: PackEntry[];
@@ -208,6 +212,23 @@ export async function createBrainSession(svc: ConsoleServices, line: 'live' | 'g
     await session.rename?.(title)?.catch?.(() => {});
   });
   return sessionId;
+}
+
+/**
+ * FEAT-006 管理路径：已保存会话设置的 live 主线走新的 /sessions（原生 create + 冻结快照 + 受限工具）。
+ * 完成命名可保留 sessions.using()，不再对该新会话二次 preset.select。
+ */
+export async function createManagedBrainSession(svc: ConsoleServices, platform: 'bilibili' | 'douyin', savedRevision: number | null): Promise<string> {
+  void savedRevision;
+  const workspace = svc.workspaces.list.getSnapshot().items[0];
+  const result = await api<{ sessionId: string }>('sessions', workspace ? { workspaceId: workspace.workspaceId } : {});
+  const d = new Date();
+  const title = `直播 · ${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  await svc.sessions.using(result.sessionId, { source: 'controllerOperation' }, async (reference) => {
+    const { session } = await reference.ready;
+    await session.rename?.(title)?.catch?.(() => {});
+  });
+  return result.sessionId;
 }
 
 async function cancel(svc: ConsoleServices, sessionId: string): Promise<void> {
@@ -595,13 +616,17 @@ export function Console() {
 
   const goLive = () => run(async () => {
     if (!svc) throw new Error('插件还没准备好，刷新一下页面再试。');
+    // FEAT-006 管理路径：已保存会话设置时先创建管理会话，之后才进入已明确要求的推流/开播（无效 cwd 不触发推流）
+    const managed = host?.sessionContext?.saved != null;
+    const sessionId = managed
+      ? await createManagedBrainSession(svc, douyin ? 'douyin' : 'bilibili', host?.sessionContext?.saved?.revision ?? null)
+      : await createBrainSession(svc, 'live', douyin ? 'douyin' : 'bilibili');
     // 推流到 B 站：先开播拿推流码、OBS 推上流（可能要扫码人脸认证），推上了她再开口
     if (!douyin && settings?.broadcast) {
       await api('broadcast/start', {});
       await waitBroadcast();
     }
-    const sessionId = await createBrainSession(svc, 'live', douyin ? 'douyin' : 'bilibili');
-    // 游戏线：没装 dsh-game（预设里没有游戏工具）也开得出来，只是用不上
+    // 游戏线：没装 dsh-game（预设里没有游戏工具）也开得出来，只是用不上；游戏线继续原创建路径
     const gameSessionId = localRehearsal || douyin ? undefined : await createBrainSession(svc, 'game').catch(() => undefined);
     await api('onair', { sessionId, gameSessionId });
     await refresh();
@@ -888,6 +913,7 @@ export function Console() {
               <SecretField label="GLM Coding Plan API Key" ref_={SECRET_REFS.glm} configured={secrets.glm ?? null} hint="GLM Coding Plan API Key" />
               <p>凭据：{host?.queryCredential === 'error' ? '读取失败' : (secrets.glm ?? (host?.queryCredential === 'configured')) ? '已配置' : '未配置'}；服务：{host?.queryService === 'available' ? '上次可用' : host?.queryService === 'incompatible' ? '返回不兼容' : '未验证'}</p>
             </section>
+            {host?.sessionContext && <SessionContextSettingsPanel view={host.sessionContext} onSaved={setHost} />}
             {!douyin && <>
             <h3>推流到 B 站</h3>
             <ObsCheck />
@@ -1456,6 +1482,10 @@ export const CONSOLE_CSS = `
 .dl-query-sources a{color:var(--dl-blue);text-decoration:underline}
 .dl-query-sources span{font-size:11px;line-height:1.5;color:var(--dl-faint)}
 .dl-query-settings{font-family:system-ui,-apple-system,"PingFang SC",sans-serif}.dl-query-settings h3{margin:4px 0;color:var(--dl-text)}
+.dl-session-context .dl-row{flex-wrap:wrap;align-items:flex-start}
+.dl-session-context .dl-row input:not([type="checkbox"]){flex:1;min-width:180px}
+.dl-session-context .dl-check{flex:none;margin:0}
+.dl-session-context fieldset legend{padding:4px 0}
 .dl-now{display:flex;align-items:center;gap:9px;font-size:14px}
 .dl-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
 .dl-stats div{padding:8px 4px;border-radius:12px;background:var(--dl-sunken);text-align:center}
