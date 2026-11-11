@@ -277,9 +277,9 @@
       "id": "REQ-010",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
-      "status": "captured",
+      "status": "ready",
       "title": "直播会话的工作目录与 Skill 设置",
-      "updated_at": "2026-11-11T01:38:21Z"
+      "updated_at": "2026-11-11T01:51:56Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

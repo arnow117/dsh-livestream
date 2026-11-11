@@ -268,3 +268,16 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 
 - **产品观察计划引用**：REQ-006“发布后观察计划”。
 - **技术发布准备、实际结果、反馈证据与缺口**：尚未执行；未重启/修改共享Harness、yovoice、DyHub、Stage，未开始正式播出。
+
+### 独立 Validate（2026-11-11，未通过：公开资料真实层）
+
+本验证由 Claude Code 原生子代理执行（相对此前 codex Terra 的环境变化），只读于实现，绑定业务候选 fd48d0a5d9a18a3759428c3286f28480630eeb9a（HEAD 06c294a 仅 .sdlc-v1 差异，已核实）。依赖前提复核 Turf 解析 exit 0 后，全部命令本轮实际执行：
+
+1. 完整 Vitest+V8 coverage（DSH_HOME=/private/tmp/feat004-validate-home、排除 macosTts.test.ts、maxWorkers 1）退出 0：78 文件、470 通过、8 跳过，与最近 Build（78/470/8）一致；报告 coverage/feat-004-validate/。
+2. coverage-diff 基线 67d4df44 退出 0：行 1148/1217（94.33%）、分支 706/846（83.45%）。
+3. typecheck 退出 0。
+4. 离线原生入口退出 0：weather_lookup（北京当前天气，limited，geocode 1/current 1/model 2）与 public_search（OBS Studio许可证，evidence，search 1/model 2），总数 model 4/mcp 1，证据 smoke/readonly-tools/validate-feat-004/offline-mode-20261111-result.json。
+5. 真实原生入口（--approve=search:2,model:4,tts:0,seconds:300，key 仅经环境变量注入）退出 1 未通过：第 1 题真实天气成功（queryStatus=evidence，真实 METAR 观测 2026-11-11T02:00:00Z，Nominatim geocode，3 个可独立核对来源，model 2/geocode 1/current 1，无 TTS）；第 2 题 public_search 入参被 authorizesSearch 原文子串校验拒绝（模型未按原文引用固定问题，failureCode=tool_input_rejected），MCP search 0 次，入口失败即停无重试（实际消耗 model 3/4、search 0/2、tts 0/0）。脱敏证据 smoke/readonly-tools/validate-feat-004/real-mode-20261111-{result,scenario-1,scenario-2}.json；公共天气缓存写 .e2e/feat-004-live-weather/weather-cache-v1.json。
+6. e2e-query（workers 1/retries 0/trace on/max-duration 600000）退出 0：desktop 5+narrow 5 共 10 通过，fixture 日志 sharedRequests=0 externalRequests=0，报告/JUnit/trace/截图留存 .e2e/feat-004-build/。
+
+收尾核对：git status 无新增已跟踪修改；自启进程全部退出；key 未进任何产物。结论：单元/覆盖/类型/离线原生/浏览器 E2E 全部通过，真实层仅天气链路取证成功（SCN01 真实证据首次取得），真实 MCP 公开资料层未通过（SCN05/09 真实证据缺口维持 open）。第 2 题失败与 2026-11-10 第 1 轮诊断同因：模型对“原文参数”提示的遵循非确定，authorizesSearch 严格原文子串校验将其拒绝；修正方向为主 Agent 设定的等价规范化匹配与提示强化，见后续修正记录。
