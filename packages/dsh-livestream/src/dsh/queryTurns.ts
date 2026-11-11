@@ -22,6 +22,20 @@ export interface QueryTurn {
 const WEATHER_INTENT = /天气|气温|温度|几度|冷不冷|热不热|下雨|降水|下雪|预报/;
 // Do not interpret the overlap in “当前天气” or “目前天气” as “前天”.
 const DATE_INTENT = /\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}[日号]|(?:(?:今|明|后|昨)|(?<![当目])前)(?:天|日|早|晚|夜|晨|上午|下午|中午)|下周|本周|这周|周末|星期|周[一二三四五六日天]|下个?月|明年|预报/;
+const SEARCH_PUNCTUATION = /[\p{P}\p{S}]/gu;
+
+/**
+ * 有界的等价规范化：NFC、去标点/符号、连续空白折叠、去首尾空白、casefold。
+ * 只吸收大小写、空白和中英文标点的书写差异；比较仍要求规范化后的 query
+ * 是规范化原文的子串，改写、添加新词或另一个问题依旧拒绝。
+ */
+function normalizeSearchText(value: string): string {
+  return value.normalize('NFC')
+    .replace(SEARCH_PUNCTUATION, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
 
 /** Freezes host-attributed messages for a single agent turn. */
 export class QueryTurns {
@@ -129,7 +143,10 @@ export class QueryTurns {
   }
 
   authorizesSearch(lease: QueryTurn, query: string): boolean {
-    return typeof query === 'string' && !!query.trim() && lease.inputs.some((input) => input.text.includes(query));
+    if (typeof query !== 'string') return false;
+    const normalizedQuery = normalizeSearchText(query);
+    if (!normalizedQuery) return false;
+    return lease.inputs.some((input) => normalizeSearchText(input.text).includes(normalizedQuery));
   }
 
   /** A weather request is attributed as a whole; location and date never cross participants. */

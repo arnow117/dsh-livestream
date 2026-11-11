@@ -73,6 +73,44 @@ it('does not send a public-search query that was not in the current trusted inpu
   expect(turns.authorizesSearch(lease, '另一个人的私有问题')).toBe(false);
 });
 
+describe('public search equivalent matching', () => {
+  function setup(text: string) {
+    const turns = new QueryTurns();
+    turns.remember('question', [{ participant: 'a', text }]);
+    const lease = turns.begin({}, 1, 's', 'e', new AbortController().signal, [{ id: 'question' }]);
+    return { turns, lease };
+  }
+
+  it.each([
+    ['case differences', 'OBS Studio许可证是什么', 'obs studio许可证'],
+    ['case differences', 'obs studio许可证是什么', 'OBS Studio许可证'],
+    ['extra or repeated whitespace', 'OBS  Studio  许可证是什么', 'OBS  Studio 许可证'],
+    ['extra or repeated whitespace', 'OBS Studio 许可证是什么', 'OBS Studio  许可证'],
+    ['leading and trailing whitespace', '  OBS Studio许可证是什么　', 'OBS Studio许可证'],
+    ['Chinese or English punctuation', 'OBS Studio，许可证是什么？', 'OBS Studio许可证是什么'],
+    ['Chinese or English punctuation', 'OBS Studio,许可证是什么?', 'OBS Studio许可证是什么'],
+    ['fullwidth or halfwidth punctuation', 'OBS Studio（许可证）是什么', 'OBS Studio许可证是什么'],
+    ['fullwidth or halfwidth punctuation', 'OBS Studio！许可证是什么', 'OBS Studio许可证'],
+  ] as const)('accepts a question variant with %s', (_label, text, query) => {
+    const { turns, lease } = setup(text);
+    expect(turns.authorizesSearch(lease, query)).toBe(true);
+  });
+
+  it.each([
+    ['a paraphrase', 'OBS Studio许可证是什么', 'OBS的授权协议是什么'],
+    ['words added to the original question', 'OBS Studio许可证是什么', 'OBS Studio许可证是什么啊'],
+    ['words added to the original question', 'OBS Studio许可证是什么', '免费的OBS Studio许可证是什么'],
+    ['a different question', 'OBS Studio许可证是什么', '今天北京天气怎么样'],
+    ['an empty query', 'OBS Studio许可证是什么', ''],
+    ['a whitespace-only query', 'OBS Studio许可证是什么', '   '],
+    ['a punctuation-only query', 'OBS Studio许可证是什么', '？！！'],
+    ['omitting whitespace present in the original', 'OBS Studio 许可证是什么', 'OBS Studio许可证'],
+  ] as const)('still rejects %s', (_label, text, query) => {
+    const { turns, lease } = setup(text);
+    expect(turns.authorizesSearch(lease, query)).toBe(false);
+  });
+});
+
 it('requires an explicit matching date instead of treating a relative or dated forecast as current weather', () => {
   const turns = new QueryTurns();
   turns.remember('relative', [{ participant: 'a', text: '北京明天天气如何' }]);

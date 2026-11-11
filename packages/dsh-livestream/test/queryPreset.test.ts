@@ -89,7 +89,8 @@ describe('actual livestream preset composition', () => {
       const publicSchema = JSON.stringify(schemas.find((tool) => tool.name === 'public_search'));
       expect(publicSchema).toContain('原文');
       expect(publicSchema).toContain('70');
-      expect(publicSchema).toContain('不能凭空改写背景');
+      expect(publicSchema).toContain('逐字复制');
+      expect(publicSchema).toContain('不得改写');
       expect(text).not.toContain('仅可用 show_stats');
       toolSet.dispose();
       runtime.updateSettings({ readOnlyQueries: { weather: false, publicSearch: false } });

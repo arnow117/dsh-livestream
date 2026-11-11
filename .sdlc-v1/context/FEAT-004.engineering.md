@@ -281,3 +281,12 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 6. e2e-query（workers 1/retries 0/trace on/max-duration 600000）退出 0：desktop 5+narrow 5 共 10 通过，fixture 日志 sharedRequests=0 externalRequests=0，报告/JUnit/trace/截图留存 .e2e/feat-004-build/。
 
 收尾核对：git status 无新增已跟踪修改；自启进程全部退出；key 未进任何产物。结论：单元/覆盖/类型/离线原生/浏览器 E2E 全部通过，真实层仅天气链路取证成功（SCN01 真实证据首次取得），真实 MCP 公开资料层未通过（SCN05/09 真实证据缺口维持 open）。第 2 题失败与 2026-11-10 第 1 轮诊断同因：模型对“原文参数”提示的遵循非确定，authorizesSearch 严格原文子串校验将其拒绝；修正方向为主 Agent 设定的等价规范化匹配与提示强化，见后续修正记录。
+
+### 修正段 1：公开资料原文参数等价匹配与提示强化（2026-11-11，Build 内修正，执行环境：Claude Code 原生子代理）
+
+独立 Validate 第 2 题失败后，主 Agent 定案两处修正：
+
+1. **等价规范化**：`src/dsh/queryTurns.ts` 的 `authorizesSearch` 在比较前对可信参与者问题原文与 query 入参做有界规范化——Unicode NFC、移除全部 Unicode P/S 类标点/符号字符、连续空白折叠为一个空格、去首尾空白、casefold——规范化后仍要求 query 是规范化原文的子串。只吸收大小写、空白量和中英文/全半角标点的书写差异；改写句、添加新词、另一个问题、空串、纯标点串仍拒绝；不放宽为前缀/编辑距离/语义/词序匹配。规范化顺序为先去标点再折叠空白。
+2. **提示强化**：`public_search` 工具 description 与 query 参数说明（`src/dsh/agent.ts`，两个直播 preset 共用同一注册）及 `dsh-livestream-douyin` persona（`cordis.patch.yml`）统一改为：「query 必须逐字复制用户当前问题原文，不得改写、翻译、省略、添加或概括，最多 70 字」，并给出正例「OBS Studio许可证」。仅改说明文本，schema、参数定义、执行路径未动。
+
+先红后绿：实现前 8 项等价变体红灯（大小写、多余/连续空白、中英文标点、全半角标点），拒绝类负例当时即全绿；实现后定向 9 文件 83 项、全量 78 文件 487 通过/8 跳过（+17 恰为新测试）、coverage-diff 行 94.38%/分支 83.41%、typecheck、e2e-query 10/10（sharedRequests=0/externalRequests=0）全部退出 0。真实原生入口第 1 次调用（预算 1/2，无重试）退出 0：两题均 evidence，第 2 题实参为逐字原文 `{"query":"OBS Studio许可证"}`（string、无额外字段、failureCode=null），GLM 答 GPLv2；第 1 题天气链路继续 evidence（geocode 0 缓存命中/current 1）；总计 model 4/mcp 1/tts 0。脱敏证据 `smoke/readonly-tools/correction-feat-004-public-search/{result,scenario-1,scenario-2}.json`（0600），key 仅经环境变量注入。边界确认：规范化不含 NFKC（全角拉丁字母/数字不折叠）；query 省略原文中实际存在的空白仍拒绝（折叠而非删除）。真实通过为单次样本，模型遵循保持非确定假设，由独立 Validate 复核后才能关闭 SCN05/09。
