@@ -51,6 +51,20 @@
 
 本次续接保留实现者的部分WIP：`src/body/course/assets.ts`、`src/body/server.ts`、`test/courseAssets.test.ts`，以及既有本文件追加记录，来源HEAD 6b4945e8ab2039e13032903d3ce881e7eccd7d88。局部8项测试/tsc通过与真实7个文件HTTP字节一致属于有效增量证据，但未接runtime、未做浏览器或完整旅程，主Agent未接受Task完成，也不把该局部结果提升为全套通过。没有第二个写者，原实现者继续完整T001与必要测试；不重置既有失败史、停止条件或诊断额度，state仍in_progress。
 
+#### 2026-11-12 宿主验证隔离修正与剩余验收（supersedes 第三次 Build brief）
+
+主Agent接收第三轮的完整中间报告（thread activity position1035，最后的既有字幕样式提示不是canonical任务结果），保持T001 in_progress，不接受done。37文件清单SHA-256 34308aafd06293921cbf0a3f185fdd31e5c8b35182aaa6281fd6a3f0618bca3e在接收时与工作树逐项一致；未改动/提交生产代码或测试。669单测、差异覆盖82.17%/79.43%、桌面/窄屏课程与真实课件互动为有效进展，尚缺真实宿主权限、完整撤销/多观众矩阵和既有四套未跑的窄屏目标；只在输入等效时复用已有检查。
+
+**隔离缺口的因果证据**：实际runtime.loadSettings把stagePort默认为7390且StageServer在module初始化时捕获该值；所复用host-regression脚本只有fetch拦截、没有在候选import前写入自有stagePort或阻止listen，持久settings当前也为7390。因此不能把“零共享请求”与收尾无监听推断为运行期未绑定共享端口。主Agent当前lsof核对3080/3081/7390/8757无监听、Task进程零；不停止共享进程或修改用户设置。原hostA/B结果不抵扣本轮宿主隔离/课程鉴权验收，失败边界和已有历史保留。
+
+**已授权的验证恢复方式**：同一实现者复用既有真实发行宿主/SC002组合定义，在新的自有DSH_HOME、日志与数据中，所有候选模块首次import之前写自有settings.json的stagePort=0（仅自有临时数据；重开hostB同样确保0）。插件真实StageServer仍由原apply启动，不替换为假服务；测试从底层实际net.Server.address().port取得分配坐标。现有server.url对port0仍回显0只是该测试配置的已知限制，探针直接用实际地址，不为此扩展生产API或以测试需求修改默认端口。其他模型/宿主监听也用127.0.0.1:0。
+
+在每个探针进程首次import候选前安装进程内监听校验：对net.Server.listen的数字/options变体提前拒绝共享端口3080/3081/7390/8757与非loopback绑定，记录拒绝尝试，即使业务catch吞错也使本次验证失败；监听后记录实际端口/归属并再次核对。先用不会触达OS的受控调用证明拒绝生效，负例计数与正式运行计数分开；所有正式探针要求意外拒绝次数0。沿已有fixture拦截外网/共享请求，输出阶段化请求/监听计数、运行后关闭所有自有server并核对零残留。允许在既有test/e2e-course/或自有验证目录内对复用runner/guard作必要适配，保留旧失败日志，不改共享服务/在用lib/依赖，不引入通用验证框架。
+
+**剩余完成条件**：①用真实安装gateway/connection/owner准入和同一当前实际mint的assetCapability证明资产GET成功，而该凭据不能访问真实owner API（401/403且无副作用），不能以随机假凭据失败或route-handler替身代替；②逐条对照已有CRS/SCN覆盖表，只补缺失的实例重载/reset/end、真实目标/会话切换、进程重启旧凭据在新进程失效、旧/重复/多观众动作和输出撤销；不以旧服务器已退出导致连接失败代替重开后拒绝旧凭据；③原四套既有E2E未跑的narrow目标要补齐，最新desktop证据可在实际输入等效时复用；④在隔离宿主中完成本Task要求的SC002/host回归，源代码修正时只对受影响检查及必要完整累计检查重跑，不无故重复已过全套；⑤完整canonical结果与实际源/runner/环境清单绑定。
+
+在同一监听保护下，对已安装批准源d70fcf9的只读实际包路径补一次必要宿主加载/查询烟测，校正旧本地交付的资源观察边界；不得构建/替换安装lib，结果另标“已安装版本回归”，不能抵扣FEAT-007候选验证。该检查沿用已有交付授权与同一guarded runner，无需新Agent/环境。真实模型/TTS/正式音频对齐/观众预算仍0；③④⑤分层缺口如实保持。已完成任务允许的单个字幕边框旧样式不属本Task，保持原样，不作为阻塞或另起视觉改造。
+
 #### 背景
 
 以下事实经本轮只读核实（读法见基线说明；lever-lab 资产在兄弟工作区按实际文件只读读取），均为静态事实、不是运行通过证据。`src/` 均指 `packages/dsh-livestream/src/`。
@@ -337,6 +351,15 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 只准备安装包与说明；实际替换/重载共享插件由主 Agent 在 Ship 授权内协调，本 Plan/Build 不操作共享服务与在用 `lib/`。回滚使用先前已评审业务版本及其构建产物；课程能力无持久化新格式（课程状态不落盘），回滚无数据迁移；owner 配置的资料根与 FEAT-006 快照保留不动。
 
 ## 实现记录（实际）
+
+### 2026-11-12 T001 续建候选（未完成验收）
+
+- 工作区 `codex/macos-yovoice`、HEAD `0f8d0af65f9b67f0bfb7be2284a77910afa405de`，业务及差异覆盖基线仍为 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`。实现与测试保留为未提交 WIP；实现包括实例资产清单与撤销、课程控制器与受限工具、舞台 bridge、音频回执和控制台。根 README 与 macOS 示例增加课程使用说明。
+- 受控真实 turn 测试发现主人切步后未调用课程工具的旧观众回复仍可进入说话队列；修正前对照在宿主观察到 turn 结束后多一次说话调用，修正后为零。控制器另有受控交错测试，保证失效动作不改写主人视图。断订阅测试验证在途回复失效、课程实例与主人切步保留；未将此替代全部生命周期矩阵。组件测试另定位并修正课程轮询覆盖更新中宿主状态的竞争；轮询只合并课程字段且不接收命令前的旧响应。
+- 测试副本 `/private/tmp/feat007-build-FzbVf5iu/repo`：`tsc -p tsconfig.json` 与 `node build.mjs` exit 0，四 bundle 存在且 host index 不含 dsh-tools/dsh-llm；`vitest run --coverage --exclude test/macosTts.test.ts --coverage.reportsDirectory coverage/feat-007-build-current4` exit 0，95 文件、669 通过、9 跳过。两项真实 OS 语音因排除文件为 NOT_RUN。`coverage-diff.mjs` 对 d70fcf9 为行 871/1060（82.17%）、分支 498/627（79.43%），exit 0。
+- 合成课件 Web 旅程桌面和窄屏通过，含真实 native turn、受限参数、owner 切步撤销旧回复及断订阅保留；最新候选四套既有桌面 E2E（声音设置、抖音、查询、会话配置）通过。真实课件桌面旅程 `.../.e2e/feat-007-build-latest-real/` 通过七项资源字节哈希、owner 控制、两道选择题（含一次错误重答）、填空及实验调参回读，以及静态权限和旧链接撤销。实际舞台保持可见后通过；此前滚出视口的 35 秒等待超时证据保留，不能将该对照作为正式音频对齐证据。课件源 28 文件、1,435,956 字节；完整清单 `/private/tmp/feat007-build-FzbVf5iu/real-asset-manifest-current.json`，SHA-256 `419310584841d14e1b8179c42962769f7efc773a0955be08bfd2dd14ebb600fb`。测试产物文本中的资产凭据已脱敏。
+- **宿主验证边界事件**：重绑的既有 host A/B 进程分别 exit 0（20/25 检查、脚本计数 sharedRequests=0/externalRequests=0），执行时早于最后一次控制台修正；脚本只拦截 fetch，未拦截监听；插件默认监听端口 7390，故两次运行可能短暂监听了被禁止使用的共享端口，不能证明该资源边界通过。进程均已退出；当前 3080/3081/7390/8757 无监听。宿主验证段停止，须由主 Agent 处理此缺口；这些结果不抵扣完整 SC-002② 宿主课程鉴权证明。
+- 未完成：同资产凭据对真实宿主 owner API 的拒绝、完整实例/目标/重启撤销与多观众失效矩阵、全部需求覆盖表与受影响回归的完整证据仍需核对；真实 GLM、正式音频对齐与真实观众层未运行。不能请求 T001 done；正式独立 Validate/Review 与 release 仍由主 Agent 执行。
 
 ### 2026-11-12 T001 资产层部分实现，舞台入口写入范围待协调
 
