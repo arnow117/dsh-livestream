@@ -15,24 +15,25 @@
 | 区域 | 入口与主要路径 | 职责 |
 |---|---|---|
 | 包与宿主 | `packages/dsh-livestream/src/dsh/index.ts`、`src/dsh/runtime.ts` | 根插件、`/api/dsh-livestream/*`、设置持久化、共享运行时、TTS 路由和预合成。 |
-| Agent | `packages/dsh-livestream/src/dsh/agent.ts`、`cordis.patch.yml` | 注册直播预设和工具、监听助手正文、绑定模型服务；凭据 resolver 属于根插件生命周期。 |
+| Agent | `packages/dsh-livestream/src/dsh/agent.ts`、`cordis.patch.yml` | 注册直播预设和工具、监听助手正文、绑定模型服务；凭据 resolver 属于根插件生命周期。课程会话按受信任注册机制接线 `apply_livestream_course_action`（`courseTools.activate/deactivate`，课程结束/会话卸载移除；`agent.ts` 课程段），`CourseTurns` 维持每轮一项与事件去重（租约 ≤100、事件 id 去重 ≤5000）。 |
 | 控制台 | `packages/dsh-livestream/src/console/client.tsx`、`console.tsx` | 侧栏「直播」面板、设置 Drawer、`TtsSettingsPanel` 声音草稿/保存/私有试听、DSH credentials 输入、状态轮询与事件流。 |
 | 共享声音配置 | `packages/dsh-livestream/src/shared/ttsSettings.ts` | 浏览器与宿主共用 TTS 类型、环境兼容默认值和增量字段验证；不依赖 Node API。 |
 | 原生房间控制 | `packages/dsh-livestream/src/shared/roomControl.ts`、`src/dsh/douyinRoomControl.ts`、`douyinControlJournal.ts` | 主页平台/房间原子保存、owner 房间控制、revision、匿名采集前提与插件自有操作日志；固定 loopback HTTP/WS，未知结果保守保护。 |
 | 直播目标与操作归属 | `packages/dsh-livestream/src/shared/liveTarget.ts`、`biliOperations.ts` | 抖音字符串房间输入验证；进程内 B 站/OBS 操作计数、目标 epoch 与 AsyncLocalStorage lease，用于切平台和拒绝过期异步结果。`biliOperations.ts` 是 Node 端模块。 |
-| 舞台 | `packages/dsh-livestream/src/stage/`、`stage/index.html`、`stage/stage.css` | 协议、状态、音频播放、字幕、布局、组件与特效。 |
-| 身体与集成 | `packages/dsh-livestream/src/body/` | `LiveShow`、舞台服务器、豆包/macOS/yovoice TTS、B 站、OBS、ASR 和媒体。 |
+| 舞台 | `packages/dsh-livestream/src/stage/`、`stage/index.html`、`stage/stage.css` | 协议、状态、音频播放（结构化 ended/error 回执）、字幕、布局（chat/video/game/course）、组件与特效；course 挂件经自带 bridge 页同源加载课件。 |
+| 身体与集成 | `packages/dsh-livestream/src/body/` | `LiveShow`、舞台服务器（含课程资产/回执路由）、豆包/macOS/yovoice TTS、B 站、OBS、ASR 和媒体。 |
+| 课程展示与互动 | `packages/dsh-livestream/src/body/course/{controller,assets,actions,speech,turns}.ts`、`src/shared/course.ts`、`stage/course-bridge.html` | 课程实例状态机（phase 为 loading/ready/playing/paused，未加载/已结束以 `course=null` 表达）、加载时清单与实例只读凭据、动作机械校验（范围/步长/单位/固定阻力）、语音先暂停后恢复租约、CourseTurn 失效与去重；`src/shared/course.ts` 是课程共享字段权威来源。bridge 为插件自带静态页（`files.stage` 交付，`/course/bridge` 提供），同源 realm 固定探针控制课件、postMessage 限同源 origin 与固定 schema。owner 控制区 `CoursePanel` 在 `src/console/console.tsx`，`course` 上下文/快照消费 FEAT-006 会话契约（`src/dsh/index.ts` `courseContext`、`src/dsh/runtime.ts` `course` 单例与 `courseTools`）。 |
 | 只读查询来源 | `packages/dsh-livestream/src/body/{readOnlyQuery,weather,weatherCache}.ts`、`src/dsh/runtime.ts` | `readOnlyQuery` 共用查询截止/串行边界；`createWeatherSource()` 由 runtime 的 `weatherSource` 组合，Nominatim 确认行政区域、AWC METAR 提供区域内站点观测、MET Locationforecast 提供日期预报；公开搜索仍走固定 Coding Plan MCP。 |
 | 核心逻辑 | `packages/dsh-livestream/src/core/` | 弹幕/注意力、文本处理、平台协议、记忆、安全规则与成本。 |
 | 抖音 source/归一化 | `packages/dsh-livestream/src/core/platforms/douyin/douyinSource.ts`、`platforms/index.ts`、`core/live.ts` | `DouyinLiveSource` 对接指定房间 WS 与有界状态 GET；在 source 中校验/归一化 envelope、ID、统计和礼物增量，输出共同 LiveEvent/LiveRoomStats。 |
-| 测试 | `packages/dsh-livestream/test/*.{test.ts,test.tsx}`、`vitest.config.ts` | Vitest 覆盖声音、平台 source/路由/UI/状态、操作 lease 和既有业务。配置排除 `test/e2e/**`、`test/e2e-douyin/**`、`.e2e/**`；大部分本机 fixture 忽略，带来源的合成 DyHub wire fixture 有明确例外，作为测试资产纳入版本控制。 |
-| Web 测试 | `packages/dsh-livestream/{e2e.config.ts,e2e-douyin.config.ts,e2e-voice-regression.config.ts,e2e-query.config.ts}`、`test/{e2e,e2e-douyin,e2e-query}/` | tester-army/e2e 精确 locator 旅程；真实 React/宿主路由，外部服务替身、动态端口及隔离数据/构建。查询 fixture 使用实际 Harness/工具与自有 StageServer；声音/抖音 fixture 的 Stage stub 边界保留。 |
+| 测试 | `packages/dsh-livestream/test/*.{test.ts,test.tsx}`、`vitest.config.ts` | Vitest 覆盖声音、平台 source/路由/UI/状态、操作 lease、课程域（controller/assets/action/speech/turns/lifecycle/audio/panel/widget）和既有业务。配置排除 `test/e2e/**`、`test/e2e-douyin/**`、`test/e2e-query/**`、`test/e2e-session-context/**`、`test/e2e-course/**`、`.e2e/**`；大部分本机 fixture 忽略，带来源的合成 DyHub wire fixture 有明确例外，作为测试资产纳入版本控制。 |
+| Web 测试 | `packages/dsh-livestream/{e2e.config.ts,e2e-douyin.config.ts,e2e-voice-regression.config.ts,e2e-query.config.ts,e2e-session-context.config.ts,e2e-course.config.ts}`、`test/{e2e,e2e-douyin,e2e-query,e2e-session-context,e2e-course}/` | tester-army/e2e 精确 locator 旅程；真实 React/宿主路由，外部服务替身、动态端口及隔离数据/构建。查询/会话配置/课程 fixture 使用实际 Harness/工具与自有 StageServer；声音/抖音 fixture 的 Stage stub 边界保留。课程 fixture 另含按课件扩展面构造的合成替身页，`FEAT007_REAL_ASSET_ROOT` 时切换为只读真实课件根。 |
 | 原生查询验收 | `packages/dsh-livestream/test/live-query/{run.mjs,scenario.ts,transport.ts}` | 默认离线、显式真实模式的双题正式预设入口；通过 `createAgentPlugin(source)` 内部依赖注入组合原生工具，分别计数 MCP、地理、观测、预报、模型和语音；不是用户 API 或舞台播放入口。 |
 | 变更覆盖检查 | `packages/dsh-livestream/test/coverage-diff.mjs` | 显式 Git 功能基线必需；可选 coverage report path，不传时兼容原 FEAT-001 报告路径。 |
 | 静态资源 | `packages/dsh-livestream/assets/` | 角色、模板、字体与 ASR worker。角色素材有单独许可。 |
 | 构建 | `packages/dsh-livestream/build.mjs`、根 `pnpm-workspace.yaml` | 输出宿主 `lib/index.js`/`agent.js`、控制台 `lib/client.js`、舞台 `lib/stage.js`。 |
 | 工具与实验 | `tools/`、`spikes/mcp-transport/` | 现有直播运维/观测脚本、Windows 部署与 MCP transport 实验；不是本地 Mac 的默认启动流程。 |
-| 文档与配置示例 | 根 `README.md`、`examples/macos-yovoice/`、`examples/douyin/README.md` | 根 README 为全局 usage 导航；`LIVE-DOUYIN-CONNECT` / `LIVE-DOUYIN-DISCONNECT` 链接采集器部署、显式连接、断开/停止与恢复边界，声音/Mac 导航保留。 |
+| 文档与配置示例 | 根 `README.md`、`examples/macos-yovoice/`、`examples/douyin/README.md` | 根 README 为全局 usage 导航；`LIVE-DOUYIN-CONNECT` / `LIVE-DOUYIN-DISCONNECT` 链接采集器部署、显式连接、断开/停止与恢复边界，`LIVE-COURSE` 链接既有课件直播前提与控制区用法（详见 `examples/macos-yovoice/README.md`「既有课件直播」），声音/Mac 导航保留。 |
 
 ## 技术栈
 
@@ -55,7 +56,7 @@
 |---|---|---|
 | 宿主启动 | `examples/macos-yovoice/harness-package.example.json` 的 `npm start` | 独立 Harness 工作区用 `.env`、`DSH_HOME=$PWD/.dsh`、`127.0.0.1:3080` 启动 DSH web；示例禁用 telemetry、不开浏览器。 |
 | yovoice 启动 | 同一示例的 `npm run tts` | 调用外部 `YOVOICE_CLI serve`，监听 `127.0.0.1:3081`，使用外部 `YOVOICE_DATA_DIR`。本阶段未执行。 |
-| 控制台 API | `src/dsh/index.ts` 的 `apply()` | 通过 `ctx.connection.fetch.register` 注册路由，身份校验依赖 Harness connection；插件未实现独立登录。主要入口为 GET `state`、POST `settings`、`tts/preview`、`onair`、`offair`、`owner`、`simulate`，以及 GET `events`，均在 `/api/dsh-livestream/` 下。 |
+| 控制台 API | `src/dsh/index.ts` 的 `apply()` | 通过 `ctx.connection.fetch.register` 注册路由，身份校验依赖 Harness connection；插件未实现独立登录。主要入口为 GET `state`（含 `course` 课程视图）、POST `settings`、`tts/preview`、`onair`、`offair`、`owner`、`simulate`、`course`（owner-only：load / start / pause / resume / reset / step / end），以及 GET `events`，均在 `/api/dsh-livestream/` 下。 |
 | 设置 | `runtime.ts` 的 `Settings`、`loadSettings()`、`updateSettings()` | `settings.tts` 包含 backend、yovoice 模型/描述、Mac 音色、豆包 speaker/rate；保存字段优先旧 env 默认。旧 `settings.voice` 保留豆包 alias，空串在每次合成时跟随角色。保存同目录独占临时 JSON 后 rename，再发布内存。 |
 | 平台与房间 | `settings.livePlatform`、`settings.douyinRoomId`、`shared/liveTarget.ts` | 平台默认 `bilibili`，旧数字 `roomId` 保留。抖音房间为 1–64 位 ASCII 数字字符串或完整 `https://live.douyin.com/<digits>`，不接受短链/query/hash/任意 URL，不转换成 Number；房间/用户/事件 ID 保留字符串语义。 |
 | 抖音部署地址 | `DSH_LIVESTREAM_DOUYIN_BRIDGE_URL`、`normalizeDouyinBridgeUrl()` | 默认 `http://127.0.0.1:8757`，由 DSH 启动者管理；只接受 HTTP 数字 loopback `127.0.0.1` / `[::1]` 和合法端口，拒绝 userinfo/query/hash/非根 path/远端与重定向。页面不编辑 bridge 地址或 Cookie，部署参数见抖音指南。 |
@@ -71,7 +72,8 @@
 | Mac 音色 | `src/body/macosTts.ts` | 有效 `tts.macosVoice` 逐请求传入；旧 `DSH_LIVESTREAM_MACOS_VOICE` 或 `Tingting` 提供默认。`say` 经临时文件读取正文，子进程参数不经过 shell。 |
 | 豆包配置 | `src/body/tts.ts`、`voices.ts`、`runtime.ts` 的 `ttsAuth()` | 有效 `tts.doubaoVoice`/角色默认与 `tts.doubaoRate` 逐请求使用；2.0/复刻音色使用 API Key，1.0 使用 APP ID/Access Key。credentials 名称为 `DOUBAO_TTS_API_KEY`、`DOUBAO_TTS_APP_ID`、`DOUBAO_TTS_ACCESS_KEY`。 |
 | 凭据与 UI | `index.ts` 根 effect、`console.tsx` 的 `SecretField`、`client.tsx` 的 `bindCredentials()` | 根插件按调用时动态读取 DSH credentials，缺服务时保留 env 兼容，不依赖 Agent 开播。控制台复用 `remote.credentials.describe/set`，按音色展示新版 API Key 或旧版 APP ID/Access Key，仅回显配置状态。 |
-| 舞台 | `src/body/server.ts`、`src/stage/store.ts` | 默认 `127.0.0.1:7390`；所有舞台请求检查 query token。SSE `hello.build` 暴露舞台构建标识。控制台预览使用 `preview=1`，静音且不作为播放回执方。 |
+| 舞台 | `src/body/server.ts`、`src/stage/store.ts` | 默认 `127.0.0.1:7390`；舞台请求检查 query token，唯一精确例外是 `GET /course/asset/<capability>/<相对路径>`：32 字符实例凭据在 token 检查前单独校验当前课程清单（`server.ts` 资产分支），拒绝一律 404 空正文。`/course/bridge`、`POST /course/report`（≤8KiB）与既有 `/events`、`/said`、`/media`、`/audio`、`/video`、pack/static 路由仍走 stage token。SSE `hello.build` 暴露舞台构建标识。控制台预览使用 `preview=1`，静音且不作为播放回执方。 |
+| 课程资产授权 | `src/body/course/assets.ts`、`stage/course-bridge.html`、`examples/macos-yovoice/README.md`「既有课件直播」 | 加载时扫描固定 canonical 根生成清单（≤128 目录 / ≤128 文件、单文件 ≤2MiB、总量 ≤16MiB、响应扩展名白名单、含上级祖先的 dev/ino 身份与 SHA-256、拒绝 symlink/`..`/编码路径），每次响应前后复核身份与 hash，不符零正文。实例凭据为每次 load 的 192-bit 内存随机值，重载/重置/结束课程、会话或目标切换、dispose 与进程重启使其失效；仅断开抖音订阅保留本地课程与凭据、撤销旧观众在途动作，重连不重放旧输入（课程观众事件按会话去重，上限 5000）。资产与舞台同 origin/同信任级，凭据不授予舞台或 owner 能力；重启不恢复课程进度。 |
 | 本地彩排 | `DSH_LIVESTREAM_LOCAL_REHEARSAL=1` | 与平台、TTS provider 为不同维度；该开关隔离 B 站/OBS，不代表抖音输入一定是模拟数据。抖音/彩排保留 `show_stats` 与条件启用的两项只读查询及本地输出；显式连接仍可能启动独立采集器。 |
 
 ## 常用命令
@@ -98,18 +100,22 @@ commands:
 
 `e2e-query.config.ts` 对应 `test/e2e-query/` 的天气/公开搜索与取消、来源、舞台归属旅程，复用上述CLI形状；配置和launcher产物位于 `.e2e/feat-004-build/`、`.e2e/feat-004-build-fixture/`。原生真实验收另将公共天气缓存保留在 `.e2e/feat-004-live-weather/weather-cache-v1.json`，会话使用临时DSH_HOME并清理；这是测试入口的内部组合，不是新的部署环境变量或用户API。
 
+`e2e-course.config.ts` 对应 `test/e2e-course/` 的合成课件课程旅程（desktop/narrow 双目标），复用上述CLI形状；fixture/launcher 产物位于 `.e2e/feat-007-build-fixture/`，输出 `.e2e/feat-007-build/`。同一入口设置 `FEAT007_REAL_ASSET_ROOT=<只读课件根>` 时切换为只读真实课件旅程，测试逐资产核对 SHA-256 并断言共享端口/外部请求为 0。真实资产条件单测入口为 `FEAT007_REAL_ASSET_ROOT=<课件根> vitest run test/courseAssets.test.ts -t 'serves the real authorized asset bytes'`（未设该变量时该用例跳过）。这些课程入口的实际成功执行记录归 FEAT-007 工程上下文；测试数、覆盖率等运行结果不写入本文件。
+
 构建会删除并重建 `packages/dsh-livestream/lib/`；共享运行环境仍使用该产物时，构建/独立验证使用隔离复制目录，不能删除在用 lib。E2E launcher 自行将测试 bundle 写入忽略的 `.e2e/`，不使用生产 lib。宿主缓存控制台模块，实际加载新插件产物由主 Agent 协调 Harness；声音保存本身即时生效，不得自动重启共享彩排/采集服务。
 
 ## 验证资源与准备
 
 | 项目 | 已确认准备与缺口 |
 |---|---|
-| correctness | `vitest.config.ts` 使用 V8，包含 text/JSON/LCOV；在声音和 DOM 测试之外，纳入平台 source/Hub/attention/Show、输入、预设、房间状态、Bili/OBS lease/清理、天气来源/缓存及 stage 变更。原生查询的单元/集成资产位于 `test/live-query/`；报告目录可由实际运行参数覆盖。Mac 音频测试依赖系统语音/FFmpeg/ffprobe，沙箱限制仍适用。 |
+| correctness | `vitest.config.ts` 使用 V8，包含 text/JSON/LCOV；在声音和 DOM 测试之外，纳入平台 source/Hub/attention/Show、输入、预设、房间状态、Bili/OBS lease/清理、天气来源/缓存、stage 变更及课程域（动作校验、资产清单/凭据、生命周期、语音租约、控制台与舞台挂件）。原生查询的单元/集成资产位于 `test/live-query/`；报告目录可由实际运行参数覆盖。Mac 音频测试依赖系统语音/FFmpeg/ffprobe，沙箱限制仍适用。 |
 | 查询依赖准备 | Turf已声明于包/lock；当前checkout尚缺该依赖，已知可用依赖及source check/build/真实入口证据来自隔离环境。检查前按目标lock准备隔离依赖，不把已生成bundle或隔离运行当作当前checkout/共享插件的安装与加载证明；本阶段不安装或构建。 |
 | e2e:OpenAPI | 无 OpenAPI schema；声音和抖音路由测试调用真实 handler/适配器，Web fixture HTTP 转发真实注册路由，抖音 fixture 自建真实 WS bridge 模拟固定 wire 协议。fixture 不启动完整 Harness，不等同生产 owner 鉴权；共享环境的写入/订阅副作用不能用 synthetic 结果授权。 |
 | e2e:Web 工具 | 项目已固定 CLI/Web engine，`test:e2e` 与配置存在；Web engine 依赖 `playwright-core 1.64.1`。父仓库共享 CLI 可作辅助，但仓库运行脚本不写入其绝对路径。SDLC 正式 Validate 必须运行纳入被测提交的测试。 |
 | Web 浏览器 | 配置 Chromium，目标 desktop 1440×900、narrow 375×812；工程运行记录为 `HeadlessChrome/156.0.8078.4`。使用现有匹配浏览器缓存，不为验证自动下载；后续运行仍记录实际浏览器/构建版本。 |
 | Web 测试资产 | `test/e2e/voice-settings.e2e.ts` 保留声音旅程；`test/e2e-douyin/{atomic-target,douyin}.e2e.ts` 覆盖原子保存、连接/live 输入、同页重试/停止、共享影响确认、unknown 保护和切换限制。真实 Console/CSS、routes/controller/source/存储保留，push/TTS 与外部服务采用替身；配置/fixture/测试随实现提交，存在资产不等于本轮通过。 |
+| 课程 Web 测试资产 | `e2e-course.config.ts` + `test/e2e-course/`：合成替身课件按课件扩展面构造（`BEATS`/`P`/`seek`/`setPlaying` 与 quiz/lab DOM），desktop 1440×900 与 narrow 375×812 双目标；浏览器路由守卫拒绝非 loopback 与共享端口 3080/3081/7390/8757 并计数。设置 `FEAT007_REAL_ASSET_ROOT` 时同一入口加载只读真实 lever-lab 课件并逐资产核对 SHA-256，不修改、不复制课件；真实课件二进制/时序不做 e2e 常驻 fixture。 |
+| 隔离宿主验证准备 | `build.mjs` 删除并重建 `lib/`，测试构建只写自有工件（课程 launcher 写 `.e2e/feat-007-build-fixture/`，不触生产 lib）。真实宿主测试须在首次 import 候选模块前准备自有 `DSH_HOME` 与 `settings.stagePort=0`，并安装进程内 listen/request guard（拒绝共享端口与非 loopback 绑定，负例计数与正式运行分开）；E2E CLI 的例外是自有 app 预分配 loopback 端口传给 fixture。具体 guarded 探针与 runner 适配是 FEAT-007 工程上下文中的既有证据引用，不是仓库正式可移植命令，不把 `/private/tmp` 探针路径当作本文件命令；适配后 runner 与候选原文有明确差异，不声称字节相等。 |
 | 合成协议 fixture | `test/fixtures/dyhub-normalized-defaults.json` 记录固定 DyHub commit、真实 normalizer 编译方法、protobuf 合成输入及 frames，用于缺失总数变 0、全零礼物/组 ID 等边界。`.gitignore` 明确放行该文件，不提交真实用户抓包或本机数据；不再将整个 fixtures 目录视为均被忽略。 |
 | 核心验证能力 | 已有确定性 API/持久化/请求参数、stage 零事件、错误恢复、取消、键盘与宽度断言及截图。provider 替身音频不能证明真实音频可解码、听感或生产播放；主 Agent 的真实浏览器/yovoice 有界检查单独记录，截图不代替业务断言。 |
 | 模型、身份与预算 | E2E 仅精确 locator，无 `agent.*`、模型 provider 或真实凭据，模型调用预算 0；fixture 注入测试身份/环境。业务 GLM 模型由部署配置维持，不因 TTS 改变。不得将真实 token 或认证 URL 写入产物。 |
@@ -178,10 +184,14 @@ surfaces:
       - packages/dsh-livestream/test/e2e/**
       - packages/dsh-livestream/test/e2e-douyin/**
       - packages/dsh-livestream/test/e2e-query/**
+      - packages/dsh-livestream/test/e2e-session-context/**
+      - packages/dsh-livestream/test/e2e-course/**
       - packages/dsh-livestream/e2e.config.ts
       - packages/dsh-livestream/e2e-douyin.config.ts
       - packages/dsh-livestream/e2e-voice-regression.config.ts
       - packages/dsh-livestream/e2e-query.config.ts
+      - packages/dsh-livestream/e2e-session-context.config.ts
+      - packages/dsh-livestream/e2e-course.config.ts
     roles: [qa, client-dev, server-dev, security]
     modes: [correctness, "e2e:OpenAPI", "e2e:Web"]
   - name: operations-and-spike
@@ -242,6 +252,7 @@ surfaces:
 | 抖音归一化与来源变化 | source 限定平台/目标房间、字符串 ID、帧和字段上限；下游 ts 使用本地接收时间，去重/礼物累计差值缓存有 2 分钟 TTL 与 4000 项限制。未知礼物金额不视为免费，不换算人民币；在线/累计观看/点赞只有正安全整数视为已知，normalizer 缺失→0 保守视为未知。上游 wire/匿名采集变化须重新核对来源 fixture，不能拿 synthetic 证明真实房间、礼物或长期稳定性。 |
 | 采集订阅生命周期 | DyHub WS 首次订阅可能启动采集，因此不能把自动重连当无副作用恢复；source 错误后不自动重新订阅。当前房间 live 状态优先过时 progress.error，终态则清传输/统计并提示人工恢复；断开插件不等于停止采集器，不能发送全局 stop 影响其他使用者。 |
 | 跨平台旧结果与临时上下文 | B 站/OBS 的 lease/target epoch、在途计数和清理状态是切平台必要条件；异步结果不能在目标改变后继续使用旧身份/上下文。抖音禁用长期观众记忆和 B 站账号/视频/游戏动作，断开/切换清临时上下文，不删除已有 B 站历史。 |
+| 课件同源信任与凭据边界 | 授权课件与舞台同 origin/同信任级（与角色/模板包同级），课程资产只读凭据只能取当前实例清单内文件、本身不能作为 stage 或 owner API 的认证凭据，但同源课件页可读取舞台页上下文，不构成对恶意课件的隔离（usage「只加载信任的本机课件」）。清单外/身份不符/撤销凭据一律零正文拒绝；课程回执经 bridge 固定 schema 校验，课件正文不能直接调用 owner 管理 API。 |
 
 ## 部署与运行环境
 
