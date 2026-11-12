@@ -347,3 +347,19 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 **发现与结论**：本 Feature 未发现新的必须修复项，建议 `approved`。FEAT-006 新定位的资料/配置问题统一列在该工程上下文的本次 Review，不当作查询功能的新增缺陷，也不据此重复旧查询断言。既有 AWC 204 专测和来源 URL 去重的有据延期决定继续保留，未发现要求重新打开的回归证据。本次 diff 未发现有证据支持的查询重复实现或可避免工程债；只读注册内部结构依赖按 FEAT-006 的固定版本兼容边界保留，不能仅因 private/any 判为漏洞。没有稳定工程入口变化，`project_candidates=[]`。
 
 仅请求主 Agent 验收后执行 `record-review --feature-id FEAT-004 --decision approved --by sdlc-review-sol-20261112`；本评审未执行该操作，未提交、推送、部署或宣称整个目标完成。
+
+### 统一独立 Validate 重建（2026-11-12，通过：候选 0b38f9d 全部必要检查通过）
+
+执行环境与共享证据同 [FEAT-006.engineering.md](FEAT-006.engineering.md) 同日「统一独立 Validate（候选 0b38f9d）」一节：候选 `0b38f9dfda7b6c2d0e6add27f47cb2c2a0d9b196`、312 blob 逐字节核验、隔离副本/依赖只读/共享服务零触碰/无新增真实调用均在该节记录，此处引用不重跑。本节只补本 Feature 专属行；本验证为 FEAT-004 在最终业务 HEAD 的重建（旧 reviewed/pass 绑定 2b107efc，按既定决定不能抵扣本候选），全部命令本轮实际执行。
+
+| 检查（本 Feature 验收条件） | 结果 | 证据或缺口 |
+|---|---|---|
+| typecheck / build | PASS | exit 0（共享记录同两条命令，11:45:20–22） |
+| 完整相关 Vitest+coverage（含本 Feature 全部查询测试，一次证明 unit+coverage） | PASS | exit 0：87 文件、605 通过、8 跳过（排除 macosTts.test.ts，2 项真实 OS 语音 NOT_RUN）；readOnlyQuery/queryTurns/queryPreset/queryHarness/weather/cache/live-query 全部在内 |
+| coverage-diff **本 Feature 基线 67d4df4**（80%行/70%分支） | PASS | exit 0：行 3093/3430（90.17%）、分支 1675/2092（80.07%）；同一映射报告，不与 006 基线混用 |
+| 四套 Web E2E（本 Feature 的 e2e-query 为其中 10 项） | PASS | e2e-query 10/10 exit 0，JUnit failures=0/errors=0；fixture `sharedRequests=0 externalRequests=0`；其余三套 4/6/12 同通过（共享记录） |
+| 离线原生入口（本 Feature 验收入口默认 offline） | PASS | exit 0：weather_lookup 北京 limited（geocode 1/current 1/model 2）＋ public_search 逐字原文 evidence（search 1/model 2），总 model 4/mcp 1，failureCode 双 null，scopesDisposed=2 |
+| 真实 GLM 样本引用（协议等效性） | PASS（按协议引用，无新增真实调用） | `git diff 2b107efc..0b38f9d` 核对：queryTurns.ts/queryCredential.ts/readOnlyQuery/weather/weatherCache（body 三文件）/shared DTO/test/live-query/cordis.patch.yml 全部**零差异**；agent.ts 查询工具描述与 authorizesSearch 未动。故 2b107efc 真实样本（两题 evidence、第 2 题逐字原文 {"query":"OBS Studio许可证"}、预算内 model 4/4、mcp 1/2、tts 0）对本候选按协议引用；模型遵循仍为非确定假设，不外推到 live |
+| 舞台/观众播放、真实服务全链路 | 不在本轮范围 | tts:0/合成 0；运行期观察项保持 |
+
+**收尾与状态请求**：进程零残留、共享端口零请求、副本产物保留于 `/private/tmp/dsh-validate-0b38f9d-114156/`；共享 checkout 收尾仅新增两条允许的工程记录。canonical `stage:validate`，`status:awaiting_acceptance`；`requested_transitions`＝请求 `record-validation --feature-id FEAT-004 --result pass --test-command "node test/live-query/run.mjs" --commit 0b38f9dfda7b6c2d0e6add27f47cb2c2a0d9b196`（完整命令列表见 FEAT-006.engineering.md 同日共享记录与本节）。`context_updates.project_candidates`＝[]。未执行任何 lifecycle mutation，不自称正式 review 或已发布。
