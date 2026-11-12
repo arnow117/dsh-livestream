@@ -378,3 +378,25 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 **usage / design / 限制**：README 的 LIVE-QUERY-WEATHER/SEARCH/CONTROL → REQ-006 story → Mac 指南/shared schema/owner 配置 → 原生离线与实际 E2E 结果链一致；来源时间、limited、取消入口、静音预览及未部署范围没有被文档检查替代。UI 仅做静态状态/语义检查，引用现有桌面/375px E2E；Impeccable 在运行时目录可见且 SKILL.md 可读，本轮未启动其 launcher、浏览器或完整 critique，不声称独立渲染/键盘通过。两项真实 macOS TTS、完整 90 秒道别、dsh web CLI 顶层包装、实际舞台/正式观众播放仍未验证；1M 容量及单独 executedModel 未验证。
 
 **结论**：FEAT-004 没有新的必须修复项，建议 approved。FEAT-006 本轮 R9～R11 与 R8 残余统一记录在其工程上下文，不重复作为查询发现；既有查询的有据保留/延期项没有新的回归证据，不重新打开。本次 diff 未发现有证据支持的查询重复实现或可避免工程债。`project_candidates=[]`。仅请求 `record-review --feature-id FEAT-004 --decision approved --by sdlc-review-sol-0b38f9d-20261112`；未执行 mutation、Git 写入或部署。
+
+### 统一独立 Validate 重建（2026-11-12，通过：最终组合候选 5aa3354 全部必要检查通过）
+
+执行环境与共享证据同 [FEAT-006.engineering.md](FEAT-006.engineering.md) 同日「统一独立 Validate 重建（候选 5aa3354）」一节：候选 `5aa3354b15079539bb6bd02b99edad91c66226aa`、312 blob 逐字节核验（verified=312 mismatch=0）、隔离副本/依赖只读 APFS 克隆/共享服务零触碰/无新增真实调用均在该节记录，此处引用不重跑。本验证为本 Feature 在最终组合 HEAD 的重建（旧 reviewed/pass 绑定 0b38f9d，按既定决定不能抵扣本候选），全部命令本轮实际执行；执行环境 T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`（主 Agent 收尾 task_status 返回 executedModel=glm-5.3-flash，1M 容量未验证）。
+
+| 检查（本 Feature 验收条件） | 结果 | 证据或缺口 |
+|---|---|---|
+| typecheck / build | PASS | exit 0（13:29:18–20，共享记录同两条命令）；四 bundle，lib/index.js 零 dsh-tools/dsh-llm 引用 |
+| 完整相关 Vitest+coverage（含本 Feature 全部查询测试，一次证明 unit+coverage） | PASS | exit 0（13:29:20–13:30:30，69.45s）：87 文件、622 通过、8 跳过（排除 macosTts.test.ts，2 项真实 OS 语音 NOT_RUN）；readOnlyQuery/queryTurns/queryPreset/queryHarness/weather/cache/live-query 全部在内，与预期 87/622/8 精确吻合 |
+| coverage-diff **本 Feature 基线 67d4df4**（80%行/70%分支） | PASS | exit 0：行 3181/3521（90.34%）、分支 1745/2168（80.49%）；同一映射报告，不与 006 基线混用 |
+| 四套 Web E2E（本 Feature 的 e2e-query 为其中 10 项） | PASS | e2e-query 10/10 exit 0（13:31:14–59），JUnit failures=0/errors=0；fixture 停止行 `sharedRequests=0 externalRequests=0`；其余三套 4/6/12 同通过（共享记录） |
+| 离线原生入口（本 Feature 验收入口默认 offline） | PASS | exit 0（13:30:30）：weather_lookup 北京 limited（geocode 1/current 1/model 2，failureCode=null）＋ public_search 逐字原文「OBS Studio许可证」evidence（search 1/model 2，failureCode=null），总 model 4/mcp 1，scopesDisposed=2、cleanup finished |
+| 真实 GLM 样本引用（协议等效性） | PASS（按协议引用，无新增真实调用） | `git diff 0b38f9d..5aa3354` 核对：queryTurns.ts/queryCredential.ts/readOnlyQuery/weather/weatherCache（body 三文件）/shared DTO/test/live-query/cordis.patch.yml/test/e2e-query **零差异**；agent.ts 未在本次 delta。0b38f9d 验证按协议引用的 2b107efc 真实样本（两题 evidence、逐字原文、预算内计数）对本候选按协议引用；模型遵循仍为非确定假设，不外推到 live |
+| 舞台/观众播放、真实服务全链路 | 不在本轮范围 | tts:0/合成 0；运行期观察项保持 |
+
+**验收条件对应**：FR-01/03/05（SCN-01/02/04/06）→ 查询单元/天气适配器测试在 622 项中执行＋livequery 离线两题（weather limited 语义、来源/时间证据结构）；FR-04/06/08（SCN-05/08/10）→ livequery 逐字原文/evidence＋e2e-query 10/10（取消/失效/来源旅程）；FR-02/07/09（SCN-03/09/13）→ 查询归属/断订阅回归（queryHarness/queryTurns）在 622 项中＋e2e-query 断订阅后本地交互旅程；SC-002 分层→①隔离替身本轮全链 ②③真实层按协议等效引用（查询面零差异）④⑤舞台/观众播放维持不在范围。完整共享检查链、探针哈希、收尾核对与 unresolved_items 见 FEAT-006 同日记录。
+
+**状态请求（仅请求，不执行 mutation）**：canonical `stage:validate`，`status:awaiting_acceptance`；`requested_transitions`＝请求 `record-validation --feature-id FEAT-004 --result pass --test-command "node test/live-query/run.mjs" --commit 5aa3354b15079539bb6bd02b99edad91c66226aa`（完整命令列表见 FEAT-006.engineering.md 同日共享记录与本节）。`context_updates.project_candidates`＝[]。未执行任何 lifecycle mutation，不自称正式 review 或已发布。
+
+### 2026-11-12 主 Agent 接受 5aa3354 独立 Validate
+
+共享原始证据、312项blob核对、18条exit0、业务干净及资源核对见FEAT-006同日接收记录。接受本Feature的canonical pass请求，绑定5aa3354b15079539bb6bd02b99edad91c66226aa并进入新的正式Sol复审；旧0b38f9d批准不抵扣本次最终组合的审查。查询面等效引用仍保留模型非确定性及无新增真实外部调用边界。

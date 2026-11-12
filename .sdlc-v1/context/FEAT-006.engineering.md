@@ -879,3 +879,58 @@ requested_transitions:
 主 Sol 核对最终源码 diff、固定 canonical 边界、原子合并/硬预算、实际声明路径去重、逐条绑定与按绑定重查、历史缺绑定诊断及唯一资料授权。312 项清单与目标/隔离副本逐字节一致（SHA-256 4fd0d7b847a16a26c08c8c0739165a9e9c54625f81a5214d62dd6fc1b8622896），原始 r7 日志确认 check/build、87 文件 622 通过/8 跳过、差异行 2039/2310=88.27%/分支1038/1322=78.52%、四套 E2E 4/6/12/10、offline-query 双 failureCode=null、SC002 五阶段98与跨宿主45项全部通过。git diff --check 通过；任务路径进程检查无残留。未重复执行实现者已在同输入上完成的整套检查；正式独立 Validate 另行实际执行。
 
 T3 终态确认 completed、无活动下级；请求/实际元数据为 claudeAgent、glm-5.3-flash[1M]、effort=xhigh，executedModel=glm-5.3-flash，1M 容量仍未验证。接受 FEAT-006-T001 done 请求，后续仅以最终已提交业务候选重建 FEAT-004/006 的独立 Validate 与 fresh Sol Review。此为 Build 验收，不是正式批准或发布。实现者误追加的重复七轮记录已合并为一份；此后差异仅为工程记录及主 Agent 生命周期更新。既有失败史、主 Agent 诊断额度已用及真实外部预算0不变；macOS真实语音两例、90秒实计时、CLI包装、舞台/观众播放继续如实列为未测边界。
+
+### 统一独立 Validate 重建（2026-11-12，通过：最终组合候选 5aa3354 全部必要检查通过）
+
+执行环境：T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`；验证执行者未取得该字段；主 Agent 收尾 task_status 实际返回 executedModel=glm-5.3-flash，target/options 为 claudeAgent / glm-5.3-flash[1M] / effort=xhigh；1M 容量仍未验证，未静默切换模型。独立验证执行者，非实现者；真实 GLM/TTS/天气/MCP 搜索/账号/推流预算 0，本轮**无新增真实调用**；未改实现/产品/state，未 commit/push，共享服务零触碰。前置负载检查：load 1.80、共享 3080/3081/7390/8757 无监听；初始并发 1。时间线：13:27 前置核对 → 13:27–13:29 副本/依赖/探针准备 → 13:29:18–13:32:20 全链 18 步实际执行。
+
+**候选与副本绑定**：`5aa3354b15079539bb6bd02b99edad91c66226aa`（分支 `codex/macos-yovoice`，origin 同名分支一致，开始时工作树 porcelain=0）。副本 `/private/tmp/dsh-validate-5aa3354-132700/repo` 经 `git archive 5aa3354` 提取，**312 个跟踪文件按 git blob 哈希逐字节核验（verified=312 mismatch=0）**；相对 0b38f9d 的业务 delta 仅 `sessionContext.ts`/`sessionContextPaths.ts` + 3 个测试文件（另 SDLC 文档/state），查询面文件零差异。依赖为既有已安装 node_modules 的只读 APFS 克隆（`cp -Rc`，根 274M＋包 80K；vitest 3.2.4 解析正常），未新装依赖；构建/测试全部仅在副本执行，共享在用 lib 未触碰（mtime 保持 2026-11-10 14:48）。环境：Node v26.13.0；真实安装 `@deepseek-ai/*` 0.2.2-rc.1（只读，解析钩子指向 harness node_modules）。**runner/探针哈希（SHA-256 前 16 位）**：`run-validate.sh b82cdb9d0dbe58b5`、`hook.mjs a7a5bcad7343f679`、`host-journey-a.mjs 3f112f315aee7b4a`、`host-journey-b.mjs 08c6f059c2114e6d`、`register.mjs d593bf49d6b2ae77`、`sc002-validate-rerun.mjs b479f5b679caf5ca`；探针复制自 `/private/tmp/feat006-r7/sc002/`（最新已接受场景定义）改指本候选副本，无 r6/r7 残留路径；全新 DSH_HOME 与动态端口，旧日志未覆盖。
+
+| 检查（验收条件） | 结果 | 证据或缺口 |
+|---|---|---|
+| typecheck | PASS | `tsc -p tsconfig.json` exit 0（13:29:18–19） |
+| build（四 bundle、index/agent 共享 chunk） | PASS | 副本包目录 `node build.mjs` exit 0（13:29:19–20）；lib/{index,agent,client,stage}.js＋chunks＋stage/index.html 存在；`lib/index.js` 零 `dsh-tools`/`dsh-llm` 引用（bundle-check exit 0） |
+| 完整相关 Vitest+coverage（一次同时证明 unit 与 coverage，排除 macosTts.test.ts） | PASS | exit 0（13:29:20–13:30:30，69.45s）：**87 文件全过、622 通过、8 跳过**，与预期 87/622/8 精确吻合；报告 `coverage/feat-006-validate/`；DSH_HOME 自有临时目录。R9～R11/R8 残余与逐条绑定/深层显式文件回归（真实 IO/组件断言，如中间段移出+symlink 换回零正文、per-index 绑定、取消先结算再分类、同轮去重正文、空容器 400+not_found）均在 622 项中实际执行；两项真实 macOS 语音 NOT_RUN（预算 0 排除） |
+| coverage-diff 基线 fd48d0a（80%行/70%分支） | PASS | exit 0：行 2039/2310（88.27%）、分支 1039/1323（78.53%）；副本报告按既有方法映射路径后从仓库根执行 |
+| coverage-diff 基线 67d4df4（FEAT-004，80%行/70%分支） | PASS | exit 0：行 3181/3521（90.34%）、分支 1745/2168（80.49%）；同一映射报告，不与 006 基线混用 |
+| e2e-session-context（workers1/retries0/trace on，1440×900+375×812） | PASS | exit 0（13:30:30–40）：4/4，JUnit tests=4 failures=0 errors=0；fixture 停止行 `sharedRequests=0 externalRequests=0`（feat-006-build，动态端口） |
+| 既有回归 e2e / e2e-douyin / e2e-query | PASS | exit 0：6/6（13:30:40–50）、12/12（13:30:50–13:31:14）、10/10（13:31:14–59），JUnit failures=0/errors=0；e2e-query fixture 停止行 `sharedRequests=0 externalRequests=0`（feat-004-build，app/model/stage/bridge 动态端口）；voice/douyin fixture 不打印该计数器（既有风格，隔离由内部 stub/拦截承担） |
+| 离线原生入口 `node test/live-query/run.mjs`（默认 offline） | PASS | exit 0（13:30:30）：weather_lookup({location:"北京"}) limited（geocode 1/current 1/model 2，**failureCode=null**，limited 说明「区域内没有可确认时间的气温观测站」）＋ public_search **逐字原文**「OBS Studio许可证」evidence（search 1/model 2，**failureCode=null**，来源 github.com/obsproject/obs-studio）；总 model 4/mcp 1/geocode 1/current 1，synthesis 0，audio offline_not_requested，scopesDisposed=2、cleanup finished、homeRemoved=true |
+| SC002 真实安装组合独立复跑（401/200/403；create/resume 首个 toolset 早于 onair 且无手动 bind；坏快照/首装失败回滚；冻结正文/允许读取/越界零正文；legacy 仅真 ENOENT；刷新失败永久锁定+模型请求 0+同名 global 执行 0；真双 preset 卸 A 后 B 刷新/可信工具保持） | PASS | 五阶段独立运行 exit 0（13:31:59–13:32:14）：**24/12/18/19/25＝98 项检查 0 失败**；组合为真实安装发行栈（`@deepseek-ai/*` 0.2.2-rc.1）+候选副本 lib bundle+正式 preset 经 loader builtins 装载；每阶段收束行 `model budget stays local-only :: shared:0 external:0`；真实 Skill 来源为用户级 papermorph 12167B 真实文件逐字节副本（源文件未动）、资料根为真实 lever-lab 只读 |
+| 补齐检查：完整宿主跨进程 A/B 旅程 | PASS | hostA **20/20**（13:32:14–17）→ hostB **25/25**（13:32:17–20），均 exit 0：'/' 未认证 401 → launch-token 303 authority 绑定 cookie → SPA 200；owner 保存 revision 3→4、真实 sessions 路由创建管理会话（header cwd=自有 workdir、绑定 ready）；真实 turn 落盘后变异源副本、冻结快照文件 sha256/size/mtime 重开前后逐项相等（13133B/aee691d3…）；hostB 原生冷重开（无手动 bind/restore/onair 前置）onair 前首个 toolset=[show_stats, load_livestream_skill, read_livestream_material]、根 probe_global_tool 排除、冻结正文不含冻结后变异标记（未重取）；允许读取真实资料、越界拒绝零内容；**R7：冷重开 active=null → 显式 onair 200 → active=本会话且 cwd 一致**；saved revision 跨重启保持、未认证 /api 仍 401 |
+| R1～R11/N1 修正覆盖归因 | PASS | R9 固定 canonical 根（ancestor 移出+symlink 换回零正文测试在本轮 622 项中执行）、R10 异源同名 409/合法去重/深层显式文件独立名称、R11 硬预算整体拒绝（native 0）、R8 残余按保存绑定重查（删声明 not_found/重复 valid/alias 不重解）、R4/R5 结算与跨 turn 隔离、R2 consoleStartGuard、R6 同轮去重、R7 activeView、N1 旧 helper 删除后全绿——均由本轮实际测试与 98+45 项发行组合检查支撑，非仅状态码 |
+| usage 锚点 | PASS | 候选 README `LIVE-SESSION-CONTEXT`/`LIVE-SKILL-LOAD`/`LIVE-MATERIAL-READ`（128–130 行）与 `LIVE-QUERY-WEATHER`/`SEARCH`/`CONTROL`（119–121 行）存在；`examples/macos-yovoice/README.md`「天气与公开资料查询」「新直播会话」章节核对 owner 入口、参数来源（shared schema/owner 输入）、空 cwd 默认、保存→新建生效、R2 invalid 禁用开始、R6 同轮同名只注入一次、R7 活动跟随开播、R8 空来源不能保存及受限读取/拒绝行为；代表操作与 E2E/发行组合证据对应 |
+| 真实 GLM 样本（协议等效引用） | PASS（按协议引用，无新增真实调用） | `git diff 0b38f9d..5aa3354` 核对：queryTurns/queryCredential/body readOnlyQuery/weather/weatherCache、shared/readOnlyQuery、test/live-query、cordis.patch.yml、test/e2e-query **零差异**；agent.ts 未在本次 delta 中（delta 仅 sessionContext 两文件+3 测试）。0b38f9d 验证按协议引用的 2b107efc 真实样本（两题 evidence、第 2 题逐字原文、预算内 model 4/4、mcp 1/2、tts 0）对本候选继续按协议引用；模型遵循为非确定假设不变，不外推到 live |
+| 舞台/观众播放、真实服务全链路、`dsh web` CLI 顶层包装、90s 真实宽限计时 | NOT_RUN（范围边界） | tts:0/合成 0；发行栈为进程内组合+跨真实进程重启取证；运行期观察项保持，不外推为 live 通过 |
+
+**验收条件对应**：CFG-01→SC002 phase1 真实准入 401/200/403＋e2e-session-context owner 路由＋consoleStartGuard 组件断言；CFG-02→hostA 保存 revision 3→4/hostB 重启恢复 saved revision＋原子保存/revision 测试；CFG-03→SC002 冻结正文 sourceHash=真实文件 SHA＋R10/R11/R8 残余与逐条绑定/深层显式文件测试＋hostB 冻结正文不重取；CFG-04→SC002 允许/越界零正文＋R9 祖先替换零正文＋预算结算测试；CFG-05→phase3 legacy 仅真 ENOENT＋phase4/5 平台刷新与注册隔离＋livequery/e2e-query 查询兼容回归；SC-001/002→四套 E2E＋98 项发行组合＋hostA20/hostB25；SCN-01～07 全部有上述对应证据。旧 PR/评审等状态查询不受影响。
+
+**收尾**：本轮探针/测试/esbuild 进程全部退出（ps 零任务残留，仅存任务外既有 poki daemon）；共享 3080/3081/7390/8757 零请求（探针 fetch 钩子 shared=0/external=0，本机检查无对这些端口的任务监听）；key 泄漏扫描 logs/evidence 无命中；共享 checkout 写入记录前 porcelain=0，写入后仅两条允许的工程记录修改；副本与日志保留于 `/private/tmp/dsh-validate-5aa3354-132700/` 可复验。
+
+**unresolved_items（运行期观察项，不阻塞本候选 PASS）**：macosTts.test.ts 两项真实 OS 语音 NOT_RUN（预算 0 排除）；90s 道别宽限真实计时；`dsh web` CLI 顶层包装；实际舞台播放与正式观众端；`ToolsService.layers` private 内部结构依赖按主 Agent 已记录的固定版本兼容边界保留，正式 Sol 复审仍按既定安排核对该依赖与失败行为；模型 1M 容量未验证（executedModel 由主 Agent 收尾返回值核实）。
+
+**状态请求（仅请求，不执行 mutation）**：canonical `stage:validate`，`status:awaiting_acceptance`；artifacts.changed_files＝`.sdlc-v1/context/FEAT-004.engineering.md`、本文件；evidence.commands/revision/workspace_status 见本节表格与 summary 日志。`context_updates.project_candidates`＝[]（无仓库级稳定事实变化）。`requested_transitions`＝依次请求：
+
+```yaml
+requested_transitions:
+  - operation: record-validation
+    arguments:
+      feature-id: FEAT-004
+      result: pass
+      test-command: node test/live-query/run.mjs
+      commit: 5aa3354b15079539bb6bd02b99edad91c66226aa
+  - operation: record-validation
+    arguments:
+      feature-id: FEAT-006
+      result: pass
+      test-command: pnpm exec e2e run --config e2e-session-context.config.ts --workers 1 --retries 0
+      commit: 5aa3354b15079539bb6bd02b99edad91c66226aa
+```
+
+不自称生命周期已推进、正式 review 已完成或 Feature 已发布。
+
+### 2026-11-12 主 Agent 接受 5aa3354 独立 Validate
+
+主 Sol 核对 git archive 副本的312项 Git blob，全部与候选5aa3354b15079539bb6bd02b99edad91c66226aa一致；summary.txt及18份exitcode文件均为0，差异覆盖率双基线、622通过/8跳过、四套E2E、SC00298项与跨宿主45项有原始日志。当前HEAD仍为候选，业务工作树干净，仅两份允许的工程记录追加，git diff --check通过，任务路径进程零残留。当前产品决定和有效方案未在验证后改变；本轮覆盖逐条绑定/固定canonical与实际声明去重义务，旧业务候选通过未抵扣本次独立执行。
+
+接受工程正文canonical requested_transitions，依序记录FEAT-004与FEAT-006 pass并绑定同一业务候选；随后进入fresh Sol正式复审。元数据按本轮task_status返回值补证，不从历史模型标签推断；两项真实OS语音、90秒实计时、CLI顶层与实际舞台/观众播放仍维持未测边界。此为Validate验收，不是Review批准或发布；失败历史与主Agent诊断额度已用事实保持。
