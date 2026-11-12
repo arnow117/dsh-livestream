@@ -114,11 +114,11 @@
       },
       "requirement_id": "REQ-006",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-12T05:55:49Z",
+        "by": "sdlc-review-sol-5aa3354-20261112",
+        "decision": "approved"
       },
-      "status": "validated",
+      "status": "reviewed",
       "tasks": {
         "FEAT-004-T001": {
           "depends_on": [],
@@ -128,7 +128,7 @@
           "updated_at": "2026-11-10T18:16:04Z"
         }
       },
-      "updated_at": "2026-11-12T05:38:19Z",
+      "updated_at": "2026-11-12T05:55:49Z",
       "validation": {
         "at": "2026-11-12T05:38:19Z",
         "command": "node test/live-query/run.mjs",
@@ -152,22 +152,22 @@
         "by": null,
         "decision": "pending"
       },
-      "status": "validated",
+      "status": "in_progress",
       "tasks": {
         "FEAT-006-T001": {
           "depends_on": [],
           "id": "FEAT-006-T001",
-          "status": "done",
+          "status": "in_progress",
           "title": "交付直播会话目录、Skill 与受限资料配置完整旅程",
-          "updated_at": "2026-11-12T05:22:21Z"
+          "updated_at": "2026-11-12T05:55:49Z"
         }
       },
-      "updated_at": "2026-11-12T05:38:19Z",
+      "updated_at": "2026-11-12T05:55:49Z",
       "validation": {
-        "at": "2026-11-12T05:38:19Z",
-        "command": "pnpm exec e2e run --config e2e-session-context.config.ts --workers 1 --retries 0",
-        "commit": "5aa3354b15079539bb6bd02b99edad91c66226aa",
-        "result": "pass"
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
       }
     },
     "FEAT-007": {
@@ -286,7 +286,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-006.product.md",
       "status": "validated",
       "title": "直播 Agent 天气查询与公开资料搜索",
-      "updated_at": "2026-11-12T05:38:19Z"
+      "updated_at": "2026-11-12T05:55:49Z"
     },
     "REQ-007": {
       "created_at": "2026-11-10T08:22:08Z",
@@ -344,9 +344,9 @@
       "id": "REQ-010",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
-      "status": "validated",
+      "status": "in_delivery",
       "title": "直播会话的工作目录与 Skill 设置",
-      "updated_at": "2026-11-12T05:38:19Z"
+      "updated_at": "2026-11-12T05:55:49Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
