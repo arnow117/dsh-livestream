@@ -186,15 +186,15 @@ describe('session context save flow', () => {
     const revision = JSON.parse(before).sessionContext.revision;
     const request = { sessionContext: { expectedRevision: revision, config: config({ cwd: '' }) } };
     errors[failure] = true;
+    let result: { status: number; body: any };
     try {
-      const result = await post('settings', request);
-      expect([200, 500]).toContain(result.status);
-      if (result.status === 200) throw new Error('injected failure did not trigger');
-    } catch {
-      // 保存失败是预期路径
+      result = await post('settings', request);
     } finally {
       errors[failure] = false;
     }
+    // 评审修正加固：注入必须真的触发（保存以 500 失败），不再把「注入没生效」也当成通过
+    expect(result.status, `injected ${failure} failure did not trigger`).toBe(500);
+    expect(result.body.error).toContain('保存设置失败');
     expect(JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision).toBe(revision);
     expect(runtime.settings.sessionContext).toBeDefined();
   });
@@ -247,5 +247,115 @@ describe('session context save flow', () => {
   it('keeps the health cache readable from the module for owner state', async () => {
     await sessionContext.refreshHealth();
     expect(sessionContext.stateView().health.checkedAt).toBeGreaterThan(0);
+  });
+
+  // ── 评审修正：资料根的授权范围下限 ────────────────────
+
+  it('rejects a read root at the filesystem root or the plugin data directory', async () => {
+    const revision = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    const before = await readFile(settingsFile, 'utf8');
+    for (const [label, path] of [['fs-root', '/'], ['data-dir', join(dir, 'dsh-livestream')]] as const) {
+      const result = await post('settings', { sessionContext: { expectedRevision: revision, config: config({ readRoots: [{ path, enabled: true }] }) } });
+      expect(result.status, label).toBe(400);
+      expect(result.body.error, label).toContain('资料根');
+      expect(result.body.error, label).toContain('数据目录');
+    }
+    expect(await readFile(settingsFile, 'utf8')).toBe(before);
+  });
+
+  it('accepts the home directory as a read root with a correctable health warning', async () => {
+    const { homedir } = await import('node:os');
+    const revision = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    const result = await post('settings', { sessionContext: { expectedRevision: revision, config: config({ readRoots: [{ path: homedir(), enabled: true }] }) } });
+    expect(result.status).toBe(200);
+    const entry = result.body.sessionContext.health.entries.find((candidate: any) => candidate.kind === 'root' && candidate.enabled);
+    expect(entry?.status).toBe('valid');
+    expect(entry?.detail).toContain('主目录');
+    // 恢复基线资料根
+    const persisted = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    await post('settings', { sessionContext: { expectedRevision: persisted, config: config() } });
+  });
+
+  // ── 评审修正（HIGH）：SKILL.md 是符号链接的来源必须整体拒绝，不读取目标 ──
+
+  it('rejects a container source whose nested SKILL.md is a symlink without reading the target', async () => {
+    const { mkdir, symlink, writeFile } = await import('node:fs/promises');
+    // 靶子是合法声明：旧实现会跟随读取并以「发现成功」通过保存——红灯即在此失败
+    await mkdir(join(dir, 'skills-link-container', 'sub'), { recursive: true });
+    await writeFile(join(dir, 'outside-skill.md'), '---\nname: outside-skill\ndescription: 外部文件不应被读取。\n---\n外部正文\n');
+    try {
+      await symlink(join(dir, 'outside-skill.md'), join(dir, 'skills-link-container', 'sub', 'SKILL.md'));
+    } catch {
+      // 个别环境不允许 symlink；跳过此用例
+      return;
+    }
+    const revision = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    const result = await post('settings', { sessionContext: { expectedRevision: revision, config: config({ skillSources: [{ path: join(dir, 'skills-link-container'), enabled: true }] }) } });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toContain('符号链接');
+    expect(JSON.stringify(result.body)).not.toContain('outside-skill');
+  });
+
+  it('rejects a source directory whose top-level SKILL.md is a symlink', async () => {
+    const { mkdir, symlink } = await import('node:fs/promises');
+    await mkdir(join(dir, 'skills-link-top'), { recursive: true });
+    try {
+      await symlink(join(dir, 'skills', 'note.md'), join(dir, 'skills-link-top', 'SKILL.md'));
+    } catch {
+      return;
+    }
+    const revision = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    const result = await post('settings', { sessionContext: { expectedRevision: revision, config: config({ skillSources: [{ path: join(dir, 'skills-link-top'), enabled: true }] }) } });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toContain('符号链接');
+  });
+
+  // ── 二轮修正（HIGH）：候选发现之后、读取之前，中间目录被替换为 symlink 必须拒绝 ──
+  // 末端 O_NOFOLLOW 不保护中间路径段：sub 目录在发现后被换成指来源外的 symlink 时，
+  // 旧实现会经 lstat/读取跟随它把来源外正文收进快照。受控替换点为 discovery hooks。
+
+  it('rejects a container whose subdirectory is swapped to a symlink after discovery, with outside content never captured', async () => {
+    const { mkdir, rm, symlink, writeFile } = await import('node:fs/promises');
+    // 容器：sub/SKILL.md 是真实文件（发现阶段合法）；来源外目录里有另一份合法声明、同名不同正文
+    await mkdir(join(dir, 'swap-container', 'sub'), { recursive: true });
+    await writeFile(join(dir, 'swap-container', 'sub', 'SKILL.md'), '---\nname: swap-inner\ndescription: 发现时的正文。\n---\n发现时正文\n');
+    await mkdir(join(dir, 'outside-swap'), { recursive: true });
+    await writeFile(join(dir, 'outside-swap', 'SKILL.md'), '---\nname: swap-inner\ndescription: 来源外正文不应进入快照。\n---\n来源外正文\n');
+    const { discoverSkills } = await import('../src/dsh/sessionContext');
+    const swapAfterDiscovery = async () => {
+      // 受控替换点：候选收集之后、候选读取之前，把 sub 目录换成指来源外的 symlink
+      await rm(join(dir, 'swap-container', 'sub'), { recursive: true, force: true });
+      await symlink(join(dir, 'outside-swap'), join(dir, 'swap-container', 'sub'));
+    };
+    const result = await discoverSkills(
+      { enabled: true, cwd: '', skillSources: [{ path: join(dir, 'swap-container'), enabled: true }], readRoots: [] },
+      { hooks: { beforeRead: swapAfterDiscovery } },
+    );
+    expect(result.ok, 'mid-directory swap between discovery and read must fail discovery').toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('invalid');
+      expect(JSON.stringify(result)).not.toContain('来源外正文');
+    }
+    await rm(join(dir, 'outside-swap'), { recursive: true, force: true });
+  });
+
+  it('rejects discovery when the trusted container root itself is replaced before candidate reads', async () => {
+    const { mkdir, rename, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'root-swap-container'), { recursive: true });
+    await writeFile(join(dir, 'root-swap-container', 'note.md'), '---\nname: root-swap-inner\ndescription: 发现时的正文。\n---\n发现时正文\n');
+    const { discoverSkills } = await import('../src/dsh/sessionContext');
+    const replaceRoot = async () => {
+      // 整个容器目录被换成同名新目录（inode 变化），并埋入一份合法声明的新正文
+      await rename(join(dir, 'root-swap-container'), join(dir, 'root-swap-original'));
+      await mkdir(join(dir, 'root-swap-container'), { recursive: true });
+      await writeFile(join(dir, 'root-swap-container', 'note.md'), '---\nname: root-swap-inner\ndescription: 替换后的正文。\n---\n替换后正文\n');
+    };
+    const result = await discoverSkills(
+      { enabled: true, cwd: '', skillSources: [{ path: join(dir, 'root-swap-container'), enabled: true }], readRoots: [] },
+      { hooks: { beforeRead: replaceRoot } },
+    );
+    expect(result.ok, 'root replacement between discovery and read must fail discovery').toBe(false);
+    if (!result.ok) expect(JSON.stringify(result)).not.toContain('替换后正文');
+    await rm(join(dir, 'root-swap-original'), { recursive: true, force: true });
   });
 });

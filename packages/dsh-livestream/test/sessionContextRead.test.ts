@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile, rename } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { bindDirectory, readBoundedFile, verifyDirectory } from '../src/dsh/sessionContextPaths';
+import { bindDirectory, readBoundedFile, readRegularFileNoFollowSync, verifyDirectory } from '../src/dsh/sessionContextPaths';
 
 describe('bounded material reading', () => {
   let dir: string;
@@ -140,5 +140,76 @@ describe('bounded material reading', () => {
     const result = await readBoundedFile({ root: (globalThis as any).__root, relativePath: 'allow.txt', maxBytes: 1024, signal: controller.signal });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.failure).toBe('cancelled');
+  });
+});
+
+// ── 评审 HIGH：Skill 发现阶段的「发现到读取」替换防护（同步 O_NOFOLLOW 读取） ──
+
+describe('discovery-time secure file reading', () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dsh-discovery-read-'));
+    await writeFile(join(dir, 'real-skill.md'), '---\nname: real\ndescription: 真正文。\n---\n真实正文。\n');
+    await writeFile(join(dir, 'outside-secret.txt'), '来源外的机密内容\n');
+    await symlink(join(dir, 'outside-secret.txt'), join(dir, 'swapped-link.md')).catch(() => {});
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const identityOf = async (path: string) => {
+    const { lstatSync } = await import('node:fs');
+    const stats = lstatSync(path);
+    return { dev: stats.dev, ino: stats.ino };
+  };
+
+  it('reads a normal regular file intact', async () => {
+    const file = join(dir, 'real-skill.md');
+    const result = readRegularFileNoFollowSync(file, 64 * 1024, await identityOf(file));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(new TextDecoder().decode(result.bytes)).toContain('真实正文');
+  });
+
+  it('refuses a path swapped to a symlink instead of following it (ELOOP)', async () => {
+    const link = join(dir, 'swapped-link.md');
+    const target = await identityOf(join(dir, 'outside-secret.txt'));
+    // 即使传入的是「来源外目标」的身份，也不允许跟随 symlink 读到内容
+    const result = readRegularFileNoFollowSync(link, 64 * 1024, target);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('symlink swap must never yield content');
+    expect(['symlink', 'identity_mismatch']).toContain(result.failure);
+  });
+
+  it('discards the buffer when the path entry was replaced by a different file (stale identity)', async () => {
+    const file = join(dir, 'real-skill.md');
+    // 用「另一个文件」的身份来核对：模拟检查与打开之间文件被替换成别的文件
+    const replacedIdentity = await identityOf(join(dir, 'outside-secret.txt'));
+    const result = readRegularFileNoFollowSync(file, 64 * 1024, replacedIdentity);
+    // 身份不匹配 → 拒绝并零正文（不返回 fd 打开的那个文件的内容）
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failure).toBe('identity_mismatch');
+  });
+
+  it('enforces the byte budget before reading', async () => {
+    const file = join(dir, 'real-skill.md');
+    const result = readRegularFileNoFollowSync(file, 4, await identityOf(file));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failure).toBe('limit_exceeded');
+  });
+
+  it('rejects directories without content', async () => {
+    await mkdir(join(dir, 'folder'), { recursive: true });
+    const identity = await identityOf(join(dir, 'folder'));
+    const result = readRegularFileNoFollowSync(join(dir, 'folder'), 64 * 1024, identity);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failure).toBe('unsupported_file');
+  });
+
+  it('reports missing files as not_found', () => {
+    const result = readRegularFileNoFollowSync(join(dir, 'nope.md'), 64 * 1024, { dev: 1, ino: 1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failure).toBe('not_found');
   });
 });

@@ -17,13 +17,16 @@ import type { Topic } from '../core/attention/topics';
 import { queryTurns, type TrustedQueryInput } from './queryTurns';
 import { resolveQueryCredential } from './queryCredential';
 import {
+  checkHostComposition,
   compositionForSession,
   configuredRawPaths,
+  discardActiveSession,
   disposeSessionObservation,
   loadSkill,
   noteSessionTurn,
   readMaterial,
   registerObservationSession,
+  restoreManagedSnapshot,
   snapshotForSession,
   STATUS_TEXT,
   type SessionContextSnapshot,
@@ -57,44 +60,133 @@ const observedLeases = new WeakSet<object>();
 
 // ── FEAT-006：绑定会话的受限 Skill/资料能力 ───────────
 
-/** 本 preset 当前注册的工具 definition：限制名单只认名称与 definition 身份都匹配的项 */
-const presetToolDefinitions = new Map<string, any>();
+/**
+ * 每个 preset 插件实例自己的可信注册记录：definition 即本实例注册时的对象。
+ * 同一插件可同时挂在多个 preset 下（每个 preset 一个实例），注册归属按实例隔离——
+ * 模块级名称 Map 会让 A 实例的注销误删 B 实例同名的可信注册。
+ */
+interface PresetBindingState {
+  readonly trustedTools: Map<string, any>;
+}
+
+/** 最近一次 apply 的 preset 实例：运行时回调 seam（sessionTools.onCreated）用它解析可信注册 */
+let latestPresetState: PresetBindingState | null = null;
+
+/** 会话 → 绑定它的 preset 实例：限制名单按该实例的可信注册计算 */
+const sessionOwnerStates = new Map<string, PresetBindingState>();
 /** 已绑定受限工具的会话：sessionId → 当前限制与解除函数 */
 const sessionRestrictions = new Map<string, { lift: () => void; allow: string[] }>();
+/** restrict 首装失败的会话（fail-closed）：两个新增工具已卸下；由绑定 effect 清理随 agent 释放 */
+const restrictionFailedSessions = new Map<string, string>();
+/** 刷新失败后被永久锁定的会话：本场不再刷新/回装/恢复，每步拒绝（只有会话释放才清除） */
+const refreshLockedSessions = new Map<string, string>();
+/** 会话两个新增工具的卸下函数（bind 时登记）：refresh 路径 fail-closed 时也要能卸下 */
+const sessionToolDisposers = new Map<string, () => void>();
 const boundAgents = new Map<string, any>();
 /** 已注入会话 manifest 的会话（每个会话一次） */
 const manifestSessions = new Set<string>();
 
-/** 从本 preset 记录里挑出该 Agent 当前确实可见（名称与 definition 身份都匹配）的工具名 */
-function visiblePresetAllowNames(agentCtx: any, agent: any): string[] {
+/**
+ * 与限制无关的「当前解析链注册表」：global 层 + agent 完整 scope 链（含自身层）按 nearest-wins
+ * 合并的 registration 对象（固定安装版 dsh-tools 0.2.2-rc.1：layers.global.tools + layers.chainLayers）。
+ * tools.layers 在类型声明中为 private；这里依赖已验证安装组合的内部结构，宿主升级须重新验证。
+ * view().visible/registrations 受已有限制过滤（原始 MEDIUM-1 根因），
+ * 不能用作依据；这里不读 restriction-aware 视图，也不临时解除任何限制。
+ * 层链不可用（API 缺失/抛错）返回 null：调用方按安装失败处理（首装回滚 / 刷新锁定），不静默豁免。
+ */
+function currentChainRegistrations(agentCtx: any, agent: any): Map<string, any> | null {
+  const layers = agentCtx?.tools?.layers;
+  if (!layers || typeof layers.chainLayers !== 'function' || !layers.global?.tools) return null;
+  try {
+    const merged = new Map<string, any>();
+    for (const [name, registration] of layers.global.tools.entries()) merged.set(name, registration);
+    for (const layer of layers.chainLayers(agent)) {
+      for (const [name, registration] of layer.tools.entries()) merged.set(name, registration);
+    }
+    return merged;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 本实例可信注册的当前身份核对（当前有效方案 83 行合同）：名单只含「解析链上该名称的当前
+ * registration 仍指向本实例注册时的同一个 definition 对象」的工具——注册被移除、被同名注册
+ * 替换（近 scope 遮蔽后当前身份非本实例）时该名称不得获准，同名 global 不借名获准。
+ * 返回 null = 无法核实 → 调用方按安装失败处理（fail-closed），不得退化为仅凭名称的名单。
+ */
+function presetAllowNames(state: PresetBindingState, agentCtx: any, agent: any): string[] | null {
+  const chain = currentChainRegistrations(agentCtx, agent);
+  if (chain === null) return null;
   const names: string[] = [];
-  for (const [name, definition] of presetToolDefinitions) {
-    const seen = agentCtx?.tools?.get?.(name, agent);
-    if (seen && seen === definition) names.push(name);
+  for (const [name, definition] of state.trustedTools) {
+    const registration = chain.get(name);
+    if (registration && registration.definition === definition) names.push(name);
   }
   return names;
 }
 
-/** 更新一个绑定会话的工具限制：先安装新限制，再释放旧限制 */
-function installSessionRestriction(agentCtx: any, agent: any, sessionId: string): void {
+/**
+ * 更新一个绑定会话的工具限制：先安装新限制，成功后才释放旧限制。
+ * restrict 抛错（如并发注销窗口的 unknown-name）按 fail-closed 处理：
+ * 保留旧限制（有则不 lift，不暴露未限制的全局面）、记录诊断、卸下该会话的两个新增工具，不静默跳过。
+ * - initial（agent/created 内的首装）：返回 false，由调用方抛出受控错误让原生创建/恢复回滚；
+ * - refresh（平台工具往返后的刷新）：失败即保留旧安全限制、取消该会话当前工作并**永久锁定**——
+ *   本场不再刷新/回装/恢复，每步拒绝，后续平台刷新不清除标记；旧 allow 名称对应的 preset 工具
+ *   消失并露出同名 global 时，步骤被拒绝使该 global 执行次数恒零。
+ */
+function installSessionRestriction(agentCtx: any, agent: any, sessionId: string, state: PresetBindingState, mode: 'initial' | 'refresh'): boolean {
   const existing = sessionRestrictions.get(sessionId);
   try {
-    const allow = visiblePresetAllowNames(agentCtx, agent);
+    const allow = presetAllowNames(state, agentCtx, agent);
+    // 身份链不可核实视同安装失败：首装回滚 / 刷新锁定，不产生「仅凭名称」的名单
+    if (allow === null) throw new Error('无法核对可信注册的当前身份（registry 层链不可用）');
     const lift = agentCtx.tools.restrict({ allow });
     sessionRestrictions.set(sessionId, { lift, allow });
-  } catch {
-    sessionRestrictions.delete(sessionId);
-  } finally {
-    existing?.lift();
+    restrictionFailedSessions.delete(sessionId);
+  } catch (error) {
+    const note = `直播会话限制名单安装失败（会话 ${sessionId}），本场停用 Skill 与资料工具：${(error as Error).message}`;
+    restrictionFailedSessions.set(sessionId, note);
+    if (mode === 'refresh') {
+      // 刷新失败：永久锁定。旧安全限制已保留；本场不回装、后续刷新跳过、每步拒绝。
+      refreshLockedSessions.set(sessionId, note);
+    }
+    hooks.log('warn', note);
+    // 首次绑定与后续刷新都经这里：统一用登记的卸下函数移除两个新增工具
+    sessionToolDisposers.get(sessionId)?.();
+    if (mode === 'refresh') {
+      // 刷新失败：旧安全限制已保留，再取消该会话的当前工作（后续步骤不再用失败前的工具集合继续）
+      try {
+        agent?.cancel?.({ kind: 'user' });
+      } catch (cancelError) {
+        hooks.log('warn', `取消会话当前工作失败（会话 ${sessionId}）：${(cancelError as Error).message}`);
+      }
+    }
+    return false;
   }
+  // 新限制已生效，才释放旧限制（锁定中的会话根本不会走到这里）
+  try {
+    existing?.lift();
+  } catch (error) {
+    hooks.log('warn', `释放旧限制失败（会话 ${sessionId}）：${(error as Error).message}`);
+  }
+  return true;
 }
 
-/** 平台工具注销/注册后同步所有绑定会话的限制名单（保存配置不触发该更新） */
+/** 本会话是否已按 fail-closed 停用（首装失败残留或刷新失败锁定） */
+function sessionRestrictionFailed(sessionId: string): boolean {
+  return restrictionFailedSessions.has(sessionId) || refreshLockedSessions.has(sessionId);
+}
+
+/** 平台工具注销/注册后同步所有绑定会话的限制名单（保存配置不触发该更新）；失败按 fail-closed 刷新处理。
+ * 永久锁定的会话直接跳过：不清除标记、不回装、不宣称绑定成功 */
 function refreshSessionToolRestrictions(): void {
-  for (const [sessionId] of sessionRestrictions) {
+  for (const sessionId of [...sessionRestrictions.keys()]) {
+    if (refreshLockedSessions.has(sessionId)) continue;
     const agent = boundAgents.get(sessionId);
-    if (!agent) continue;
-    installSessionRestriction(agent.ctx, agent, sessionId);
+    const state = sessionOwnerStates.get(sessionId);
+    if (!agent || !state) continue;
+    installSessionRestriction(agent.ctx, agent, sessionId, state, 'refresh');
   }
 }
 
@@ -138,10 +230,13 @@ function sanitizeSessionPaths(sessionId: string, text: string): string {
   return output;
 }
 
-/** 绑定会话的两个受限工具（Agent 自身 scope）；创建完成立即调用，恢复时在第一步预检调用 */
-export function bindSessionContextTools(agent: any): boolean {
+/** 绑定会话的两个受限工具（Agent 自身 scope）并安装继承工具限制；只在 preset-scoped agent/created 串行事件内调用。
+ * 名单按 owning preset 实例的可信注册计算 */
+function bindSessionContextTools(agent: any, state: PresetBindingState): boolean {
   const sessionId: string | undefined = agent?.session?.id;
-  if (!sessionId || boundAgents.has(sessionId)) return !!sessionId && boundAgents.has(sessionId);
+  if (!sessionId) return false;
+  if (sessionRestrictionFailed(sessionId)) return false;
+  if (boundAgents.has(sessionId)) return true;
   const snapshot = snapshotForSession(sessionId);
   if (!snapshot) return false;
   const composition = compositionForSession(sessionId);
@@ -149,6 +244,7 @@ export function bindSessionContextTools(agent: any): boolean {
   const agentCtx = agent.ctx;
   if (!agentCtx?.tools?.register || typeof agentCtx.effect !== 'function') return false;
   boundAgents.set(sessionId, agent);
+  sessionOwnerStates.set(sessionId, state);
   registerObservationSession(sessionId);
   const stringOut = { schema: { type: 'string' as const }, render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }] };
   const disposers: Array<() => void> = [];
@@ -201,16 +297,90 @@ export function bindSessionContextTools(agent: any): boolean {
       return `无法读取（${STATUS_TEXT[result.status]}）${detail}`;
     },
   })));
-  installSessionRestriction(agentCtx, agent, sessionId);
-  agentCtx.effect(() => () => {
+  // 限制安装失败时卸下这两个新增工具（fail-closed），不暴露未限制的全局面
+  let sessionToolsDisposed = false;
+  const disposeSessionTools = () => {
+    if (sessionToolsDisposed) return;
+    sessionToolsDisposed = true;
     for (const dispose of disposers) dispose();
+  };
+  sessionToolDisposers.set(sessionId, disposeSessionTools);
+  // 首装失败返回 false：agent/created 的调用方抛受控错误，让原生创建/恢复整体回滚（不产生无限制的可用会话）
+  const installed = installSessionRestriction(agentCtx, agent, sessionId, state, 'initial');
+  agentCtx.effect(() => () => {
+    disposeSessionTools();
+    sessionToolDisposers.delete(sessionId);
     sessionRestrictions.get(sessionId)?.lift();
     sessionRestrictions.delete(sessionId);
     boundAgents.delete(sessionId);
+    sessionOwnerStates.delete(sessionId);
     manifestSessions.delete(sessionId);
+    restrictionFailedSessions.delete(sessionId);
+    refreshLockedSessions.delete(sessionId);
+    // agent 释放（原生回滚/会话关闭）：恢复期登记的活动快照一并撤销，不留幽灵活动会话
+    discardActiveSession(sessionId);
     disposeSessionObservation(sessionId);
   }, 'dsh-livestream session context binding');
-  return true;
+  return installed;
+}
+
+/**
+ * preset-scoped 串行 agent/created 的实际处理器（原生创建/恢复在返回与首个工具集合解析前调用；
+ * 抛错让原生回滚该次创建/恢复）。管理判定只看磁盘：真实 ENOENT → legacy 未管理会话原样放行；
+ * 存在但损坏/被替换的快照抛受控错误（绝不允许「无效快照降级成未管理」）；
+ * 恢复成功后先恢复快照登记，再安装继承工具限制与自身两个窄工具，全部在本次创建/恢复返回前完成。
+ * state 是本 preset 实例的可信注册记录（由实例自己的事件监听闭包传入）。
+ */
+async function handleAgentCreatedForState(payload: { agent: any; source?: unknown }, state: PresetBindingState): Promise<void> {
+  const agent = payload?.agent;
+  const sessionId: string | undefined = agent?.session?.id;
+  if (!sessionId) return;
+  // fail-closed 停用（首装失败残留或刷新失败锁定）的会话不接受任何后续创建/恢复公告
+  if (sessionRestrictionFailed(sessionId)) {
+    throw new Error(`直播会话受限绑定失败（会话 ${sessionId}，${restrictionFailedSessions.get(sessionId) ?? refreshLockedSessions.get(sessionId) ?? '限制名单首次安装失败'}）；本场停用 Skill 与资料工具，已拒绝本次会话创建/恢复`);
+  }
+  // 已绑定的重播 announce（clear/compaction 重新发布等）：幂等返回
+  if (boundAgents.has(sessionId)) return;
+  const outcome = await restoreManagedSnapshot(sessionId, agent?.ctx?.get?.('loader'));
+  if (outcome.kind === 'none') return;
+  if (outcome.kind === 'invalid') {
+    throw new Error(`直播会话快照无法恢复（${sessionId}）：${outcome.error}；已拒绝本次会话创建/恢复，请创建新的直播会话`);
+  }
+  const composition = compositionForSession(sessionId);
+  const bound = bindSessionContextTools(agent, state);
+  if (!bound) {
+    // 绑定失败：原生会回滚该 agent；撤销恢复期登记的活动快照，不留幽灵
+    discardActiveSession(sessionId);
+    const failureNote = restrictionFailedSessions.get(sessionId) ?? refreshLockedSessions.get(sessionId);
+    const reason = composition && !composition.ok
+      ? `宿主组合不支持受限会话（${composition.reason}）`
+      : failureNote ?? '会话缺少可用的受限绑定条件';
+    throw new Error(`直播会话受限绑定失败（会话 ${sessionId}，${reason}）；本场停用 Skill 与资料工具，已拒绝本次会话创建/恢复`);
+  }
+}
+
+/** 测试/接线 seam：经运行时回调暴露最近应用的 preset 实例处理器（生产由各实例自己的事件监听驱动） */
+export async function handleAgentCreated(payload: { agent: any; source?: unknown }): Promise<void> {
+  const state = latestPresetState ?? { trustedTools: new Map() };
+  await handleAgentCreatedForState(payload, state);
+}
+
+/** 创建/恢复返回后的绑定状态核对（宿主路由用；不重新绑定、不补装权限） */
+export function verifySessionBinding(sessionId: string): { bound: boolean; note?: string } {
+  if (refreshLockedSessions.has(sessionId)) return { bound: false, note: refreshLockedSessions.get(sessionId) };
+  if (boundAgents.has(sessionId) && !sessionRestrictionFailed(sessionId)) return { bound: true };
+  return { bound: false, note: restrictionFailedSessions.get(sessionId) ?? '会话没有已完成的受限绑定' };
+}
+
+/** 测试隔离用：清空会话绑定状态（模拟进程重启；生产代码不得调用） */
+export function resetSessionBindingStateForTest(): void {
+  sessionRestrictions.clear();
+  restrictionFailedSessions.clear();
+  refreshLockedSessions.clear();
+  sessionOwnerStates.clear();
+  sessionToolDisposers.clear();
+  boundAgents.clear();
+  manifestSessions.clear();
 }
 
 function topicInputs(topic?: Topic): TrustedQueryInput[] {
@@ -525,6 +695,9 @@ export function apply(ctx: AgentContext): void {
 }
 
 function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void {
+  // 本 preset 实例的可信注册记录：同一插件可同时挂在多个 preset 下，注册归属按实例隔离
+  const instanceState: PresetBindingState = { trustedTools: new Map() };
+  latestPresetState = instanceState;
   hooks.complete = (model, system, user) => completeWithDsh(ctx, model, system, user);
   hooks.push = (sessionId, text, now, topic) => push(ctx, sessionId, text, now, topic);
   hooks.initializeWatch = (sessionId) => {
@@ -532,8 +705,10 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
     watchSession(ctx, sessionId, 'live');
   };
   markAgentReady();
-  // FEAT-006：把绑定会话工具的入口交给宿主路由（经运行时回调，不建立 index→agent 的静态依赖）
-  sessionTools.bind = bindSessionContextTools;
+  // FEAT-006：把绑定状态核对交给运行时回调（宿主路由用；不建立 index→agent 的静态依赖）。
+  // onCreated seam 指向本实例的处理器（最近 apply 的实例生效；生产由各实例自己的 agent/created 监听驱动）
+  sessionTools.onCreated = (payload) => handleAgentCreatedForState(payload, instanceState);
+  sessionTools.verify = verifySessionBinding;
   // 警告也打到 stderr：DSH 网页版的日志只在内存里，服务器上看 web.log 才找得到
   if (ctx.logger) hooks.log = (level, message) => {
     ctx.logger[level]?.(`dsh-livestream: ${message}`);
@@ -548,12 +723,13 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
   const text = (value: string) => [{ type: 'text' as const, text: value }];
   const stringOut = { schema: { type: 'string' as const }, render: (_args: unknown, value: string) => text(value) };
 
-  // FEAT-006：既有注册/注销入口记录当前有效的工具 definition 对象；限制名单只认这里且身份匹配的名称
+  // FEAT-006：既有注册/注销入口记录本实例当前有效的工具 definition 对象；限制名单只认本实例的可信注册
   const registerLiveTool = (definition: any, options?: any) => {
-    presetToolDefinitions.set(definition.name, definition);
+    instanceState.trustedTools.set(definition.name, definition);
     const dispose = ctx.tools.register(definition, options);
     return () => {
-      presetToolDefinitions.delete(definition.name);
+      // 只删本实例注册的那份 definition：A 实例注销不影响 B 实例同名的可信注册
+      if (instanceState.trustedTools.get(definition.name) === definition) instanceState.trustedTools.delete(definition.name);
       dispose();
     };
   };
@@ -584,17 +760,27 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
     return () => { offOutput(); offSettings(); offStep?.(); invalidate(); };
   }, 'dsh-livestream query ownership');
 
-  // FEAT-006：绑定会话的真实 turn 预算与 manifest 注入（恢复时也在这里绑定）
+  // FEAT-006：绑定会话的真实 turn 预算与 manifest 注入。首装安全（快照恢复+限制安装）只发生在
+  // preset-scoped 串行 agent/created 里（早于首个工具集合解析）；pre-step 只做有效性/宿主组合核对、
+  // turn 预算重置与 manifest 注入，不用它补救已发出的模型或工具执行。
   ctx.effect(() => {
     const offStep = ctx.on?.('agent/pre-step', async (payload: any, next: () => Promise<any>) => {
       const agent = payload?.agent;
       const sessionId: string | undefined = agent?.session?.id;
       if (!sessionId) return next();
-      noteSessionTurn(sessionId, Number(payload.turn));
-      if (snapshotForSession(sessionId) && !boundAgents.has(sessionId)) bindSessionContextTools(agent);
       const snapshot = snapshotForSession(sessionId);
+      if (!snapshot) return next();
+      // 刷新失败被永久锁定的会话：本场每一步整体拒绝，不调用 next（下游监听器/模型继续不得发生）
+      if (refreshLockedSessions.has(sessionId)) return { kind: 'reject' };
+      noteSessionTurn(sessionId, Number(payload.turn));
+      // 每步真实调用当前 loader 组合检查（不读创建时缓存）：不支持的全局组件被启用、
+      // 加载中或无法确认隔离时拒绝该步（已解析的工具集合不进入执行，下游 skill 监听器不继续）
+      const liveComposition = checkHostComposition(agent?.ctx?.get?.('loader'));
+      if (!liveComposition.ok) return { kind: 'reject' };
+      // 首装失败残留的 fail-closed 会话同样每步拒绝
+      if (restrictionFailedSessions.has(sessionId)) return { kind: 'reject' };
       const decision = await next();
-      if (!snapshot || manifestSessions.has(sessionId)) return decision;
+      if (manifestSessions.has(sessionId)) return decision;
       if (!decision || decision.kind !== 'enter') return decision;
       manifestSessions.add(sessionId);
       const manifest = Object.freeze({
@@ -607,6 +793,16 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
     });
     return () => offStep?.();
   }, 'dsh-livestream session context steps');
+
+  // FEAT-006：preset-scoped 串行 agent/created——原生创建/恢复在返回与首个工具集合解析前，
+  // 在这里完成管理快照恢复、校验、继承工具限制与自身窄工具安装；listener 抛错让原生回滚该次创建/恢复。
+  // 直接用本实例的可信注册状态，不经模块级回调（多 preset 实例各自隔离）
+  ctx.effect(() => {
+    const offCreated = ctx.on?.('agent/created', async (payload: any) => {
+      await handleAgentCreatedForState(payload, instanceState);
+    });
+    return () => offCreated?.();
+  }, 'dsh-livestream session context creation');
 
   const credential = () => resolveQueryCredential(ctx.get?.('credentials'), process.env.GLM_CODING_PLAN_API_KEY);
   const available = async (agent: any, signal: AbortSignal, kind: QueryRequest['kind']) => {

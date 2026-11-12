@@ -10,7 +10,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   decodeSessionContextRecord,
@@ -28,7 +29,7 @@ import {
   type SessionContextStateView,
   type SessionContextStatus,
 } from '../shared/sessionContext';
-import { bindDirectory, readBoundedFile, verifyDirectory, type DirectoryBinding, type PathFailure } from './sessionContextPaths';
+import { bindDirectory, readBoundedFile, readDiscoveredSkill, verifyDirectory, type DirectoryBinding, type DiscoveryReadHooks, type PathFailure } from './sessionContextPaths';
 import { parseSkillMarkdown, SKILL_LIMITS } from './sessionContextSkills';
 import { dataDir, hooks, settings } from './runtime';
 
@@ -167,7 +168,7 @@ function sha256(data: Uint8Array): string {
 }
 
 /** 单个启用来源的有界发现：显式 .md 文件、含 SKILL.md 的目录，或容器目录（直接 .md + 一级子目录） */
-function discoverSource(entry: SessionContextEntry, canonicalRoot: string, index: number, discovered: DiscoveredSkill[], seenPaths: Set<string>): DiscoveryFailure {
+async function discoverSource(entry: SessionContextEntry, canonicalRoot: string, index: number, discovered: DiscoveredSkill[], seenPaths: Set<string>, hooks: DiscoveryReadHooks): Promise<DiscoveryFailure> {
   let stats;
   try {
     stats = lstatSync(canonicalRoot);
@@ -175,15 +176,32 @@ function discoverSource(entry: SessionContextEntry, canonicalRoot: string, index
     return { ok: false, code: 'not_found', field: `config.skillSources[${index}].path`, detail: '来源不存在' };
   }
   if (stats.isSymbolicLink()) return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: '来源是指向外部的符号链接' };
-  let candidates: string[];
+  // 读取防护的可信锚：发现时的来源根身份（目录来源=容器本身；单文件来源=其父目录）
+  const anchorIsDirectory = !stats.isFile();
+  const anchorPath = anchorIsDirectory ? canonicalRoot : dirname(canonicalRoot);
+  let anchorStats;
+  try {
+    anchorStats = lstatSync(anchorPath);
+  } catch {
+    return { ok: false, code: 'not_found', field: `config.skillSources[${index}].path`, detail: '来源不存在' };
+  }
+  if (anchorStats.isSymbolicLink() || !anchorStats.isDirectory()) {
+    return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: '来源锚点不是目录' };
+  }
+  const rootIdentity = { dev: anchorStats.dev, ino: anchorStats.ino };
+  let candidates: Array<{ file: string; relative: string }>;
   if (stats.isFile()) {
     if (!canonicalRoot.endsWith('.md')) return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: '文件来源必须是 .md' };
-    candidates = [canonicalRoot];
+    candidates = [{ file: canonicalRoot, relative: canonicalRoot.slice(anchorPath.length + 1) }];
   } else {
     const ownSkillFile = join(canonicalRoot, 'SKILL.md');
-    if (existsSync(ownSkillFile)) {
-      // 遇到直接 SKILL.md 就作为单 Skill 目录，不再扩展其兄弟文件
-      candidates = [ownSkillFile];
+    const ownSkillStats = lstatSync(ownSkillFile, { throwIfNoEntry: false });
+    if (ownSkillStats) {
+      // 遇到直接 SKILL.md 就作为单 Skill 目录，不再扩展其兄弟文件；
+      // 与直接 .md 分支同一硬规则：symlink/非普通文件不跟随，整体拒绝来源，不读取目标内容
+      if (ownSkillStats.isSymbolicLink()) return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: 'SKILL.md 是符号链接，已拒绝该来源' };
+      if (!ownSkillStats.isFile()) return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: 'SKILL.md 不是普通文件，已拒绝该来源' };
+      candidates = [{ file: ownSkillFile, relative: 'SKILL.md' }];
     } else {
       let names: string[];
       try {
@@ -202,32 +220,46 @@ function discoverSource(entry: SessionContextEntry, canonicalRoot: string, index
         if (!child) continue;
         // 候选 Markdown 是符号链接 → 拒绝来源，不默默当成「未发现」
         if (child.isSymbolicLink()) return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: `候选 Markdown ${name} 是符号链接` };
-        if (child.isFile()) candidates.push(file);
+        if (child.isFile()) candidates.push({ file, relative: name });
       }
       for (const name of names) {
         const dir = join(canonicalRoot, name);
         const child = lstatSync(dir, { throwIfNoEntry: false });
         if (!child || child.isSymbolicLink() || !child.isDirectory()) continue;
         const skillFile = join(dir, 'SKILL.md');
-        if (existsSync(skillFile)) candidates.push(skillFile);
+        const skillStats = lstatSync(skillFile, { throwIfNoEntry: false });
+        if (!skillStats) continue;
+        if (skillStats.isSymbolicLink()) return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: `候选 SKILL.md ${name}/SKILL.md 是符号链接，已拒绝该来源` };
+        if (skillStats.isFile()) candidates.push({ file: skillFile, relative: `${name}/SKILL.md` });
       }
     }
   }
-  for (const file of candidates) {
+  for (const candidate of candidates) {
     if (discovered.length >= SKILL_LIMITS.maxSkills) {
       return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `唯一 Skill 超过 ${SKILL_LIMITS.maxSkills} 份` };
     }
-    if (seenPaths.has(file)) continue;
+    if (seenPaths.has(candidate.file)) continue;
+    // 读取防护（评审 HIGH + 二轮中间目录替换）：末端 O_NOFOLLOW 不保护中间路径段——
+    // 以发现时的来源根为锚逐段核对根/各目录段/末端文件身份；「发现到读取」之间目录被换成
+    // symlink 或根被整体替换一律拒绝来源，源外正文绝不进入快照
+    const secure = await readDiscoveredSkill(anchorPath, rootIdentity, candidate.relative, SKILL_LIMITS.maxFileBytes, hooks);
     let bytes: Uint8Array;
-    try {
-      const buffer = readFileSync(file);
-      if (buffer.byteLength > SKILL_LIMITS.maxFileBytes) {
+    if (!secure.ok) {
+      if (secure.failure === 'symlink') {
+        return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: '候选在发现后被替换为符号链接（含中间目录），已拒绝该来源' };
+      }
+      if (secure.failure === 'identity_mismatch') {
+        return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: '候选在发现后被替换（根或路径身份不符），已拒绝该来源' };
+      }
+      if (secure.failure === 'limit_exceeded') {
         return { ok: false, code: 'limit_exceeded', field: `config.skillSources[${index}].path`, detail: `Skill 文件超过 ${SKILL_LIMITS.maxFileBytes} 字节` };
       }
-      bytes = new Uint8Array(buffer);
-    } catch {
+      if (secure.failure === 'not_found') {
+        return { ok: false, code: 'not_found', field: `config.skillSources[${index}].path`, detail: 'Skill 文件不可读' };
+      }
       return { ok: false, code: 'unreadable', field: `config.skillSources[${index}].path`, detail: 'Skill 文件不可读' };
     }
+    bytes = secure.bytes;
     const parsed = parseSkillMarkdown(bytes);
     if (!parsed.ok) {
       return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: `Skill 声明无效（${parsed.failure}）` };
@@ -235,13 +267,13 @@ function discoverSource(entry: SessionContextEntry, canonicalRoot: string, index
     if (discovered.some((existing) => existing.name === parsed.skill.name)) {
       return { ok: false, code: 'conflict', field: `config.skillSources[${index}].path`, detail: `不同来源的 Skill 同名：${parsed.skill.name}` };
     }
-    seenPaths.add(file);
+    seenPaths.add(candidate.file);
     discovered.push({
       name: parsed.skill.name,
       description: parsed.skill.description,
       modelInvocable: parsed.skill.modelInvocable,
       userInvocable: parsed.skill.userInvocable,
-      sourcePath: file,
+      sourcePath: candidate.file,
       raw: bytes,
       body: parsed.skill.body,
       sourceHash: sha256(bytes),
@@ -251,8 +283,9 @@ function discoverSource(entry: SessionContextEntry, canonicalRoot: string, index
   return { ok: true, skills: discovered };
 }
 
-/** 保存/创建共用的发现入口：预算、去重、同名冲突都在这里收口。allowMissing 供创建时降级（缺失条目跳过并标记问题） */
-export async function discoverSkills(config: SessionContextConfig, options: { allowMissing?: boolean } = {}): Promise<DiscoveryFailure> {
+/** 保存/创建共用的发现入口：预算、去重、同名冲突都在这里收口。allowMissing 供创建时降级（缺失条目跳过并标记问题）；
+ * hooks 供测试在「发现到读取」之间注入受控替换（生产代码不传） */
+export async function discoverSkills(config: SessionContextConfig, options: { allowMissing?: boolean; hooks?: DiscoveryReadHooks } = {}): Promise<DiscoveryFailure> {
   const enabled = config.skillSources.filter((entry) => entry.enabled);
   if (!enabled.length) return { ok: true, skills: [] };
   if (enabled.length > SKILL_LIMITS.maxSources) {
@@ -298,7 +331,7 @@ export async function discoverSkills(config: SessionContextConfig, options: { al
     }
     seenCanonical.set(canonical, index);
     const before = discovered.length;
-    const result = discoverSource(entry, canonical, index, discovered, seenPaths);
+    const result = await discoverSource(entry, canonical, index, discovered, seenPaths, options.hooks ?? {});
     if (!result.ok) {
       // 创建时来源目录整体缺失按降级处理；解析冲突/预算仍拒绝
       if (options.allowMissing && (result.code === 'not_found' || result.code === 'unreadable')) continue;
@@ -401,6 +434,10 @@ export async function validateSaveCandidate(request: SessionContextSaveRequest):
       const status = binding === 'not_found' ? 'not_found' : binding === 'not_directory' ? 'invalid' : 'unreadable';
       return { ok: false, status: 400, error: `资料根无效：${entry.path}`, issue: { code: status, field: `config.readRoots[${index}].path` } };
     }
+    // 授权范围下限：文件系统根目录与插件数据目录（settings.json 所在目录）不作为资料根，请改用具体资料目录
+    if (binding.path === '/' || binding.path === pluginDataDir()) {
+      return { ok: false, status: 400, error: `资料根不能是文件系统根目录或插件数据目录：${entry.path}`, issue: { code: 'invalid', field: `config.readRoots[${index}].path` } };
+    }
     const previous = rootCanonical.get(binding.path);
     if (previous !== undefined && config.readRoots[previous].enabled !== entry.enabled) {
       return { ok: false, status: 400, error: '同一资料根的启停不一致', issue: { code: 'mixed_enabled', field: `config.readRoots[${index}].path` } };
@@ -418,6 +455,21 @@ export async function validateSaveCandidate(request: SessionContextSaveRequest):
 }
 
 // ── owner 健康检查（内存缓存） ─────────────────────────
+
+let cachedPluginDataDir: string | null = null;
+
+/** 插件数据目录的 canonical 路径（settings.json 所在目录）：资料根的授权范围下限用它判定 */
+function pluginDataDir(): string {
+  if (cachedPluginDataDir) return cachedPluginDataDir;
+  let canonical = dataDir;
+  try {
+    canonical = realpathSync(dataDir);
+  } catch {
+    // 目录可能尚未创建：退回未解析路径，保存时的 bindDirectory 仍会给出可修正错误
+  }
+  cachedPluginDataDir = canonical;
+  return canonical;
+}
 
 let lastHealth: { checkedAt: number; entries: SessionContextHealthEntry[] } = { checkedAt: 0, entries: [] };
 let recheckInFlight = false;
@@ -479,13 +531,16 @@ async function discoverSkillsForHealth(config: SessionContextConfig, kind: 'skil
       continue;
     }
     const binding = await bindDirectory(entry.path);
+    const resolved = typeof binding === 'string' ? null : binding;
+    // 等于用户主目录的资料根保存成功，但健康检查给出可修正警告（范围过大）
+    const homeWarning = resolved && resolved.path === homedir() ? { detail: '资料根是整个用户主目录：建议改为具体资料目录，避免扩大只读范围' } : {};
     entries.push({
       kind,
       index,
-      path: typeof binding === 'string' ? entry.path : binding.path,
+      path: resolved ? resolved.path : entry.path,
       enabled: true,
-      status: binding === 'not_found' ? 'not_found' : binding === 'unreadable' ? 'unreadable' : typeof binding === 'string' ? 'invalid' : 'valid',
-      ...(binding === 'not_found' ? { detail: '路径已不存在或已移动' } : binding === 'unreadable' ? { detail: '路径不可读' } : {}),
+      status: binding === 'not_found' ? 'not_found' : binding === 'unreadable' ? 'unreadable' : resolved ? 'valid' : 'invalid',
+      ...(binding === 'not_found' ? { detail: '路径已不存在或已移动' } : binding === 'unreadable' ? { detail: '路径不可读' } : homeWarning),
     });
   }
   return entries;
@@ -522,10 +577,25 @@ export function stateView(): SessionContextStateView {
   };
 }
 
-/** /onair 对管理会话的绑定核对：ready 绑定 + 平台一致 + native cwd 仍有效；不重新从 settings 生成快照 */
-export async function verifyManagedOnair(sessionId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+/**
+ * /onair 对管理会话的核对：只核对、绝不补绑或恢复成 ready。
+ * - 真实 ENOENT（磁盘无快照）：legacy 未管理会话，原有路径放行；
+ * - 磁盘有快照但本进程未恢复（恢复没跑过/恢复首装失败回滚）：409 可修正提示，不在此恢复；
+ * - 快照存在但损坏/被替换：409；
+ * - 已恢复但绑定非 ready（刷新失败锁定等，binding 由宿主经运行时回调核对传入）：409；
+ * - ready 会话继续核对平台与 cwd。goLive 由路由在 ok 之后才可能触达。
+ */
+export async function verifyManagedOnair(sessionId: string, binding?: { bound: boolean; note?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
   const snapshot = snapshotForSession(sessionId);
-  if (!snapshot) return { ok: true };
+  if (!snapshot) {
+    const disk = readSnapshot(sessionId);
+    if (!disk.ok && disk.code === 'missing') return { ok: true }; // 未注册且真实无快照：原有非管理路径不变
+    if (!disk.ok) return { ok: false, error: `该会话有直播会话快照但已损坏，无法恢复受限能力（${disk.error}）；请创建新的直播会话` };
+    return { ok: false, error: '该会话有直播会话快照但尚未恢复受限绑定；请重新打开该会话完成恢复，或创建新的直播会话' };
+  }
+  if (binding && !binding.bound) {
+    return { ok: false, error: `该管理会话的受限绑定未就绪（${binding.note ?? '限制名单未安装'}）；本场不能开播，请重新创建会话` };
+  }
   if (snapshot.platform !== settings.livePlatform) {
     return { ok: false, error: '直播平台与该会话创建时不一致，请先创建新的直播会话' };
   }
@@ -724,15 +794,15 @@ export function writeSnapshot(snapshot: SessionContextSnapshot): { ok: true } | 
   const dir = snapshotDir();
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    // 目录符号链接保护：已存在但不是目录时拒绝
-    const existing = statSync(dir, { throwIfNoEntry: false });
+    // 目录符号链接保护：已存在但不是目录（或本身是符号链接）时拒绝；lstat 不跟随
+    const existing = lstatSync(dir, { throwIfNoEntry: false });
     if (!existing || existing.isSymbolicLink() || !existing.isDirectory()) return { ok: false, error: '快照目录不可用' };
     const names = readdirSync(dir).filter((name) => name.endsWith('.json'));
     if (!names.some((name) => name === `${snapshot.sessionId}.json`) && names.length >= SNAPSHOT_LIMITS.maxFiles) {
       return { ok: false, error: `快照数量已达上限（${SNAPSHOT_LIMITS.maxFiles}），请让 owner 处理旧记录` };
     }
     let total = 0;
-    for (const name of names) total += statSync(join(dir, name), { throwIfNoEntry: false })?.size ?? 0;
+    for (const name of names) total += lstatSync(join(dir, name), { throwIfNoEntry: false })?.size ?? 0;
     const serialized = JSON.stringify(snapshot);
     if (total + Buffer.byteLength(serialized) > SNAPSHOT_LIMITS.maxTotalBytes) {
       return { ok: false, error: '快照目录容量已满，请让 owner 处理旧记录' };
@@ -763,13 +833,34 @@ export function readSnapshot(sessionId: string): ReadSnapshotOutcome {
   if (!SESSION_ID_PATTERN.test(sessionId)) return { ok: false, code: 'invalid', error: '会话标识无效' };
   const file = assertSessionFileName(sessionId);
   let raw: Buffer;
+  let observedFile = false;
   try {
-    const stats = statSync(file, { throwIfNoEntry: false });
-    if (!stats || stats.isSymbolicLink() || !stats.isFile()) return { ok: false, code: 'missing', error: '快照不存在' };
+    const directory = lstatSync(snapshotDir(), { throwIfNoEntry: false });
+    if (!directory) return { ok: false, code: 'missing', error: '快照不存在' };
+    if (directory.isSymbolicLink() || !directory.isDirectory()) {
+      return { ok: false, code: 'invalid', error: '快照目录无效' };
+    }
+    const stats = lstatSync(file, { throwIfNoEntry: false });
+    if (!stats) return { ok: false, code: 'missing', error: '快照不存在' };
+    observedFile = true;
+    if (stats.isSymbolicLink() || !stats.isFile()) return { ok: false, code: 'invalid', error: '快照不是普通文件' };
     if (stats.size > SNAPSHOT_LIMITS.maxFileBytes) return { ok: false, code: 'oversize', error: '快照超出大小预算' };
-    raw = readFileSync(file);
-  } catch {
-    return { ok: false, code: 'missing', error: '快照不存在' };
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const opened = fstatSync(fd);
+      if (!opened.isFile() || opened.dev !== stats.dev || opened.ino !== stats.ino) {
+        return { ok: false, code: 'invalid', error: '快照文件已改变' };
+      }
+      if (opened.size > SNAPSHOT_LIMITS.maxFileBytes) return { ok: false, code: 'oversize', error: '快照超出大小预算' };
+      raw = readFileSync(fd);
+      if (raw.byteLength > SNAPSHOT_LIMITS.maxFileBytes) return { ok: false, code: 'oversize', error: '快照超出大小预算' };
+    } finally {
+      closeSync(fd);
+    }
+  } catch (error) {
+    // 只有明确不存在才走未管理会话；访问失败或检查与打开之间的替换均拒绝恢复。
+    if (!observedFile && (error as NodeJS.ErrnoException).code === 'ENOENT') return { ok: false, code: 'missing', error: '快照不存在' };
+    return { ok: false, code: 'invalid', error: '无法安全读取快照' };
   }
   let parsed: unknown;
   try {
@@ -777,11 +868,174 @@ export function readSnapshot(sessionId: string): ReadSnapshotOutcome {
   } catch {
     return { ok: false, code: 'invalid', error: '快照不是有效 JSON' };
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false, code: 'invalid', error: '快照格式无效' };
-  const snapshot = parsed as Record<string, unknown>;
-  if (snapshot.schemaVersion !== 1) return { ok: false, code: 'invalid', error: '快照版本无效' };
-  if (snapshot.sessionId !== sessionId) return { ok: false, code: 'invalid', error: '快照归属会话不一致' };
+  const checked = validateSnapshotContract(parsed, sessionId);
+  if (!checked.ok) return { ok: false, code: 'invalid', error: checked.error };
+  return { ok: true, snapshot: checked.snapshot };
+}
+
+// ── 持久快照的恢复（重启/手动打开原会话按 id 恢复原定义） ──
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+const SNAPSHOT_FIELDS = ['schemaVersion', 'sessionId', 'revision', 'platform', 'presetId', 'effectiveCwd', 'cwdBinding', 'rootBindings', 'skills', 'issues', 'createdAt'] as const;
+const SNAPSHOT_HASH_PATTERN = /^[0-9a-f]{64}$/;
+const SNAPSHOT_SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SNAPSHOT_ROOT_ID_PATTERN = /^root-\d+$/;
+
+/** 有界深度检查：解码深度超过预算即无效（显式栈，避免对抗性深嵌套撑爆递归） */
+function snapshotDepth(value: unknown): number {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 1 }];
+  let max = 0;
+  while (stack.length) {
+    const current = stack.pop()!;
+    if (current.depth > max) max = current.depth;
+    if (max > SNAPSHOT_LIMITS.maxDecodeDepth) return max;
+    if (Array.isArray(current.value)) {
+      for (const item of current.value) stack.push({ value: item, depth: current.depth + 1 });
+    } else if (isPlainRecord(current.value)) {
+      for (const item of Object.values(current.value)) stack.push({ value: item, depth: current.depth + 1 });
+    }
+  }
+  return max;
+}
+
+/** 绑定形状：只有 path/dev/ino 三个字段且类型合法 */
+function validSnapshotBinding(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  for (const key of Object.keys(value)) {
+    if (key !== 'path' && key !== 'dev' && key !== 'ino') return false;
+  }
+  if (typeof value.path !== 'string' || !value.path.startsWith('/') || value.path.length > SESSION_CONTEXT_LIMITS.maxPathChars) return false;
+  if (typeof value.dev !== 'number' || !Number.isSafeInteger(value.dev) || value.dev < 0) return false;
+  if (typeof value.ino !== 'number' || !Number.isSafeInteger(value.ino) || value.ino <= 0) return false;
+  return true;
+}
+
+/** 恢复前的完整契约校验：深度、字段形状、绑定合法性、哈希格式；损坏 → invalid，拒绝用于新会话 */
+function validateSnapshotContract(parsed: unknown, sessionId: string): { ok: true; snapshot: SessionContextSnapshot } | { ok: false; error: string } {
+  if (!isPlainRecord(parsed)) return { ok: false, error: '快照格式无效' };
+  if (snapshotDepth(parsed) > SNAPSHOT_LIMITS.maxDecodeDepth) return { ok: false, error: '快照解码深度超出预算' };
+  for (const key of Object.keys(parsed)) {
+    if (!(SNAPSHOT_FIELDS as readonly string[]).includes(key)) return { ok: false, error: `快照包含未知字段：${key}` };
+  }
+  if (parsed.schemaVersion !== 1) return { ok: false, error: '快照版本无效' };
+  if (parsed.sessionId !== sessionId) return { ok: false, error: '快照归属会话不一致' };
+  const revision = parsed.revision;
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) return { ok: false, error: '快照 revision 无效' };
+  for (const key of ['platform', 'presetId'] as const) {
+    const value = parsed[key];
+    if (typeof value !== 'string' || value.length > 512) return { ok: false, error: `快照字段无效：${key}` };
+  }
+  // cwd 预算与配置一致（4096 字符）：覆盖系统支持的长目录保存/创建/冷恢复
+  const effectiveCwd = parsed.effectiveCwd;
+  if (typeof effectiveCwd !== 'string' || effectiveCwd.length > SESSION_CONTEXT_LIMITS.maxPathChars) return { ok: false, error: '快照字段无效：effectiveCwd' };
+  const platform = parsed.platform as string;
+  const presetId = parsed.presetId as string;
+  if (platform === '' || presetId === '') return { ok: false, error: '快照字段无效：platform/presetId 为空' };
+  if (effectiveCwd !== '' && !effectiveCwd.startsWith('/')) return { ok: false, error: '快照工作目录无效' };
+  // effectiveCwd 为空 ⇔ cwdBinding 为 null；非空时绑定必须形状完好
+  if (effectiveCwd === '' && parsed.cwdBinding !== null) return { ok: false, error: '快照工作目录绑定无效' };
+  if (effectiveCwd !== '' && !validSnapshotBinding(parsed.cwdBinding)) return { ok: false, error: '快照工作目录绑定无效' };
+  const rootBindings = parsed.rootBindings;
+  if (!Array.isArray(rootBindings) || rootBindings.length > SESSION_CONTEXT_LIMITS.maxListItems) return { ok: false, error: '快照资料根列表无效' };
+  const rootIds = new Set<string>();
+  for (const entry of rootBindings) {
+    if (!isPlainRecord(entry)) return { ok: false, error: '快照资料根绑定无效' };
+    for (const key of Object.keys(entry)) {
+      if (key !== 'rootId' && key !== 'binding') return { ok: false, error: '快照资料根绑定无效' };
+    }
+    const rootId = entry.rootId;
+    if (typeof rootId !== 'string' || !SNAPSHOT_ROOT_ID_PATTERN.test(rootId) || rootIds.has(rootId)) return { ok: false, error: '快照资料根标识无效' };
+    rootIds.add(rootId);
+    if (!validSnapshotBinding(entry.binding)) return { ok: false, error: '快照资料根绑定无效' };
+  }
+  const skills = parsed.skills;
+  if (!Array.isArray(skills) || skills.length > SKILL_LIMITS.maxSkills) return { ok: false, error: '快照 Skill 列表无效' };
+  const names = new Set<string>();
+  for (const skill of skills) {
+    if (!isPlainRecord(skill)) return { ok: false, error: '快照 Skill 无效' };
+    for (const key of Object.keys(skill)) {
+      if (!['name', 'description', 'modelInvocable', 'userInvocable', 'sourcePath', 'sourceHash', 'contentHash', 'body'].includes(key)) return { ok: false, error: '快照 Skill 包含未知字段' };
+    }
+    const name = skill.name;
+    if (typeof name !== 'string' || !SNAPSHOT_SKILL_NAME_PATTERN.test(name) || names.has(name)) return { ok: false, error: '快照 Skill 名称无效' };
+    names.add(name);
+    if (typeof skill.description !== 'string' || [...skill.description].length > SKILL_LIMITS.maxDescriptionChars) return { ok: false, error: '快照 Skill 描述无效' };
+    if (typeof skill.modelInvocable !== 'boolean' || typeof skill.userInvocable !== 'boolean') return { ok: false, error: '快照 Skill 开关无效' };
+    if (typeof skill.sourcePath !== 'string' || !skill.sourcePath.startsWith('/') || skill.sourcePath.length > SESSION_CONTEXT_LIMITS.maxPathChars) return { ok: false, error: '快照 Skill 来源无效' };
+    if (typeof skill.sourceHash !== 'string' || !SNAPSHOT_HASH_PATTERN.test(skill.sourceHash)) return { ok: false, error: '快照 Skill 哈希无效' };
+    if (typeof skill.contentHash !== 'string' || !SNAPSHOT_HASH_PATTERN.test(skill.contentHash)) return { ok: false, error: '快照 Skill 哈希无效' };
+    // 冻结正文完整性：必须非空，且 contentHash 就是正文的实际 SHA-256（正文被篡改/置空 → invalid，原生恢复回滚）。
+    // sourceHash 是含 frontmatter 的原始文件哈希，无法从正文重建，这里只核对 contentHash 语义。
+    if (typeof skill.body !== 'string' || skill.body.length === 0 || Buffer.byteLength(skill.body, 'utf8') > SKILL_LIMITS.maxFileBytes) return { ok: false, error: '快照 Skill 正文无效' };
+    const actualContentHash = createHash('sha256').update(skill.body, 'utf8').digest('hex');
+    if (actualContentHash !== skill.contentHash) return { ok: false, error: '快照 Skill 正文与内容哈希不一致' };
+  }
+  const issues = parsed.issues;
+  if (!Array.isArray(issues) || issues.some((issue) => typeof issue !== 'string' || issue.length > 512)) return { ok: false, error: '快照问题列表无效' };
+  const createdAt = parsed.createdAt;
+  if (typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt) || createdAt <= 0) return { ok: false, error: '快照创建时间无效' };
   return { ok: true, snapshot: parsed as unknown as SessionContextSnapshot };
+}
+
+/** 已确认磁盘上没有可用快照的会话：恢复入口不再重复做磁盘 IO（只记「真实缺失」，损坏不在此列） */
+const snapshotlessSessions = new Set<string>();
+
+export type ManagedSnapshotOutcome =
+  | { kind: 'none' }
+  | { kind: 'snapshot'; snapshot: SessionContextSnapshot }
+  | { kind: 'invalid'; error: string };
+
+/**
+ * 管理快照恢复的三态入口（preset-scoped 串行 agent/created 内调用）：
+ * - none：磁盘上真实没有快照（ENOENT）→ legacy 未管理会话，不安装新增限制；
+ * - snapshot：恢复成功（路径重查的失效项在 issues 如实标记，不改变快照授权）；
+ * - invalid：存在但损坏/被替换（symlink/目录/超大/契约不符）→ 调用方必须拒绝该会话，不得降级为未管理。
+ * 恢复失败只记「none」进免重查集合；invalid 每次如实重查，不把损坏缓存成缺失。
+ */
+export async function restoreManagedSnapshot(sessionId: string, loader?: unknown): Promise<ManagedSnapshotOutcome> {
+  const active = snapshotForSession(sessionId);
+  if (active) return { kind: 'snapshot', snapshot: active };
+  if (!SESSION_ID_PATTERN.test(sessionId) || snapshotlessSessions.has(sessionId)) return { kind: 'none' };
+  const disk = readSnapshot(sessionId);
+  if (!disk.ok) {
+    if (disk.code === 'missing') {
+      snapshotlessSessions.add(sessionId);
+      return { kind: 'none' };
+    }
+    hooks.log('warn', `直播会话快照无法恢复（${sessionId}）：${disk.error}`);
+    return { kind: 'invalid', error: disk.error };
+  }
+  const snapshot = disk.snapshot;
+  const issues = [...snapshot.issues];
+  if (snapshot.effectiveCwd && snapshot.cwdBinding) {
+    if (await verifyDirectory(snapshot.cwdBinding)) issues.push('工作目录已失效（恢复时核查）');
+  }
+  for (const root of snapshot.rootBindings) {
+    if (await verifyDirectory(root.binding)) issues.push(`资料根 ${root.rootId} 已失效（恢复时核查）`);
+  }
+  const composition = loader === undefined ? { ok: true as const } : checkHostComposition(loader);
+  const restored: SessionContextSnapshot = { ...snapshot, issues };
+  registerActiveSession(restored, composition);
+  registerObservationSession(sessionId);
+  return { kind: 'snapshot', snapshot: restored };
+}
+
+/** 创建/恢复失败或 agent 释放后丢弃恢复阶段登记的活动会话（原生已回滚/会话已关闭，不留幽灵活动快照） */
+export function discardActiveSession(sessionId: string): void {
+  activeSessions.delete(sessionId);
+  observations.delete(sessionId);
+}
+
+/** 测试隔离用：清空内存中的活动会话登记与观测（模拟进程重启；生产代码不得调用） */
+export function clearActiveSessionsForTest(): void {
+  activeSessions.clear();
+  observations.clear();
+  snapshotlessSessions.clear();
 }
 
 // ── 每 turn 预算与运行时观测 ──────────────────────────

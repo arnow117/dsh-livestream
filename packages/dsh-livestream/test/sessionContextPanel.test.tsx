@@ -129,6 +129,24 @@ describe('session context settings panel', () => {
     expect(element.textContent).toContain('资料根 1：已验证可用');
   });
 
+  it('groups skill sources and read roots as two separate fieldsets with one legend each', async () => {
+    // 评审修正：第二个 legend 不能与第一个共用同一个 fieldset（分组语义错误）
+    await act(async () => root.render(<SessionContextSettingsPanel view={savedView()} onSaved={onSaved} />));
+    const fieldsets = [...element.querySelectorAll('fieldset')];
+    expect(fieldsets).toHaveLength(2);
+    const legends = [...element.querySelectorAll('legend')];
+    expect(legends).toHaveLength(2);
+    expect(legends[0]!.textContent).toContain('Skill 来源');
+    expect(legends[1]!.textContent).toContain('资料根');
+    expect(fieldsets[0]!.querySelector('legend')).toBe(legends[0]);
+    expect(fieldsets[1]!.querySelector('legend')).toBe(legends[1]);
+    // Skill 来源条目在第一个 fieldset，资料根条目在第二个（按输入的 aria-label 归属）
+    expect(fieldsets[0]!.querySelector('input[aria-label="Skill 来源 1 路径"]')).toBeTruthy();
+    expect(fieldsets[1]!.querySelector('input[aria-label="资料根 1 路径"]')).toBeTruthy();
+    expect(fieldsets[0]!.querySelector('input[aria-label="资料根 1 路径"]')).toBeNull();
+    expect(fieldsets[1]!.querySelector('input[aria-label="Skill 来源 1 路径"]')).toBeNull();
+  });
+
   it('displays the active session snapshot or the explicit empty state', async () => {
     const active = viewWith({
       saved: savedView().saved,

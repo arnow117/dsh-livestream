@@ -296,10 +296,16 @@ export const hooks: {
 };
 
 /**
- * FEAT-006：绑定会话的受限工具注册入口。agent 子插件加载后填这里，宿主路由（index.ts）创建管理会话后调用；
+ * FEAT-006：管理会话受限绑定的接线点。agent 子插件加载后填这里：
+ * - onCreated：preset-scoped 串行 agent/created 的实际处理器——原生创建/恢复在返回与首个工具集合解析前
+ *   调用它完成快照恢复、校验与限制安装；listener 抛错让原生回滚该次创建/恢复。
+ * - verify：创建/恢复返回后宿主路由（index.ts）核对绑定状态，不重新绑定、不补装权限。
  * 通过运行时回调接线而不是让 index.ts 静态 import agent 子插件（否则 dsh-tools 会进所有宿主端 bundle）。
  */
-export const sessionTools: { bind: ((agent: any) => boolean) | null } = { bind: null };
+export const sessionTools: {
+  onCreated: ((payload: { agent: any; source?: unknown }) => Promise<void>) | null;
+  verify: ((sessionId: string) => { bound: boolean; note?: string }) | null;
+} = { onCreated: null, verify: null };
 
 async function ttsAuth(voice: string): Promise<TtsAuth | null> {
   const [apiKey, appId, accessKey] = await Promise.all([hooks.secret(SECRETS.ttsApiKey), hooks.secret(SECRETS.ttsAppId), hooks.secret(SECRETS.ttsAccessKey)]);

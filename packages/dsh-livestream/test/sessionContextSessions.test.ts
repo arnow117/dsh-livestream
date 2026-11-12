@@ -20,15 +20,32 @@ describe('managed session creation', () => {
   const agents = new Map<string, any>();
   let nativeFailure: string | null = null;
   let nativeResultOverride: ((request: Record<string, unknown>) => Record<string, unknown>) | null = null;
+  /** 契约要求的 barrier：native create 停在创建调用里，用于控制保存/创建的真实并发交错（不靠 sleep） */
+  let nativeCreateGate: (() => Promise<void>) | null = null;
+  let workspaceMissing = false;
   let workspaceId = 'fixture-workspace';
   let loaderEntries: Array<unknown> = [];
   let compositionChecked = false;
+
+  /** 条件泵：按确定条件推进事件循环，直到条件成立（无定时等待） */
+  const until = async (condition: () => boolean, maxTurns = 5000): Promise<void> => {
+    for (let turn = 0; turn < maxTurns && !condition(); turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(condition(), 'barrier condition never became true').toBe(true);
+  };
 
   const makeAgent = (sessionId: string, cwd: string | undefined, preset: string | undefined) => ({
     session: { id: sessionId, header: { id: sessionId, cwd, agentPreset: preset } },
     ctx: {
       effect: () => () => {},
-      tools: { register: () => () => {}, restrict: () => () => {}, get: () => undefined },
+      get: () => undefined,
+      tools: {
+        register: () => () => {},
+        restrict: () => () => {},
+        get: () => undefined,
+        view: () => ({ knownNames: new Set(), restrictableNames: new Set(['weather_lookup', 'public_search', 'show_stats']) }),
+        // 身份核对数据源（与 installed dsh-tools 形状一致；此假件未建模 preset 层注册）
+        layers: { global: { tools: new Map() }, chainLayers: () => [] },
+      },
     },
   });
 
@@ -62,10 +79,11 @@ describe('managed session creation', () => {
     runtime = await import('../src/dsh/runtime');
     sessionContext = await import('../src/dsh/sessionContext');
     sessions = await import('../src/dsh/sessionContextSessions');
-    // 与生产接线一致：agent 子插件把绑定入口放到运行时回调上（这里直接赋值，避免拉起完整插件）
+    // 与生产接线一致：agent 子插件 apply 时把 onCreated/verify 放到运行时回调上（这里直接赋值，避免拉起完整插件）
     const agentPlugin = await import('../src/dsh/agent');
     const runtimeState = await import('../src/dsh/runtime');
-    runtimeState.sessionTools.bind = agentPlugin.bindSessionContextTools;
+    runtimeState.sessionTools.onCreated = agentPlugin.handleAgentCreated;
+    runtimeState.sessionTools.verify = agentPlugin.verifySessionBinding;
     const host = await import('../src/dsh/index');
     routes = new Map();
     host.apply({
@@ -84,12 +102,16 @@ describe('managed session creation', () => {
               const canonicalCwd = request.cwd !== undefined ? await realpath(String(request.cwd)) : `/workspaces/${String(request.workspaceId)}`;
               const agent = makeAgent(String(request.sessionId), canonicalCwd, request.agentPreset === undefined ? undefined : String(request.agentPreset));
               agents.set(String(request.sessionId), agent);
+              // 与原生一致：preset-scoped 串行 agent/created 在 create 返回与 gate 之前完成恢复与受限绑定
+              await runtime.sessionTools.onCreated?.({ agent, source: 'create' });
+              if (nativeCreateGate) await nativeCreateGate();
               if (nativeResultOverride) return nativeResultOverride(request);
               return { sessionId: request.sessionId, ...(request.agentPreset === undefined ? {} : { agentPreset: request.agentPreset }) };
             },
           };
         }
         if (name === 'agents') return { get: (id: string) => agents.get(id) };
+        if (name === 'workspaceRegistry') return { get: (id: string) => (workspaceMissing ? undefined : { id, path: `/workspaces/${id}` }) };
         if (name === 'workingDirectory') return { get: (session: any) => session.header?.cwd };
         if (name === 'loader') return { entries: () => { compositionChecked = true; return loaderEntries[Symbol.iterator](); } };
         return undefined;
@@ -139,32 +161,82 @@ describe('managed session creation', () => {
     expect(view.active.rootIds).toEqual(['root-1']);
   });
 
-  it('freezes the active session definition across later saves (A/B semantics)', async () => {
-    // 会话 A 的重复加载计入调用预算但不重复注入正文
-
+  it('freezes the active session definition across a concurrent save controlled by a barrier (A/B semantics)', async () => {
+    // 会话 A 的重复加载计入调用预算但不重复注入正文；契约要求用 barrier 控制保存/创建的真实并发交错，不靠 sleep
     const view = sessionContext.stateView();
     const firstSessionId = view.active?.sessionId;
     expect(firstSessionId).toBeTruthy();
-    // 修改磁盘上的 Skill 正文并保存 B
-    await writeFile(join(dir, 'skills', 'papermorph.md'), '---\nname: papermorph\ndescription: 把文章做成可翻页的网页书。\n---\nPapermorph 第二版正文。\n');
-    const savedB = await save({}, (view.saved?.revision ?? 0));
-    expect(savedB.status).toBe(200);
-    const created = await post('sessions', { workspaceId });
-    expect(created.status).toBe(200);
-    expect(nativeCreates).toHaveLength(2);
-    // 会话 A 仍用旧定义；会话 B 取得新正文
+    const firstContentHash = view.active?.skills[0]?.contentHash;
+    const beforeCount = nativeCreates.length;
+    let openGate: (() => void) | null = null;
+    nativeCreateGate = () => new Promise<void>((resolve) => { openGate = resolve; });
+    let created: { status: number; body: any } | null = null;
+    try {
+      // 会话 C 的捕获点在第一次 await 之前（同步）：拿到的是当前完整已保存版本
+      const creating = post('sessions', { workspaceId });
+      // barrier：等 native create 真正停在 gate 上（push 之后还有 realpath await，必须等 resolver 就绪）
+      await until(() => openGate !== null);
+      expect(openGate, 'native create never parked on the barrier').toBeTruthy();
+      // C 停在创建调用期间，保存 B（磁盘正文换成第二版）
+      await writeFile(join(dir, 'skills', 'papermorph.md'), '---\nname: papermorph\ndescription: 把文章做成可翻页的网页书。\n---\nPapermorph 第二版正文。\n');
+      const savedB = await save({}, sessionContext.stateView().saved?.revision ?? 0);
+      expect(savedB.status).toBe(200);
+      // 放行 C；后续创建不再经过 barrier
+      nativeCreateGate = null;
+      openGate!();
+      created = await creating;
+      expect(created.status, JSON.stringify(created.body)).toBe(200);
+    } finally {
+      // 即使中间断言失败也放行停在 gate 上的创建，避免悬挂路由污染后续用例
+      nativeCreateGate = null;
+      openGate?.();
+    }
+    expect(created).toBeTruthy();
+    const concurrent = created!;
+    expect(nativeCreates).toHaveLength(beforeCount + 1);
+    // 会话 A 仍用旧定义
     const oldLoaded = sessionContext.loadSkill(firstSessionId!, 'papermorph');
     expect(oldLoaded.status).toBe('loaded');
     if (oldLoaded.status === 'loaded') expect(oldLoaded.body).toContain('第一版正文');
-    const newLoaded = sessionContext.loadSkill(created.body.sessionId, 'papermorph');
-    expect(newLoaded.status).toBe('loaded');
-    if (newLoaded.status === 'loaded') expect(newLoaded.body).toContain('第二版正文');
+    // 会话 C 取得捕获时的一份完整旧版本（磁盘快照正文与 contentHash 都和 A 的持久快照一致），不是 B 的新正文，也不是混合版本
+    const persisted = JSON.parse(await readFile(join(dir, 'dsh-livestream', 'session-context', `${concurrent.body.sessionId}.json`), 'utf8'));
+    const firstPersisted = JSON.parse(await readFile(join(dir, 'dsh-livestream', 'session-context', `${firstSessionId}.json`), 'utf8'));
+    expect(persisted.skills[0].body).toContain('第一版正文');
+    expect(persisted.skills[0].contentHash).toBe(firstContentHash);
+    expect(persisted.skills[0].contentHash).toBe(firstPersisted.skills[0].contentHash);
+    const concurrentLoaded = sessionContext.loadSkill(concurrent.body.sessionId, 'papermorph');
+    expect(concurrentLoaded.status).toBe('loaded');
+    if (concurrentLoaded.status === 'loaded') expect(concurrentLoaded.body).toContain('第一版正文');
     // 资料读取按各自快照的根校验
     const firstRead = await sessionContext.readMaterial(firstSessionId!, { rootId: 'root-1', path: '课件/lesson-1.txt' });
     expect(firstRead.status).toBe('available');
     // 重复加载同一名称不重复注入预算
     const again = sessionContext.loadSkill(firstSessionId!, 'papermorph');
     expect(again.status).toBe('loaded');
+    // B 之后创建的新会话取得第二版
+    const afterB = await post('sessions', { workspaceId });
+    expect(afterB.status).toBe(200);
+    const newLoaded = sessionContext.loadSkill(afterB.body.sessionId, 'papermorph');
+    expect(newLoaded.status).toBe('loaded');
+    if (newLoaded.status === 'loaded') expect(newLoaded.body).toContain('第二版正文');
+  });
+
+  it('rejects managed creation before the native call when the fallback workspace is missing from the host registry', async () => {
+    const saved = await save({ cwd: '' });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const beforeCount = nativeCreates.length;
+    workspaceMissing = true;
+    try {
+      const result = await post('sessions', { workspaceId });
+      // 评审修正：空 cwd 分支在创建前用宿主 workspace 信息核对，缺失时返回可修正错误，不依赖 native 内部报错
+      expect(result.status).toBe(409);
+      expect(result.body.error).toContain('工作区');
+      expect(nativeCreates.length).toBe(beforeCount);
+    } finally {
+      workspaceMissing = false;
+    }
+    // 恢复带显式 cwd 的基线配置
+    await save();
   });
 
   it('rejects budget violations for skill loads and material reads per turn', async () => {

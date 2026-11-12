@@ -504,12 +504,12 @@ export function apply(ctx: HostContext): void {
       if (outcome.status === 409 || outcome.status === 503) response.sessionContext = current;
       return json(response, outcome.status);
     }
-    // 创建完成立即按 Agent ctx 注册受限工具（首次工具集合解析前完成）；绑定入口由 agent 子插件经运行时回调提供
-    const agents = ctx.get?.('agents');
-    const found = typeof agents?.get === 'function' ? agents.get(outcome.sessionId) : undefined;
-    const agent = found?.session ? found : found?.agent;
-    if (!agent || !sessionTools.bind?.(agent)) {
-      return json({ ok: false, error: '会话已创建，但受限工具绑定失败；本场不能使用 Skill 与资料，请重新创建会话', sessionId: outcome.sessionId, sessionContext: outcome.sessionContext }, 409);
+    // FEAT-006：受限绑定已在 preset-scoped 串行 agent/created 内完成（早于 create 返回与首个工具集合解析）。
+    // 这里只核对绑定状态：失败说明 preset 事件接线缺失或首装被拒，绝不返回无限制的可用会话，也不在此补绑。
+    const verification = sessionTools.verify?.(outcome.sessionId);
+    if (!verification?.bound) {
+      const note = verification?.note ? `（${verification.note}）` : '';
+      return json({ ok: false, error: `会话已创建，但受限工具绑定失败${note}；本场不能使用 Skill 与资料，请重新创建会话`, sessionId: outcome.sessionId, sessionContext: outcome.sessionContext }, 409);
     }
     return json({ ok: true, sessionId: outcome.sessionId, sessionContext: outcome.sessionContext, state: state() });
   }, 'sessions');
@@ -631,8 +631,10 @@ export function apply(ctx: HostContext): void {
   route('/api/dsh-livestream/onair', ['POST'], async (request) => {
     const { sessionId, gameSessionId } = await body<{ sessionId?: string; gameSessionId?: string }>(request);
     if (!sessionId) return fail('缺她直播用的会话');
-    // FEAT-006：管理会话核对绑定 ready、平台与 native cwd 后才开播；保存、重查、创建会话本身均不触发 onair
-    const managed = await verifyManagedOnair(sessionId);
+    // FEAT-006：管理会话核对绑定 ready、平台与 native cwd 后才开播；保存、重查、创建会话本身均不触发 onair。
+    // onair 只核对：绝不在此补绑/恢复成 ready（未恢复、恢复首装失败、刷新失败的管理会话一律 409）。
+    // 绑定 ready 经运行时回调由 agent 子插件核对（保持 index→agent 无静态依赖）
+    const managed = await verifyManagedOnair(sessionId, sessionTools.verify?.(sessionId));
     if (!managed.ok) return fail(managed.error, 409);
     show.goLive(sessionId, localRehearsal || settings.livePlatform === 'douyin' ? undefined : gameSessionId || undefined);
     // 先推上流、后开播的：这一场一开始就不是彩排

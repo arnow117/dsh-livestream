@@ -172,6 +172,8 @@ export function SessionContextSettingsPanel({ view, onSaved }: { view: SessionCo
           );
         })}
         <button type="button" disabled={draft.skillSources.length >= 8} onClick={() => addEntry('skillSources')}>添加 Skill 来源</button>
+      </fieldset>
+      <fieldset className="dl-voice-fields" disabled={busy}>
         <legend className="dl-hint">资料根（只读读取的目录，最多 8 项；Skill 引用的其他文件不会自动成为资料根）</legend>
         {draft.readRoots.map((entry, index) => {
           const health = healthFor('root', index);

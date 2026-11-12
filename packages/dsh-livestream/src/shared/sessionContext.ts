@@ -126,7 +126,8 @@ export function checkPathText(raw: unknown, field: string): SessionContextIssue 
   if (/^[\w+.-]+:\/\//.test(raw) || /^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\')) return { code: 'uri_or_windows_path', field };
   if (!raw.startsWith('/')) return { code: 'relative_path', field };
   if (raw.startsWith('/~') || raw === '~' || raw.includes('/~') || raw.includes('${') || raw.includes('$HOME')) return { code: 'expansion_not_allowed', field };
-  if (/[‮‭‬⁦-⁩]/.test(raw)) return { code: 'bidi_control', field };
+  // 方向控制字符全部拒绝：U+202A～U+202E（含 LRE/LEFTRUNTIME）与 U+2066～U+2069（isolate）
+  if (/[‪‫‬‭‮⁦-⁩]/.test(raw)) return { code: 'bidi_control', field };
   return null;
 }
 
@@ -243,42 +244,76 @@ export function decodeSessionContextRecord(raw: unknown): DecodedSessionContextR
   }
   const config = validateSessionContextConfig(record.config);
   if (!config.ok) return { kind: 'invalid', reason: '损坏的配置' };
+  const bindings = decodeBindings(record.bindings);
+  if (!bindings.ok) return { kind: 'invalid', reason: '损坏的绑定' };
   return {
     kind: 'saved',
     record: {
       schemaVersion: SESSION_CONTEXT_SCHEMA_VERSION,
       revision: record.revision,
       config: config.config,
-      bindings: decodeBindings(record.bindings),
+      bindings: bindings.value,
     },
   };
 }
 
-function decodeBindings(raw: unknown): SessionContextRecord['bindings'] {
-  const empty = { cwd: null, skills: [], roots: [] };
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return empty;
+/**
+ * 绑定解码：形状损坏时整体失败（由调用方把整条记录转 invalid），不再宽松回退成空绑定。
+ * 空但形状完好的绑定（cwd null、两个空数组）是显式关闭保存的合法形状，仍然有效。
+ */
+function decodeBindings(raw: unknown): { ok: true; value: SessionContextRecord['bindings'] } | { ok: false } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !hasBuiltinPrototype(raw)) return { ok: false };
   const record = raw as Record<string, unknown>;
-  const read = (value: unknown): SessionContextBinding | null => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const binding = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (key !== 'cwd' && key !== 'skills' && key !== 'roots') return { ok: false };
+  }
+  const readFields = (binding: Record<string, unknown>): SessionContextBinding | null => {
     if (typeof binding.path !== 'string' || !binding.path.startsWith('/')) return null;
     if (typeof binding.dev !== 'number' || !Number.isSafeInteger(binding.dev) || binding.dev < 0) return null;
     if (typeof binding.ino !== 'number' || !Number.isSafeInteger(binding.ino) || binding.ino <= 0) return null;
     return { path: binding.path, dev: binding.dev, ino: binding.ino };
   };
-  const list = (value: unknown): Array<SessionContextBinding & { index: number; file?: string }> => {
-    if (!Array.isArray(value)) return [];
+  const read = (value: unknown): SessionContextBinding | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !hasBuiltinPrototype(value)) return null;
+    const binding = value as Record<string, unknown>;
+    for (const key of Object.keys(binding)) {
+      if (key !== 'path' && key !== 'dev' && key !== 'ino') return null;
+    }
+    return readFields(binding);
+  };
+  const list = (value: unknown, fileAllowed: boolean): Array<SessionContextBinding & { index: number; file?: string }> | null => {
+    if (!Array.isArray(value)) return null;
     const out: Array<SessionContextBinding & { index: number; file?: string }> = [];
-    for (const [index, item] of value.entries()) {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-      const binding = read(item);
-      if (!binding) continue;
-      const file = (item as Record<string, unknown>).file;
-      out.push({ ...binding, index, ...(typeof file === 'string' && file.startsWith('/') ? { file } : {}) });
+    for (const item of value) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || !hasBuiltinPrototype(item)) return null;
+      const entry = item as Record<string, unknown>;
+      // 条目键白名单：path/dev/ino + index（+ file 仅限文件型 Skill 绑定）
+      const allowedKeys = fileAllowed ? ['path', 'dev', 'ino', 'index', 'file'] : ['path', 'dev', 'ino', 'index'];
+      for (const key of Object.keys(entry)) {
+        if (!allowedKeys.includes(key)) return null;
+      }
+      const binding = readFields(entry);
+      if (!binding) return null;
+      const index = entry.index;
+      // index 是保存时的配置条目位次，用存储值（数组顺序可能与去重后的位次不同）
+      if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0) return null;
+      const file = entry.file;
+      if (file === undefined) {
+        out.push({ ...binding, index });
+        continue;
+      }
+      if (!fileAllowed || typeof file !== 'string' || !file.startsWith('/')) return null;
+      out.push({ ...binding, index, file });
     }
     return out;
   };
-  return { cwd: read(record.cwd), skills: list(record.skills), roots: list(record.roots) };
+  const cwd = record.cwd === null ? null : read(record.cwd);
+  if (record.cwd !== null && cwd === null) return { ok: false };
+  const skills = list(record.skills, true);
+  if (!skills) return { ok: false };
+  const roots = list(record.roots, false);
+  if (!roots) return { ok: false };
+  return { ok: true, value: { cwd, skills, roots } };
 }
 
 /** owner 可见的工具结果统一文案；模型结果只出现这些受控词 */

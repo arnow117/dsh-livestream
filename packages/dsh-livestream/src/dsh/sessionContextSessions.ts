@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import {
   captureSaved,
   checkHostComposition,
+  discardActiveSession,
   prepareSnapshot,
   registerActiveSession,
   registerObservationSession,
@@ -65,6 +66,17 @@ export async function createManagedSession(ctx: AdapterContext, input: CreateSes
   // 线性化点：同步取得最近成功发布的完整保存记录
   const record = captureSaved();
   if (!record) return { ok: false, status: 409, error: '没有已成功保存的会话设置；请先保存或使用原有创建方式' };
+  // 空 cwd 分支（沿用原 workspace）：创建前先按宿主 workspace 信息核对存在性，
+  // 缺失时返回可修正错误，不依赖 native 内部报错（与 sessionController.create 同一 workspaceRegistry 判定）
+  if (!(record.config.enabled && record.config.cwd !== '')) {
+    const registry = ctx.get?.('workspaceRegistry');
+    if (registry && typeof registry.get === 'function') {
+      const known = input.workspaceId === undefined ? undefined : registry.get(String(input.workspaceId));
+      if (!known) {
+        return { ok: false, status: 409, error: '默认工作区在宿主中不存在：请先在 DSH 打开一个工作区，或保存有效的工作目录后再创建会话' };
+      }
+    }
+  }
   const composition = checkHostComposition(ctx.get?.('loader'));
   const sessionId = generateSessionId();
   requestedSessionIds.add(sessionId);
@@ -86,22 +98,31 @@ export async function createManagedSession(ctx: AdapterContext, input: CreateSes
   try {
     native = await controller.create(nativeRequest);
   } catch {
+    // agent/created 内的恢复/绑定失败或其他创建失败已让原生回滚会话；
+    // 丢弃恢复阶段登记的活动快照（不留幽灵活动会话），预备快照文件留在磁盘可诊断
+    discardActiveSession(sessionId);
     // 保存校验与调用之间目录消失等情况下：该次创建失败并禁止 onair，不把 native 的创建结果当成有效已选目录
     return { ok: false, status: 503, error: '宿主会话创建失败，未修改既有会话' };
   }
   if (!isRecord(native) || native.sessionId !== sessionId) {
     // native API 返回另一个 id：拒绝复用，不事后改旧 header
+    discardActiveSession(sessionId);
     return { ok: false, status: 409, error: '宿主返回的会话标识与请求不一致，已拒绝本次会话' };
   }
   if (native.agentPreset !== undefined && native.agentPreset !== preset) {
+    discardActiveSession(sessionId);
     return { ok: false, status: 409, error: '宿主返回的预设与请求不一致，已拒绝本次会话' };
   }
   // 成功后核对返回 id/preset、Agent 的 header.cwd 与 effective workingDirectory
   if (snapshot.effectiveCwd) {
     const verification = await verifyNativeSession(ctx, sessionId, snapshot.effectiveCwd);
-    if (!verification.ok) return { ok: false, status: verification.status, error: verification.error };
+    if (!verification.ok) {
+      discardActiveSession(sessionId);
+      return { ok: false, status: verification.status, error: verification.error };
+    }
     const bindingFailure = await verifyDirectory(snapshot.cwdBinding!);
     if (bindingFailure) {
+      discardActiveSession(sessionId);
       return { ok: false, status: 409, error: '工作目录在创建过程中失效，已拒绝本次会话' };
     }
   }

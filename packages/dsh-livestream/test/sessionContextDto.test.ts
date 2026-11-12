@@ -23,7 +23,10 @@ describe('session context shared DTO', () => {
       ['/a\u0007b', 'control_character'],
       ['/a\ud800b', 'lone_surrogate'],
       [`/${'x'.repeat(4097)}`, 'path_too_long'],
-      ['/a\u202eb', 'bidi_control'],
+      ['/a‮b', 'bidi_control'],
+      // 评审修正补充：U+202A/U+202B 也是不可见方向控制字符，必须同样拒绝
+      ['/a‪b', 'bidi_control'],
+      ['/a‫b', 'bidi_control'],
     ] as const) {
       const issue = checkPathText(raw, 'x');
       expect(issue?.code, raw).toBe(code);
@@ -107,15 +110,36 @@ describe('session context shared DTO', () => {
       [{ ...record, schemaVersion: 2 }, '不支持的 schemaVersion'],
       [{ ...record, revision: -1 }, '损坏的 revision'],
       [{ ...record, config: { enabled: 'x' } }, '损坏的配置'],
-      [{ ...record, bindings: 'x' }, undefined],
+      // 评审修正：bindings 损坏时整条转 invalid，不再宽松回退成空绑定
+      [{ ...record, bindings: 'x' }, '损坏的绑定'],
+      [{ ...record, bindings: undefined }, '损坏的绑定'],
+      [{ ...record, bindings: { cwd: null, skills: [{ path: '/x', dev: 1, index: 0 }] } }, '损坏的绑定'],
+      [{ ...record, bindings: { cwd: { path: '/x', dev: -1, ino: 2 }, skills: [], roots: [] } }, '损坏的绑定'],
+      [{ ...record, bindings: { cwd: null, skills: [], roots: [{ path: '/x', dev: 1, ino: 2, index: 0, file: '/x/f.md' }] } }, '损坏的绑定'],
+      [{ ...record, bindings: { cwd: null, skills: [], roots: [], extra: 1 } }, '损坏的绑定'],
     ] as const) {
       const result = decodeSessionContextRecord(raw);
-      if (reason === undefined) {
-        // bindings 形状损坏时回退为空绑定，而不是整条判损坏
-        expect(result && result.kind).toBe('saved');
-      } else {
-        expect(result && result.kind, reason).toBe('invalid');
-      }
+      expect(result && result.kind, reason).toBe('invalid');
+    }
+    // 形状完好但内容为空的绑定仍然有效（显式关闭的保存就是这个形状）
+    const empty = decodeSessionContextRecord({ ...record, bindings: { cwd: null, skills: [], roots: [] } });
+    expect(empty && empty.kind).toBe('saved');
+    // 修正补充：绑定条目的 index 用存储值（配置条目位次），不按数组位置重排
+    const reordered = decodeSessionContextRecord({
+      ...record,
+      bindings: {
+        cwd: null,
+        skills: [
+          { path: '/private/tmp', dev: 1, ino: 3, index: 2, file: '/private/tmp/c.md' },
+          { path: '/private/tmp', dev: 1, ino: 3, index: 0, file: '/private/tmp/a.md' },
+        ],
+        roots: [],
+      },
+    });
+    expect(reordered && reordered.kind).toBe('saved');
+    if ((reordered as { kind: 'saved' }).kind === 'saved') {
+      expect(((reordered as any).record.bindings.skills[0] as { index: number }).index).toBe(2);
+      expect(((reordered as any).record.bindings.skills[1] as { index: number }).index).toBe(0);
     }
   });
 });
