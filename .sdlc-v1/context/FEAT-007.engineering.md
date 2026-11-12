@@ -8,13 +8,28 @@
 
 **工程上下文**：`.sdlc-v1/context/FEAT-007.engineering.md`。
 
-**分支与基线**：`codex/macos-yovoice`；本 Plan 读取的 HEAD 为 `c858712cab837ad68f20dd5fd2191a7fc0832da1`（相对 `7e72c8c6534e1ccfa00cfb993b54cda17aa76a17` 仅多 SDLC 文档）。**源码事实一律以 `git show 7e72c8c:<path>` 的已提交版本核实**；工作树中另有 FEAT-006 修正段的未提交 WIP（11 个源/测试文件修改 + 2 个新测试），属另一在跑 worker，本文不读取、不采用、不据此下结论。FEAT-006 的消费契约以**修正段落地后的合并版本**为准（见风险与前置）。
+**分支与基线**：`codex/macos-yovoice`。原 Plan 静态源码基线 `7e72c8c6534e1ccfa00cfb993b54cda17aa76a17`（读取时 HEAD `c858712cab837ad68f20dd5fd2191a7fc0832da1`）保留为历史。2026-11-12 主 Agent 接收 Build 前复核：实际 checkout `/Users/mac/hansen_agent_team/workspace/20261109-deepseek-harness/dsh-livestream`，HEAD `a2c93c68c7fffdcc7c877b89a343d78fa6f87c1c`，与 origin 一致且工作树干净。当前业务/coverage-diff 基线固定为已正式验证、评审和实际安装的 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`；后续仅 SDLC 提交不改变该基线。原基线到当前业务源的相关变化限 FEAT-006 的9个配置/权限/路径文件；show/stage/server/attention/课件引擎未变。实读 index/runtime/console/shared 的差异与 agent 的当前注册、pre-step、sessionContext 快照接口：安全语义已加强，rootBindings 与 snapshotForSession 的消费形状保持，接线改为 onCreated/verify，不再允许 bind 补装权限。本方案按下述已交付接口消费，不采用历史 WIP 或旧 bind 假设。
 
-**创建日期 / 状态**：2026-11-11 / Plan 候选，待主 Agent 接受。本文不执行任何 lifecycle 命令、不写 state.json。
+**创建日期 / 状态**：2026-11-11 创建；2026-11-12 主 Agent 已接受并完成前置核对，进入 FEAT-007-T001 Build；正式进度仅以 state.json 为准。
 
 **运行约束（用户 2026-11-11 确认）**：正式播出以**专用屏幕全屏显示舞台**的运行模式承载；SCN-20 窗口状态证据范围限定为该模式；[REQ-005](REQ-005.product.md) 失焦修复推迟不阻塞本条（其 P0 未修复，后台帧停更风险仍归 REQ-005，本条不另修渲染）。
 
 **范围澄清（主 Agent 已定）**：本条只承接**课程展示与弹幕互动**（CRS-01～07、SCN-08～20、SC-002 分层①～⑤）；配置能力按 FEAT-006 交付的以下已确定契约消费：`SessionContextConfig` 保存/revision、会话快照（`rootBindings: {rootId, binding}` 目录身份绑定、冻结 Skill 正文）、`load_livestream_skill({name})` 与 `read_livestream_material({rootId,path,startLine?,maxLines?})` 两个 Agent 自身 scope 受限工具、cwd/资料根独立授权、宿主组合检查。本条不新增第二个配置存储，不改变"保存/新会话/快照"语义。
+
+
+#### 2026-11-12 Build 接收核对与已定接口细化
+
+本节是当前有效方案的一部分，替代上文历史基线的待修前提及下列模糊表述；不新增产品范围。FEAT-006 已在批准源 d70fcf9 完成本地安装及实际路径 smoke（98+45 项），没有同路径实现写者。N2 disabled 健康行属于已保留的非阻塞问题，本 Task 不顺带修复。
+
+- **普通话题声音互斥**：主 Agent 接受决定6的保守解释，课程播放期间任何拟实际开口的话题均先确认暂停旁白；不只依赖问题分类。owner 操作递增控制 revision 并使旧动作/恢复意图失效，内部 speech 暂停与 owner 暂停分开。owner 原已暂停或课程等待作答时不会因答完跳步。
+- **播放完成事实**：实读当前 Stage.waitSaid：其 void 结果在超时、取消、无观看者估算到时均 resolve；当前 stage/store 的 /said 也可能来自文本计时或音频失败兜底，不能当真实播放完成。加性提供结构化音频结果（audio ended / error / cancelled / timeout / unknown），旧入口和无课程行为保持兼容。只有对应当前输出归属的显式 audio ended 可作为自动恢复依据；无音频、无 watcher、旧客户端仅 legacy said、合成失败、回执超时/丢失均保持暂停。必须等同一真实 turn 结束且其全部待播分段都确认完成，不能每句结束即恢复导致下一句与旁白重叠。guestSay 等实际说话路径也执行先暂停纪律，失败不推断成功。
+- **仅断订阅**：CRS-07/SCN-18 为权威。当前 show.disconnect 会换 outputEpoch，但保留 onAir/currentSession；应撤销断开前观众在途动作/回答并停止新订阅输入，保留本地课程及主人控制。不要以笼统 onOutputChange 或 invalidateSession 回调直接 end 课程；完整结束和仅输出撤销分别处理，重连不重放旧输入。
+- **窄课程动作**：采用 active session 内可撤销的 `apply_livestream_course_action` 工具，输入为 CourseActionInput，param 显式携带单位（left/right=m，force=N）；load 必须核对当前 onAir 会话、snapshotForSession 与 sessionTools.verify(bound) 一致；只允许当前题答案/当前实验一项参数/纯问题，不含 next/reset/end/任意代码。工具仅在对应有效课程会话可见，经已有受信任注册身份机制接线，结束/卸载时移除；其他会话及未加载课程时的工具集合不变。同一真实 native turn、选中消息/事件 id、courseEpoch、步骤/attempt/control revision 必须匹配，每轮至多一项；课程正文或模型文本不能直接调用 owner 管理 API。注册/注销的最小适配限 agent.ts，不回退按名称放行或改变 FEAT-006 的失败锁定。
+- **资产与打包**：bridge 放在包的 `stage/course-bridge.html`（现有 files.stage 交付），不用未打包的 src HTML 充当运行依赖。外部 lever-lab 只读引用，禁止复制进仓库或修改；加载时建立有界文件/hash清单，运行期资产身份/边界/hash不符即拒绝，重新加载才接受新内容。单源根全套当前28文件/1435956字节，最大文件152092字节，13段mp3；无需无限扫描/无限文件预算。静态额度初值 maxFiles=128、单文件=2MiB、清单总量=16MiB，并验证拒绝边界；每次响应缓冲有界，固定 canonical 根及其上级替换、逐段symlink、末端fd身份与读后复核均需覆盖，在复核通过前不发出正文，不重用模型文本读取预算。
+- **写入边界补齐**：除 T001 既有列表，允许上文 show.ts/stage.ts 的必要接线、stage/course-bridge.html 及对应既有测试；若选择编译桥接 TS 而非静态页，保持实际包内可达并说明，不添加新依赖或修改外部资产。check/build 必须在自有副本执行，实际安装 lib 与 lib.previous-92a3019 均为只读边界。
+- **执行与证据**：同一个实现者完成三个实施阶段、测试和必要修正；先给可复验最早增量，再继续全部 T001。GLM 五小时额度明确耗尽至19:01:53，按已获授权的 Terra/xhigh 兜底执行，原首个只读路由探针成功；不推测1M已启用。业务模型/合成/天气/搜索/账号/推流预算0，coding-agent调用已获授权；SC-002①②必须实际取证，③④⑤的真实调用与正式观众层保留缺口，不外推为完成。两次不收敛停止纪律及已有失败历史保持，不能为新名字清除旧修正段历史。
+
+资产前置实读（2026-11-12）：`ch01/index.html` SHA-256 `650460359a1202db4f1e4c78d23f24001ea95ae4a8b36d5d565f32be0c5a93df`，`lib/engine.js` `29738bbe5d57029a0477d7ba6ba5486bb8f0872844e396213fb9e4612d673026`，`lib/engine.css` `f2da3a079b3be1d9ccf2301c966ff31e1d75078e2c20c5e252b0697ec954f39e`，`ch01/audio/zh/timings.js` `e014e0aef5dead3e9517aaab9effd5cab02d65f1147186d467509c1f26d462bf`。章节仍13步，lab输入范围/步长与原表一致；这只是只读前置，不是集成播放PASS。decision-context只读召回 Papermorph 卡片仅支持复用既有资产的背景，没有DSH接入或音频恢复结论；具体契约以当前源码/产品为准。
 
 #### 背景
 
@@ -29,7 +44,7 @@
 | 5 | 弹幕调度：[attention.ts](../../packages/dsh-livestream/src/core/attention/attention.ts)（评分/热度/优先级、按 uid 去重合并、`maxPendingChats 200`、TTL 衰减）；[show.ts](../../packages/dsh-livestream/src/body/show.ts) `director` 每 200ms（133 行）跑 `direct()`→`take()/takeLive()`→`deliver()`（783 行）→`hooks.push(session, text, midTurn)`；`turnRunning` + `TURN_MAX_MS` 3 分钟（135 行）兜底；`priority` 队列承载 owner 话题。 | CRS-03 的"每次一项动作"挂接在 deliver→push 链路：课程动作作为 topic 交付，一轮最多一项；选择/去重/冷却复用 attention，不建新调度系统。 |
 | 6 | 语音：[show.ts](../../packages/dsh-livestream/src/body/show.ts) `say()`（916 行）：`queued/activeSpeech/speaking` 计数、`stage.withMic()` 单麦克风串行、`hooks.synthesize` 最多 2 次尝试、单次 `SYNTH_TIMEOUT_MS` 15s（143 行）、`stage.waitSaid(id, estimateMs, signal)` 回执兜底（无 watchers 按估算、有 watchers +15s）；`guestSay()`（984 行）共用麦克风。[stage.ts](../../packages/dsh-livestream/src/body/stage.ts) `withMic(priority)` 按优先级串行。[runtime.ts](../../packages/dsh-livestream/src/dsh/runtime.ts) `prepareSpeech()`（441 行）预合成缓存 ≤40 句——**当前无人调用它于直播链路**，属既有能力。 | CRS-06 的声音互斥由两个机制合成：课件旁白暂停（适配器 `setPlaying(false)`）+ 舞台 `withMic` 串行。回答走既有 synthesize→say→waitSaid 管道；不新增预合成路径。 |
 | 7 | 失效机制：[show.ts](../../packages/dsh-livestream/src/body/show.ts) `invalidateSession(keepSession)`（404 行）递增 `sessionGeneration`（每事件）与 `sessionIdentity`（会话级）、`stage.setOutputEpoch(null|新)`、清零 `queued/speaking`；`disconnect()`（317 行）→`invalidateSession(this.onAir)`+退订 hub；`connectTarget()` 平台/房间变更→`retireSession()`。[biliOperations.ts](../../packages/dsh-livestream/src/shared/biliOperations.ts)：`epoch` 计数 + AsyncLocalStorage lease，`assertCurrent()` 抛"直播目标已变化"。[index.ts](../../packages/dsh-livestream/src/dsh/index.ts) `POST /disconnect`（601–612 行）→`invalidateTarget()+show.disconnect()`；目标切换保护（449–474 行）。FEAT-004 的 [queryTurns.ts](../../packages/dsh-livestream/src/dsh/queryTurns.ts)：`QueryTurn` lease（`agent/turn/sessionId/epoch/signal/valid()`）、`invalidateAll()`、有界 100 条；agent.ts 562–563 行在 `stage.onOutputChange` 时全部失效，355 行在念出前校验 `lease.valid() && outputEpoch === lease.epoch`。 | CRS-07 课程归属失效复用：课程实例 epoch + turn lease（模仿 QueryTurn）+ 挂接既有 `invalidateSession`/`disconnect`/目标切换钩子；念出前的归属校验照搬 agent.ts 既有模式。 |
-| 8 | FEAT-006 已提交契约（`7e72c8c`）：`SessionContextSnapshot{schemaVersion,sessionId,revision,platform,presetId,effectiveCwd,cwdBinding,rootBindings:[{rootId,binding:DirectoryBinding}],skills,issues,createdAt}`；`readMaterial()` 拒绝绝对/越界/symlink、UTF-8 文本、`MATERIAL_LIMITS`（每 turn 尝试数、单文件字节、行段 1–200、turn 缓冲/输出字节、2s 超时、单在途）；`loadSkill()` 只回冻结正文；`checkHostComposition()`；`createManagedSession()`/onair 核对；`runtime.sessionTools.bind` 回调避免静态引入。**已知**：评审发现 HIGH/MEDIUM×2/LOW×8 正在修正段（含持久快照恢复路径 MEDIUM-2）；修正不改变上述契约形状。 | 课程会话要求"有效管理会话快照 + 至少一个可用资料根"作为开始课程的前提；课程资产根身份从 `snapshotForSession()` 取，不经 settings 二次推导。修正段落地前本条不得开始 Build（串行集成，见实施层决定）。 |
+| 8 | FEAT-006 已提交契约（`7e72c8c`）：`SessionContextSnapshot{schemaVersion,sessionId,revision,platform,presetId,effectiveCwd,cwdBinding,rootBindings:[{rootId,binding:DirectoryBinding}],skills,issues,createdAt}`；`readMaterial()` 拒绝绝对/越界/symlink、UTF-8 文本、`MATERIAL_LIMITS`（每 turn 尝试数、单文件字节、行段 1–200、turn 缓冲/输出字节、2s 超时、单在途）；`loadSkill()` 只回冻结正文；`checkHostComposition()`；`createManagedSession()`/onair 核对；当前 `runtime.sessionTools.onCreated/verify` 回调避免静态引入。**当前状态**：FEAT-006 修正已在 d70fcf9 完成独立 Validate/Sol Review 并安装发布；原 WIP 及待修描述仅为历史。 | 课程会话要求"有效管理会话快照 + 至少一个可用资料根"作为开始课程的前提；课程资产根身份从 `snapshotForSession()` 取，不经 settings 二次推导。该串行前置已满足；本条不得改写 sessionContext* 或限制安装契约。 |
 | 9 | 课件资产供给：`lever-lab/` 位于兄弟工作区 `workspace/20261110-papermorph-lever/site/lever-lab/`（$REPO 外，只读引用）；含 `index.html`、`ch01/`（页面+`audio/zh/timings.js`+逐步骤 mp3）、`lib/engine.js|css` 等、`THIRD-PARTY-LICENSE.txt`（Papermorph MIT）。音频文件名 `audio/<lang>/<beat>.mp3?v=<dur>` 由 `beatClip()`（engine.js）拼装。 | 资产不复制、不入库、不修改（OUT-001）。授权根=owner 在 FEAT-006 配置的资料根；课程加载把该根的快照绑定转成舞台静态服务授权（见决定 5）。 |
 
 #### 架构与组件
@@ -37,7 +52,7 @@
 ##### 课程域模型与串行动作引擎（`src/body/course.ts`，新）
 
 - **职责**：课程实例状态机（`idle → loading → ready(paused) → playing ⇄ paused → ended`）、当前步骤（beat 序号/id）、题目尝试与实验参数镜像、`CourseTurn` lease、课程动作的机械校验与下发、CRS-06 暂停/恢复状态机、失效登记。纯状态与决策，无 IO 注入细节（委托给适配器接口）。
-- **接口**：`CourseController`（`load/open/close/start/pause/resume/selectStep/reset/end`；`applyAction(candidate)`；`noteFrame(state)` 接收适配器回读；`view()` 供控制台/状态）；`CourseTurn { courseEpoch, turn, stepSeq, attemptId, signal, valid() }`。失效钩子：`show.invalidateSession`/`disconnect`/`retireSession`/目标切换/`stage.onOutputChange` 时 `invalidate()`。
+- **接口**：`CourseController`（`load/open/close/start/pause/resume/selectStep/reset/end`；`applyAction(candidate)`；`noteFrame(state)` 接收适配器回读；`view()` 供控制台/状态）；`CourseTurn { courseEpoch, outputEpoch, turn, stepSeq, attemptId, signal, valid() }`。失效钩子按原因区分：下播/会话/目标切换作废课程；仅 disconnect 或 outputEpoch 改变撤销旧输出/在途 lease，不自动清除仍有效本地课程（见下述接收核对）。
 - **覆盖**：CRS-01、03、04、05、07；SCN-08～10、13、16、17。
 
 ##### 课程控制窄适配器（舞台侧 bridge，插件自带静态页）
@@ -64,7 +79,7 @@
 
 ##### CRS-06 声音协作状态机（在 CourseController 内）
 
-- **职责**：课程播放中有任何话题被选中开口（课程问答与普通弹幕回复同理，见决定 6）→ 先 `pause(reason:'speech')` 并记录 `wasPlaying/step/turn`；等适配器确认课件已静音后进入 GLM 回答与 `say()` 管道；回答**实际播放完成**（`waitSaid` 正常返回）后仅当 `wasPlaying ∧ 同课程轮次/步骤仍有效 ∧ owner 未另行暂停/切步/重置/结束 ∧ 课件状态可确认` 才自动 `resume()`；否则保持暂停并给 owner 明确反馈。合成/播放失败、状态未知、归属失效一律不自动续播。
+- **职责**：课程播放中有任何话题被选中开口（课程问答与普通弹幕回复同理，见决定 6）→ 先 `pause(reason:'speech')` 并记录 `wasPlaying/step/turn`；等适配器确认课件已静音后进入 GLM 回答与 `say()` 管道；回答**实际播放完成**（下述结构化音频 ended 回执，不能以旧 waitSaid 正常返回作为证明）后仅当 `wasPlaying ∧ 同课程轮次/步骤仍有效 ∧ owner 未另行暂停/切步/重置/结束 ∧ 课件状态可确认` 才自动 `resume()`；否则保持暂停并给 owner 明确反馈。合成/播放失败、状态未知、归属失效一律不自动续播。
 - **覆盖**：CRS-06；SCN-14、15。
 
 ##### 控制台课程控制区（`console.tsx` 局部扩展，可抽 `CoursePanel`）
@@ -99,7 +114,7 @@
 - `courseEpoch`：一次"开始课程"生成；owner 暂停不换 epoch，切步/重置/结束/会话失效/目标切换换 epoch 或作废。模仿 `biliOperations.epoch` 与 `show.sessionGeneration`。
 - `turn`：GLM 真实 turn（照搬 queryTurns 对真实 turn 的坚持，不采信文本）。
 - `stepSeq`/`attemptId`：当前步骤序号与本次开放作答尝试；切步/重开/重置/关闭题使旧 `attemptId` 失效（CRS-04：不同观众相同语义消息不是同一事件，重复事件不重复应用——按消息 id 去重，同 attention 既有实践）。
-- 念出前校验（agent.ts 既有模式）：`lease.valid() ∧ stage.outputEpoch === lease.epoch`，失败则该句不播不推进。
+- 念出前校验（agent.ts 既有模式）：`lease.valid() ∧ stage.outputEpoch === lease.outputEpoch`，失败则该句不播不推进。
 - 有界：turns Map 上限 100（同 queryTurns），`invalidateAll` 挂接 `stage.onOutputChange` 与课程失效钩子。
 
 **覆盖**：CRS-03/04/05/07；SCN-09/10/13/16/17/18。
@@ -112,7 +127,7 @@
 
 ##### 决定 5：课件资产 = 快照授权根 + 舞台静态路由（独立预算语义），不复制不入库
 
-课程根必须是活动会话快照 `rootBindings` 之一；开始课程时重查目录身份（dev/ino），记录关键文件（`index.html`、`engine.js`、`timings.js`、13 个 mp3 存在性）清单与 SHA-256 到课程实例与 show 记录（证据用）。运行期资产按磁盘当前内容只读伺服；文件变化不热更新，重新加载课程才重查（与 FEAT-006"活动会话不重读"一致）。`read_livestream_material` 继续用于模型读文本资料（如课件 README）；静态路由不进入模型上下文。**残余风险如实记录**：授权资产页运行在舞台 origin、与舞台页同级信任（可读自身 URL 中的 stage token），与既有角色/模板包同级；不声称内核级隔离，更强隔离（独立 origin/端口）超出本条边界。
+课程根必须是活动会话快照 `rootBindings` 之一；开始课程时重查目录身份（dev/ino），记录关键文件（`index.html`、`engine.js`、`timings.js`、13 个 mp3 存在性）清单与 SHA-256 到课程实例与 show 记录（证据用）。运行期仅伺服加载时清单中的资产，每次提交响应前核对固定 canonical 边界、文件身份与加载时 hash；文件或祖先发生变化则零内容拒绝并要求 owner 重新加载，不热更新（与 FEAT-006"活动会话不重读"一致）。`read_livestream_material` 继续用于模型读文本资料（如课件 README）；静态路由不进入模型上下文。**残余风险如实记录**：授权资产页运行在舞台 origin、与舞台页同级信任（可读自身 URL 中的 stage token），与既有角色/模板包同级；不声称内核级隔离，更强隔离（独立 origin/端口）超出本条边界。
 
 **覆盖**：CRS-01/02；SCN-08；CFG-04 消费一致性；OUT-001。
 
@@ -137,7 +152,7 @@ interface CourseLoadRequest { rootId: string; path: string; } // 快照 root 内
 type CourseActionInput =
   | { kind: 'answer'; target: 'choice'; index: number }        // 0..2，仅当前开放题
   | { kind: 'answer'; target: 'blank'; value: string }         // 填空原文，宿主核数值
-  | { kind: 'param'; which: 'left' | 'right' | 'force'; value: number }
+  | { kind: 'param'; which: 'left' | 'right' | 'force'; value: number; unit: 'm' | 'N' }
   | { kind: 'question' };                                      // 纯课程提问，不动课件
 
 interface CourseStateView {           // GET state.course / 控制台
@@ -170,9 +185,9 @@ interface CourseStateView {           // GET state.course / 控制台
 #### 时序与数据流
 
 1. **开始课程**：owner 控制台 → `course/load`（快照 root 重查、hash 清单、bridge/资产路由授权就绪）→ `course` open 事件 → 舞台切 course 布局、bridge 加载课件页（默认第 0 步暂停）→ `course/start` → 适配器 `setPlaying(true)` → 回读确认 → `playing`。
-2. **课程问答（CRS-06）**：弹幕入 attention → director 取题 → 课程在播 → 适配器 `pause('speech')` 并确认 → `hooks.push`（prompt 含冻结课程状态）→ GLM 回复 → assistant 正文经 lease 校验后 `say()`（withMic 串行）→ `waitSaid` 完成 → 恢复条件判定 → `resume()` 或保持暂停并反馈 owner。
+2. **课程问答（CRS-06）**：弹幕入 attention → director 取题 → 课程在播 → 适配器 `pause('speech')` 并确认 → `hooks.push`（prompt 含冻结课程状态）→ GLM 回复 → assistant 正文经 lease 校验后 `say()`（withMic 串行）→ 真实 turn 收束且全部音频 ended 确认 → 恢复条件判定 → `resume()` 或保持暂停并反馈 owner。
 3. **调参/作答动作**：GLM 提出候选 → 宿主机械校验 → 每轮至多一项注入（input 事件/click/填空赋值）→ 回读资产结果 → 状态/字幕与事实一致后再继续；拒绝时给允许值，不改状态。
-4. **失效（CRS-07）**：owner 结束课程/下播/切会话/平台切换/仅断订阅 → 既有 `invalidateSession`/`invalidateTarget`/`disconnect` 钩子 → `courseEpoch` 作废 + lease `abort` → 晚到的回执/回答/音频不再产生新输出；结束课程不等于下播，普通交互保留。
+4. **失效（CRS-07）**：owner 结束课程/下播/切会话/平台切换 → 原因明确的生命周期钩子 → `courseEpoch` 作废 + lease `abort`；仅断订阅撤销旧观众动作/回复 lease 并保留本地课程与 owner 控制 → 晚到的回执/回答/音频不再产生新输出；结束课程不等于下播，普通交互保留。
 5. **舞台断开/宿主重启**：回执缺失 → `playUnknown=true`，不报告已播放；重启不恢复课程进度（仅 CFG-02 配置恢复），等 owner 显式重新开始。
 
 #### 横切质量设计
@@ -273,7 +288,7 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 
 **E2E 资产选择**：新增 `e2e-course.config.ts` 与 `test/e2e-course/`（start.mjs/server.ts/client.tsx/course.e2e.ts），复用 query fixture 的真实 React/路由/StageServer 模式与 launcher 隔离。课件用**合成替身页**（按事实 2 的扩展面构造：BEATS 数组、`seek/setPlaying` 全局、quiz/lab 形状的 DOM），保证确定性协议/控制旅程断言；真实 lever-lab 资产不做 e2e 常驻 fixture（二进制 mp3/时序不确定性），其加载与出声归②④层。全程确定性 locator、无 `agent.*`、模型/TTS/平台调用预算 0；Chromium 1440×900 与 375×812、workers=1、retries=0、每测试 120s、整次 10 分钟、`cache:{mode:'read-only',strict:true}`。产物写该副本 `.e2e/feat-007-build/`（Validate 用 `feat-007-validate/`），不复用 FEAT-004/006 路径。
 
-**coverage/check/build**：`vitest.config.ts` coverage include 增加全部新生产源码/面板；新 Web 测试目录加入 test.exclude。**coverage-diff 基线建议为 Build 开始时的业务 HEAD**（含 FEAT-006 修正合并）：`coverage-diff.mjs` 按 `git diff <baseline> -- packages/dsh-livestream/src` 计量，若沿用 `fd48d0a` 会把 FEAT-006 已交付变更重复计入本条（降低通过参考性、混淆归属）；最终由主 Agent 在 Build 开始时登记并写入本文（见 unresolved_items）。显式报告路径 `packages/dsh-livestream/coverage/feat-007-build/coverage-final.json`（Validate 用 `feat-007-validate/`）。check/build 沿用 project.md 既有命令形状。
+**coverage/check/build**：`vitest.config.ts` coverage include 增加全部新生产源码/面板；新 Web 测试目录加入 test.exclude。**coverage-diff 基线为主 Agent 登记的 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`**（含 FEAT-006 修正合并）：`coverage-diff.mjs` 按 `git diff <baseline> -- packages/dsh-livestream/src` 计量，若沿用 `fd48d0a` 会把 FEAT-006 已交付变更重复计入本条（降低通过参考性、混淆归属）；已由主 Agent 在本轮登记；不把后续文档提交当作新的业务基线。显式报告路径 `packages/dsh-livestream/coverage/feat-007-build/coverage-final.json`（Validate 用 `feat-007-validate/`）。check/build 沿用 project.md 既有命令形状。
 
 **usage**：根 README 全局导航增加 `LIVE-COURSE` 锚点；`examples/macos-yovoice/README.md` 补课程前提（FEAT-006 会话快照与资料根）、加载/控制/结束操作、全屏播出运行约束、失效与恢复边界。不写个人绝对路径或 secret。
 
@@ -288,7 +303,7 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 #### FEAT-007-T001 [US2/US3] 交付既有课件直播讲解与弹幕互动完整旅程
 
 - **依赖**：无本 Feature 内 Task 依赖；外部前置见上（FEAT-006 修正段合并）。选择单 Task 的理由见实施层决定 1。
-- **写入范围**：包内路径均相对 `packages/dsh-livestream/`：新增 `src/body/course.ts`（或 `src/body/course/` 有界拆分）、`src/stage/course-bridge.html`（插件自带 bridge 页）、必要的 `src/stage/{protocol.ts,store.ts,widgets.tsx,layout.ts,stage.css}` 加性扩展、`src/body/server.ts` 课程路由、`src/dsh/index.ts` 课程 owner 路由与失效挂接、`src/dsh/runtime.ts` 最小接线、`src/dsh/agent.ts` 课程 lease 注入/念出前校验（沿用既有模式）、必要的 `src/shared/course.ts` DTO、`src/console/console.tsx` 及可抽出的 `src/console/CoursePanel.tsx`；`test/course*.test.{ts,tsx}`、受影响既有测试、`test/e2e-course/**`、`e2e-course.config.ts`、`vitest.config.ts`；仓库根 `README.md`、`examples/macos-yovoice/README.md`。不写：`sessionContext*` 契约文件（消费不改）、upstream、其他 Feature 工程候选、共享服务、真实课件资产、已存在测试产物。`.gitignore` 仅在既有忽略不能覆盖新产物路径时有界补充。
+- **写入范围**：包内路径均相对 `packages/dsh-livestream/`：新增 `src/body/course.ts`（或 `src/body/course/` 有界拆分）、`stage/course-bridge.html`（插件自带 bridge 页，由现有 package files.stage 一并交付）、必要的 `src/stage/{protocol.ts,store.ts,widgets.tsx,layout.ts,stage.css}` 加性扩展、`src/body/server.ts` 课程路由、`src/body/show.ts` 的课程/话题/语音生命周期接线、`src/body/stage.ts` 的课程保留事件与加性播放结果回执、`src/dsh/index.ts` 课程 owner 路由与失效挂接、`src/dsh/runtime.ts` 最小接线、`src/dsh/agent.ts` 课程 lease 注入/念出前校验（沿用既有模式）、必要的 `src/shared/course.ts` DTO、`src/console/console.tsx` 及可抽出的 `src/console/CoursePanel.tsx`；`test/course*.test.{ts,tsx}`、受影响既有测试、`test/e2e-course/**`、`e2e-course.config.ts`、`vitest.config.ts`；仓库根 `README.md`、`examples/macos-yovoice/README.md`。不写：`sessionContext*` 契约文件（消费不改）、upstream、其他 Feature 工程候选、共享服务、真实课件资产、已存在测试产物。`.gitignore` 仅在既有忽略不能覆盖新产物路径时有界补充。
 - **完成条件**：需求覆盖表全部实现；隔离副本中①②层证据具备（含真实 lever-lab 加载与舞台显示、owner 全控制、受限/静态两条授权路径的允许与拒绝）；CRS-02～07 的失败/失效分支逐条有测试；CRS-06 恢复条件真值表全过；越权/失效后新状态污染与新增输出为 0；无课程时既有行为/工具/声音/平台隔离回归通过；已提交 e2e、usage、coverage-diff（主 Agent 登记的基线）、check/build 可重复且通过；③④⑤层缺口如实标注不抵扣。任务完成不代替独立 Validate/Review。
 - **验证方式**：上文验证策略，绑定实际候选 SHA、源码 diff、版本、环境、身份、资产 hash 清单与产物；失败先定位，遵循仓库连续两次不收敛停止规则。
 - **覆盖**：REQ-008 全部 CRS/SCN(08～20)/SC；**计划**：三个实施阶段，由同一实现者持续完成。

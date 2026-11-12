@@ -186,17 +186,17 @@
         "by": null,
         "decision": "pending"
       },
-      "status": "planned",
+      "status": "in_progress",
       "tasks": {
         "FEAT-007-T001": {
           "depends_on": [],
           "id": "FEAT-007-T001",
-          "status": "todo",
+          "status": "in_progress",
           "title": "[US2/US3] 交付既有课件直播讲解与弹幕互动完整旅程",
-          "updated_at": "2026-11-11T06:54:02Z"
+          "updated_at": "2026-11-12T08:14:47Z"
         }
       },
-      "updated_at": "2026-11-11T06:54:02Z",
+      "updated_at": "2026-11-12T08:14:47Z",
       "validation": {
         "at": null,
         "command": null,
@@ -316,7 +316,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-008.product.md",
       "status": "in_delivery",
       "title": "既有课件的直播讲解与弹幕互动",
-      "updated_at": "2026-11-11T06:54:02Z"
+      "updated_at": "2026-11-12T08:14:47Z"
     },
     "REQ-009": {
       "created_at": "2026-11-10T09:12:40Z",
