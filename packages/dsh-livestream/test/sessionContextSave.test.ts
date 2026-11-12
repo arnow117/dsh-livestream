@@ -88,6 +88,7 @@ describe('session context save flow', () => {
     expect(result.body.sessionContext.saved.revision).toBe(1);
     expect(result.body.sessionContext.saved.config.skillSources[0].path).toBe(join(dir, 'skills', 'note.md'));
     const health = result.body.sessionContext.health.entries;
+    expect(health.filter((entry: any) => entry.kind === 'cwd')).toHaveLength(1);
     expect(health.find((entry: any) => entry.kind === 'cwd')?.status).toBe('valid');
     expect(health.find((entry: any) => entry.kind === 'skill' && entry.index === 0)?.status).toBe('valid');
     expect(health.find((entry: any) => entry.kind === 'root' && entry.index === 0)?.status).toBe('valid');
@@ -337,6 +338,85 @@ describe('session context save flow', () => {
     expect(entries.every((entry: any) => entry.status === 'valid')).toBe(true);
     await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config() } });
   });
+
+  // ── 正式复审 R12：健康发现在截止后不得沿用 valid（受控超时诊断）──
+
+  it('reports a controlled timeout diagnostic when health discovery settles after the scan deadline', async () => {
+    const { mkdir: makeDir, writeFile: writeFileFs } = await import('node:fs/promises');
+    await makeDir(join(dir, 'deadline-health'), { recursive: true });
+    await writeFileFs(join(dir, 'deadline-health', 'SKILL.md'), '---\nname: deadline-health\ndescription: 健康截止探针。\n---\n正文。\n');
+    const revisionNow = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext?.revision ?? 0;
+    const saved = await post('settings', { sessionContext: { expectedRevision: revisionNow, config: config({ skillSources: [{ path: join(dir, 'deadline-health'), enabled: true }] }) } });
+    expect(saved.status).toBe(200);
+    const settingsBefore = await readFile(settingsFile, 'utf8');
+    // 前面的用例刚做过重查：真实 1 秒限频窗口需要真实流逝，否则本轮 recheck 会被 429 跳过
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const { open } = await import('node:fs/promises');
+    const probe = await open(join(dir, 'workdir', '.probe-touch'), 'a');
+    const proto = Object.getPrototypeOf(probe) as { read: (this: unknown, ...args: unknown[]) => Promise<{ bytesRead: number; buffer: Buffer }> };
+    await probe.close();
+    const originalRead = proto.read;
+    proto.read = async function (this: unknown, ...args: unknown[]) {
+      await new Promise((resolve) => setTimeout(resolve, 5150));
+      return originalRead.apply(this, args);
+    };
+    await sessionContext.recheckSessionContext();
+    proto.read = originalRead;
+    const entry = sessionContext.stateView().health.entries.find((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    // 截止后不得沿用本轮已过期的 valid：受控超时诊断
+    expect(entry?.status).not.toBe('valid');
+    expect(JSON.stringify(entry)).toContain('超时');
+    // 保存记录不被重查改变
+    expect(await readFile(settingsFile, 'utf8')).toBe(settingsBefore);
+    // 恢复：下一次正常重查回到 valid
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sessionContext.recheckSessionContext();
+    const recovered = sessionContext.stateView().health.entries.find((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    expect(recovered?.status).toBe('valid');
+    await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config() } });
+  }, 20000);
+
+  // ── 七轮核对 4：健康超时诊断每个条目只有一条最终状态（不追加重复）；截止跨越 roots 后发布前核对 ──
+
+  it('publishes exactly one final timeout entry per enabled skill when the deadline crosses during roots checks', async () => {
+    const { mkdir: makeDir, writeFile: writeFileFs } = await import('node:fs/promises');
+    await makeDir(join(dir, 'jump-health'), { recursive: true });
+    await writeFileFs(join(dir, 'jump-health', 'SKILL.md'), '---\nname: jump-health\ndescription: 唯一性探针。\n---\n正文。\n');
+    const revisionNow = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext?.revision ?? 0;
+    const saved = await post('settings', { sessionContext: { expectedRevision: revisionNow, config: config({ skillSources: [{ path: join(dir, 'jump-health'), enabled: true }], readRoots: [{ path: join(dir, 'materials'), enabled: true }] }) } });
+    expect(saved.status).toBe(200);
+    const settingsBefore = await readFile(settingsFile, 'utf8');
+    const realNow = performance.now.bind(performance);
+    let jumped = false;
+    performance.now = () => realNow() + (jumped ? 6000 : 0);
+    const { open } = await import('node:fs/promises');
+    const probe = await open(join(dir, 'workdir', '.probe-touch'), 'r');
+    const proto = Object.getPrototypeOf(probe) as { read: (this: unknown, ...args: unknown[]) => Promise<{ bytesRead: number; buffer: Buffer }> };
+    await probe.close();
+    const originalRead = proto.read;
+    proto.read = async function (this: unknown, ...args: unknown[]) {
+      if (!jumped) jumped = true;
+      return originalRead.apply(this, args);
+    };
+    // recheck 有真实 1 秒限频窗口：先真实流逝，避免 429 跳过本轮刷新
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    try {
+      await sessionContext.recheckSessionContext();
+    } finally {
+      performance.now = realNow;
+      proto.read = originalRead;
+    }
+    const entries = sessionContext.stateView().health.entries.filter((candidate: any) => candidate.kind === 'skill' && candidate.index === 0);
+    // 唯一最终状态：恰一条，超时诊断（不追加重复的 valid/invalid 对）
+    expect(entries, `expected single final entry, got ${JSON.stringify(entries)}`).toHaveLength(1);
+    expect(entries[0].status).not.toBe('valid');
+    expect(JSON.stringify(entries[0])).toContain('超时');
+    // 保存记录不变
+    expect(await readFile(settingsFile, 'utf8')).toBe(settingsBefore);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sessionContext.recheckSessionContext();
+    await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config() } });
+  }, 20000);
 
   it('rate-limits owner rechecks without saving or creating sessions', async () => {
     // 前面的用例刚做过重查：真实 1 秒限频窗口需要真实流逝（本用例本身就在测真实时钟限频）

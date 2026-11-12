@@ -312,9 +312,12 @@ export async function readDiscoveredSkill(
   relativePath: string,
   maxBytes: number,
   hooks: DiscoveryReadHooks = {},
+  signal?: AbortSignal,
 ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; failure: PathFailure }> {
+  // R12：发现扫描取消信号透传到底层读取的协作检查点（迟到缓冲在读取方丢弃）
   const result = await readViaIdentifiedPath(canonicalRoot, rootIdentity, relativePath, maxBytes, {
     canonicalRoot,
+    signal,
     ...hooks,
   });
   if (result.ok) return { ok: true, bytes: result.bytes };

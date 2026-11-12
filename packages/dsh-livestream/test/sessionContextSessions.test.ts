@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { performance } from 'node:perf_hooks';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
  * 管理会话创建流程：捕获 → 冻结快照 → native sessionController.create()（契约替身，行为按
@@ -490,6 +491,208 @@ describe('managed session creation', () => {
     if (again.status === 'loaded') expect(again.body).toBe('');
     await save();
   });
+
+  // ── 七轮核对：共享截止的单调时钟复核（定时器未触发）、末候选/末来源早停、无 Skill 不计费 ──
+
+  /** 受控时钟：performance.now 相对偏移（定时器未触发也判定过期）；首个真实 FileHandle.read 时触发跳变 */
+  async function installMonotonicJump(jumpAfterFirstRead: boolean, deltaMs = 6000): Promise<{ restore(): void }> {
+    const realNow = performance.now.bind(performance);
+    let jumped = false;
+    let clockReads = 0;
+    performance.now = () => {
+      clockReads += 1;
+      if (!jumpAfterFirstRead && clockReads > 1) jumped = true;
+      return realNow() + (jumped ? deltaMs : 0);
+    };
+    let restoreRead: (() => void) | null = null;
+    if (jumpAfterFirstRead) {
+      const { open } = await import('node:fs/promises');
+      await writeFile(join(dir, 'workdir', '.probe-touch'), '');
+      const probe = await open(join(dir, 'workdir', '.probe-touch'), 'r');
+      const proto = Object.getPrototypeOf(probe) as { read: (this: unknown, ...args: unknown[]) => Promise<{ bytesRead: number; buffer: Buffer }> };
+      await probe.close();
+      const originalRead = proto.read;
+      proto.read = async function (this: unknown, ...args: unknown[]) {
+        if (!jumped) jumped = true;
+        return originalRead.apply(this, args);
+      };
+      restoreRead = () => { proto.read = originalRead; };
+    }
+    return {
+      restore: () => {
+        performance.now = realNow;
+        restoreRead?.();
+      },
+    };
+  }
+
+  it('stops candidate discovery at the shared monotonic cutoff after the first read (no timer fire)', async () => {
+    await mkdir(join(dir, 'skills', 'jump-container'), { recursive: true });
+    for (const slot of ['a', 'b', 'c']) {
+      await writeFile(join(dir, 'skills', 'jump-container', `${slot}.md`), `---\nname: jump-${slot}\ndescription: 候选 ${slot}。\n---\n正文 ${slot}。\n`);
+    }
+    const clock = await installMonotonicJump(true);
+    let readCalls = 0;
+    const { open } = await import('node:fs/promises');
+    const probe = await open(join(dir, 'workdir', '.probe-touch'), 'r');
+    const proto = Object.getPrototypeOf(probe) as { read: (this: unknown, ...args: unknown[]) => Promise<{ bytesRead: number; buffer: Buffer }> };
+    await probe.close();
+    const originalRead = proto.read;
+    proto.read = async function (this: unknown, ...args: unknown[]) {
+      readCalls += 1;
+      return originalRead.apply(this, args);
+    };
+    let saved: { status: number; body: any };
+    try {
+      saved = await saveSkillConfig([{ path: join(dir, 'skills', 'jump-container'), enabled: true }]);
+    } finally {
+      proto.read = originalRead;
+      clock.restore();
+    }
+    // 单调截止：首个候选读取后即越限，后续候选不再发出任何 IO（定时器未触发也生效）
+    expect(saved.status).toBe(400);
+    expect(JSON.stringify(saved.body)).toContain('超时');
+    expect(readCalls, `monotonic cutoff must stop after the first candidate read, got ${readCalls}`).toBe(1);
+  }, 20000);
+
+  it('does not charge the scan deadline to a read-root-only save (no skill sources)', async () => {
+    await mkdir(join(dir, 'roots-only'), { recursive: true });
+    await writeFile(join(dir, 'roots-only', 'f.txt'), '内容\n');
+    const clock = await installMonotonicJump(false);
+    let saved: { status: number; body: any };
+    try {
+      saved = await saveSkillConfig([]);
+    } finally {
+      clock.restore();
+    }
+    // 无启用 Skill 条目：真实无扫描分支——读取根-only 保存不受扫描截止计费
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+  }, 20000);
+
+  it('does not charge the scan deadline to a read-root-only snapshot prepare', async () => {
+    await mkdir(join(dir, 'roots-only-2'), { recursive: true });
+    await writeFile(join(dir, 'roots-only-2', 'f.txt'), '内容\n');
+    const saved = await saveSkillConfig([]);
+    void saved;
+    const revision = sessionContext.stateView().saved?.revision ?? 0;
+    const savedRoots = await post('settings', { sessionContext: { expectedRevision: revision, config: {
+      enabled: true,
+      cwd: join(dir, 'workdir'),
+      skillSources: [],
+      readRoots: [{ path: join(dir, 'roots-only-2'), enabled: true }],
+    } } });
+    expect(savedRoots.status).toBe(200);
+    const clock = await installMonotonicJump(false);
+    let created: { status: number; body: any };
+    try {
+      created = await post('sessions', { workspaceId });
+    } finally {
+      clock.restore();
+    }
+    // 仅资料根的快照准备不被扫描截止计费：正常 200 并产生唯一授权
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
+    expect(created.body.sessionContext.rootIds).toEqual(['root-1']);
+  }, 20000);
+
+  it('releases the scan timer when discovery throws unexpectedly (recovery afterwards)', async () => {
+    await writeFile(join(dir, 'skills', 'throw-probe.md'), '---\nname: throw-probe\ndescription: 异常抛出探针。\n---\n正文。\n');
+    // 未预期的异常路径：performance.now 在扫描上下文建立后的核对点抛出（非 IO 错误形状），
+    // 逃出 discoverSkills 的 try/finally——保存入口的 try/finally 必须释放扫描定时器
+    const realNow = performance.now.bind(performance);
+    let calls = 0;
+    performance.now = () => {
+      calls += 1;
+      if (calls >= 2) throw new TypeError('unexpected clock failure');
+      return realNow();
+    };
+    // 意外异常已表面化（500 响应或直接抛出均视为表面化），且 try/finally 已释放扫描定时器
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+    let surfaced = false;
+    try {
+      const throwing = await saveSkillConfig([{ path: join(dir, 'skills', 'throw-probe.md'), enabled: true }]);
+      surfaced = throwing.status === 500;
+    } catch {
+      surfaced = true;
+    } finally {
+      performance.now = realNow;
+    }
+    expect(surfaced, 'unexpected discovery failure must surface').toBe(true);
+    expect(clearTimeoutSpy.mock.calls.length, 'scan timer must be released by the finally').toBeGreaterThan(0);
+    clearTimeoutSpy.mockRestore();
+    // 释放后：下一次正常保存成功（无卡死的 busy/限频/定时器残留）
+    const recovered = await saveSkillConfig([{ path: join(dir, 'skills', 'throw-probe.md'), enabled: true }]);
+    expect(recovered.status).toBe(200);
+  });
+
+  // ── 正式复审 R10：异源同名在创建时是硬冲突（两种来源形状与顺序），同 canonical 重复合法去重 ──
+
+  /** 在真实 FileHandle 原型上注入一次延迟后转发真实 IO（非 native 强制中断；协作式检查在恢复执行时生效） */
+  async function delayFirstRead(ms: number): Promise<{ restore(): void }> {
+    const { open } = await import('node:fs/promises');
+    const probe = await open(join(dir, 'workdir', '.probe-touch'), 'a');
+    const proto = Object.getPrototypeOf(probe) as { read: (this: unknown, ...args: unknown[]) => Promise<{ bytesRead: number; buffer: Buffer }> };
+    await probe.close();
+    const originalRead = proto.read;
+    proto.read = async function (this: unknown, ...args: unknown[]) {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      return originalRead.apply(this, args);
+    };
+    return { restore: () => { proto.read = originalRead; } };
+  }
+
+  it('rejects save when the last candidate read settles after the shared scan deadline (container source)', async () => {
+    await mkdir(join(dir, 'skills', 'deadline-container'), { recursive: true });
+    await writeFile(join(dir, 'skills', 'deadline-container', 'SKILL.md'), '---\nname: deadline-skill\ndescription: 截止探针。\n---\n正文。\n');
+    const revisionBefore = sessionContext.stateView().saved?.revision ?? 0;
+    const settingsBefore = await readFile(join(dir, 'dsh-livestream', 'settings.json'), 'utf8');
+    const delayed = await delayFirstRead(5150);
+    let saved: { status: number; body: any };
+    try {
+      saved = await saveSkillConfig([{ path: join(dir, 'skills', 'deadline-container'), enabled: true }]);
+    } finally {
+      delayed.restore();
+    }
+    expect(saved.status, JSON.stringify(saved.body)).toBe(400);
+    expect(JSON.stringify(saved.body)).toContain('超时');
+    // 旧配置/revision 保持
+    expect(sessionContext.stateView().saved?.revision ?? 0).toBe(revisionBefore);
+    expect(await readFile(join(dir, 'dsh-livestream', 'settings.json'), 'utf8')).toBe(settingsBefore);
+  }, 20000);
+
+  it('rejects prepare with zero native calls when the single-file binding read settles after the deadline (no snapshot persisted)', async () => {
+    await writeFile(join(dir, 'skills', 'deadline-file.md'), '---\nname: deadline-file\ndescription: 单文件截止探针。\n---\n正文。\n');
+    const saved = await saveSkillConfig([{ path: join(dir, 'skills', 'deadline-file.md'), enabled: true }]);
+    expect(saved.status).toBe(200);
+    const before = nativeCreates.length;
+    const snapshotDirectory = join(dir, 'dsh-livestream', 'session-context');
+    await mkdir(snapshotDirectory, { recursive: true });
+    const filesBefore = (await readdir(snapshotDirectory)).sort();
+    const bytesBefore = await Promise.all(filesBefore.map((name) => readFile(join(snapshotDirectory, name))));
+    const stateBefore = sessionContext.stateView();
+    const delayed = await delayFirstRead(5150);
+    let created: { status: number; body: any };
+    try {
+      created = await post('sessions', { workspaceId });
+    } finally {
+      delayed.restore();
+    }
+    // prepare 在快照持久化与 native create 之前以 limit_exceeded 拒绝
+    expect(created.status).toBe(409);
+    expect(JSON.stringify(created.body)).toContain('超时');
+    expect(nativeCreates.length).toBe(before);
+    // 在恢复创建前核对实际目录和已有文件字节，拒绝不能留下新快照或改写冻结数据。
+    const filesAfter = (await readdir(snapshotDirectory)).sort();
+    expect(filesAfter).toEqual(filesBefore);
+    const bytesAfter = await Promise.all(filesAfter.map((name) => readFile(join(snapshotDirectory, name))));
+    expect(bytesAfter).toEqual(bytesBefore);
+    expect(sessionContext.stateView().saved).toEqual(stateBefore.saved);
+    expect(sessionContext.stateView().active).toEqual(stateBefore.active);
+    expect(created.body.sessionId).toBeUndefined();
+    // 恢复：下一次正常操作成功（无卡死的 busy/recheck 标记）
+    const recovered = await post('sessions', { workspaceId });
+    expect(recovered.status).toBe(200);
+    await save();
+  }, 30000);
 
   // ── 正式复审 R10：异源同名在创建时是硬冲突（两种来源形状与顺序），同 canonical 重复合法去重 ──
 
