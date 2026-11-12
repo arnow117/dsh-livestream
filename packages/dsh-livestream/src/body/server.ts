@@ -16,9 +16,11 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { Readable } from 'node:stream';
+import { randomUUID } from 'node:crypto';
 import type { StageEvent } from '../stage/protocol';
 import type { Packs } from './packs';
 import type { Stage } from './stage';
+import type { CourseAssets } from './course/assets';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -44,6 +46,9 @@ export interface StageServerOptions {
   packageDir: string;
   packs: Packs;
   stage: Stage;
+  /** Only the currently loaded course instance can authorize asset reads. */
+  courseAssets?(): CourseAssets | null;
+  courseReport?(report: unknown): boolean;
   /** 现在用哪个角色、哪个模板 */
   current(): { character: string; template: string };
   /** 舞台上放的视频：id → CDN 地址；舞台的回执 */
@@ -97,6 +102,24 @@ export class StageServer {
   // ── 请求 ────────────────────────────────────────────
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const rawPath = (req.url ?? '/').split('?', 1)[0];
+    if (req.method === 'GET' && rawPath.startsWith('/course/asset/')) {
+      const match = /^\/course\/asset\/([A-Za-z0-9_-]{32})\/(.+)$/.exec(rawPath);
+      const assets = this.options.courseAssets?.();
+      const bytes = match && assets?.capability === match[1] ? await assets.read(match[2]) : null;
+      if (!bytes || !assets?.active || assets !== this.options.courseAssets?.()) {
+        res.writeHead(404, { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': TYPES[extname(match![2]).toLowerCase()] ?? 'application/octet-stream',
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+      });
+      res.end(bytes);
+      return;
+    }
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (url.searchParams.get('token') !== this.options.token) {
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
@@ -104,7 +127,40 @@ export class StageServer {
       return;
     }
     const path = url.pathname;
+    if (req.method === 'POST' && path === '/audio') {
+      const result = url.searchParams.get('state');
+      if (result === 'ended' || result === 'error') this.options.stage.audioResult(url.searchParams.get('id') ?? '', result, url.searchParams.get('watcher') ?? '');
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (req.method === 'POST' && path === '/course/report') {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of req) {
+        const bytes = Buffer.from(chunk);
+        size += bytes.length;
+        if (size > 8192) {
+          res.writeHead(413);
+          res.end();
+          return;
+        }
+        chunks.push(bytes);
+      }
+      let report: unknown;
+      try {
+        report = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch {
+        res.writeHead(400);
+        res.end();
+        return;
+      }
+      res.writeHead(this.options.courseReport?.(report) ? 204 : 400, { 'cache-control': 'no-store' });
+      res.end();
+      return;
+    }
     if (req.method === 'POST' && path === '/said') {
+      if (url.searchParams.get('audio') === 'ended') this.options.stage.audioResult(url.searchParams.get('id') ?? '', 'ended', url.searchParams.get('watcher') ?? '');
       this.options.stage.said(url.searchParams.get('id') ?? '');
       res.writeHead(204);
       res.end();
@@ -127,6 +183,17 @@ export class StageServer {
     }
     if (path === '/events') return this.events(req, res, url);
     if (path === '/video') return this.video(req, res, url.searchParams.get('id') ?? '');
+    if (path === '/course/bridge') {
+      const file = join(this.options.packageDir, 'stage', 'course-bridge.html');
+      if (!existsSync(file)) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': TYPES['.html'], 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+      res.end(readFileSync(file));
+      return;
+    }
     if (path === '/' || path === '/index.html') return this.file(res, join(this.options.packageDir, 'stage', 'index.html'));
     if (path === '/stage.js') return this.file(res, join(this.options.packageDir, 'lib', 'stage.js'));
     if (path === '/stage.css') return this.file(res, join(this.options.packageDir, 'stage', 'stage.css'));
@@ -149,9 +216,10 @@ export class StageServer {
     const { character, template } = this.options.current();
     const c = this.options.packs.character(character);
     const t = this.options.packs.template(template);
-    if (c && t) send({ v: 1, type: 'hello', character: c, template: t, build: this.build, outputEpoch: this.options.stage.outputEpoch, at: Date.now() });
+    const watcherId = randomUUID();
+    if (c && t) send({ v: 1, type: 'hello', character: c, template: t, build: this.build, outputEpoch: this.options.stage.outputEpoch, ...(url.searchParams.get('preview') !== '1' ? { watcherId } : {}), at: Date.now() });
     // ?preview=1：控制台里的预览，静音、不回执
-    const unsubscribe = this.options.stage.subscribe(send, url.searchParams.get('preview') !== '1', url.searchParams.get('outputProtocol') ?? undefined);
+    const unsubscribe = this.options.stage.subscribe(send, url.searchParams.get('preview') !== '1', url.searchParams.get('outputProtocol') ?? undefined, watcherId);
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000);
     req.on('close', () => {
       clearInterval(ping);

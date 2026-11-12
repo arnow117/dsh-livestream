@@ -11,6 +11,7 @@ import type { TtsSettings } from '../shared/ttsSettings';
 import type { QueryResult, QuerySettings } from '../shared/readOnlyQuery';
 import type { RoomControlSnapshot } from '../shared/roomControl';
 import type { SessionContextStateView } from '../shared/sessionContext';
+import type { CourseStateView } from '../shared/course';
 import { parseDouyinRoomId } from '../shared/liveTarget';
 import { usesNewConsole } from '../body/voices';
 import { SessionContextSettingsPanel } from './SessionContextSettingsPanel';
@@ -108,6 +109,7 @@ interface BroadcastStatus {
 export interface HostState {
   ok: boolean;
   show: ShowStatus;
+  course?: CourseStateView | null;
   broadcast: BroadcastStatus;
   queryCredential?: 'configured' | 'unconfigured' | 'error';
   queryService?: 'unverified' | 'available' | 'incompatible';
@@ -132,6 +134,108 @@ async function api<T = HostState>(path: string, body?: unknown, signal?: AbortSi
   const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
   if (!res.ok || data.ok === false) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data as T;
+}
+
+export function CoursePanel({ host, setHost }: { host: HostState | null; setHost: React.Dispatch<React.SetStateAction<HostState | null>> }) {
+  const [rootId, setRootId] = useState('');
+  const [path, setPath] = useState('ch01/index.html');
+  const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pollRevision = useRef(0);
+  const commandPending = useRef(false);
+  const rootIds = host?.sessionContext?.active?.rootIds ?? [];
+  const selectedRoot = rootIds.includes(rootId) ? rootId : rootIds[0] ?? '';
+  const state = host?.course;
+
+  useEffect(() => {
+    if (!host?.show.onAir) return;
+    let active = true;
+    let polling = false;
+    const timer = setInterval(() => {
+      if (polling || commandPending.current) return;
+      polling = true;
+      const revision = pollRevision.current;
+      void api('state').then((next) => {
+        if (active && revision === pollRevision.current) {
+          setHost((previous) => previous ? { ...previous, course: next.course } : previous);
+        }
+      }).catch(() => {}).finally(() => { polling = false; });
+    }, 1000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [host?.show.onAir, setHost]);
+
+  const execute = async (action: string, extra: Record<string, unknown> = {}) => {
+    commandPending.current = true;
+    pollRevision.current++;
+    setBusy(true);
+    setError('');
+    try {
+      setHost(await api('course', { action, ...extra }));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : '课程操作失败');
+    } finally {
+      pollRevision.current++;
+      commandPending.current = false;
+      setBusy(false);
+    }
+  };
+  let status = '尚未加载课程';
+  if (state?.playUnknown) {
+    status = '舞台状态未确认';
+  } else if (state) {
+    const activity = state.step?.waiting ? '等待互动'
+      : state.phase === 'playing' ? '播放中'
+        : state.pauseReason === 'speech' ? '回答时暂停' : '已暂停';
+    status = `${activity} · ${state.step?.title ?? '等待课件'}`;
+  }
+  const questionResult = state?.question?.lastResult;
+  const questionStatus = questionResult === 'correct' ? '回答正确'
+    : questionResult === 'wrong' ? '回答错误，可继续作答' : '等待回答';
+  return (
+    <section className="dl-dock" aria-labelledby="course-title">
+      <h2 id="course-title">课程</h2>
+      <label htmlFor="course-root">会话资料根</label>
+      <select id="course-root" value={selectedRoot} onChange={(event) => setRootId(event.target.value)}>
+        {rootIds.length === 0 && <option value="">当前会话没有资料根</option>}
+        {rootIds.map((id) => (
+          <option key={id} value={id}>{id}</option>
+        ))}
+      </select>
+      <label htmlFor="course-path">课件相对路径</label>
+      <input id="course-path" value={path} onChange={(event) => setPath(event.target.value)} />
+      <button className="dl-btn" disabled={busy || !selectedRoot || !host?.show.onAir} onClick={() => void execute('load', { rootId: selectedRoot, path })}>
+        加载课程
+      </button>
+      <p aria-live="polite">{error || status}</p>
+      {state?.lab && (
+        <p>动力臂 {state.lab.left} m · 阻力臂 {state.lab.right} m · 动力 {state.lab.force} N · {state.lab.balanced ? '平衡' : '未平衡'}</p>
+      )}
+      {state?.question && <p>当前题目：{questionStatus}</p>}
+      {state?.lastAction && <p aria-live="polite">{state.lastAction.detail}</p>}
+      <div>
+        <button className="dl-btn" disabled={busy || !state || state.playUnknown} onClick={() => void execute('start')}>开始</button>
+        <button className="dl-btn" disabled={busy || !state || state.playUnknown} onClick={() => void execute('pause')}>暂停</button>
+        <button className="dl-btn" disabled={busy || !state || state.playUnknown} onClick={() => void execute('resume')}>继续</button>
+        <button className="dl-btn" disabled={busy || !state || state.playUnknown} onClick={() => void execute('reset')}>重置</button>
+        <button className="dl-btn" disabled={busy || !state} onClick={() => void execute('end')}>结束课程</button>
+      </div>
+      <label htmlFor="course-step">选择步骤</label>
+      <select id="course-step" value={step} onChange={(event) => setStep(Number(event.target.value))}>
+        {Array.from({ length: 13 }, (_, index) => (
+          <option key={index} value={index}>
+            第 {index + 1} 步{state?.steps[index] ? ` · ${state.steps[index].title}` : ''}
+          </option>
+        ))}
+      </select>
+      <button className="dl-btn" disabled={busy || !state || state.playUnknown} onClick={() => void execute('step', { index: step })}>
+        切换步骤
+      </button>
+    </section>
+  );
 }
 
 // ── 事件流 ────────────────────────────────────────────
@@ -863,6 +967,8 @@ export function Console() {
                 )}
               </div>
             </section>
+
+            <CoursePanel host={host} setHost={setHost} />
 
             <section className="dl-dock">
               <nav className="dl-tabs">

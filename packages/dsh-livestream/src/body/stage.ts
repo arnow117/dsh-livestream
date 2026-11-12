@@ -4,16 +4,24 @@
  */
 
 import { OWNED_OUTPUT_PROTOCOL, type StageEvent } from '../stage/protocol';
+import { randomUUID } from 'node:crypto';
 
 type Listener = (event: StageEvent) => void;
+export type AudioResult = 'ended' | 'error' | 'cancelled' | 'timeout' | 'unknown';
 
 /** 不带 v/at 的事件，broadcast 时补上 */
 type StageEventInput = StageEvent extends infer E ? E extends StageEvent ? Omit<E, 'v' | 'at'> : never : never;
 
 export class Stage {
-  private listeners = new Map<Listener, { speaker: boolean; capable: boolean }>();
+  private listeners = new Map<Listener, { speaker: boolean; capable: boolean; id: string }>();
   outputEpoch: string | null = null;
   private outputListeners = new Set<() => void>();
+  private speakerListeners = new Set<() => void>();
+
+  onSpeakerChange(listener: () => void): () => void {
+    this.speakerListeners.add(listener);
+    return () => this.speakerListeners.delete(listener);
+  }
 
   onOutputChange(listener: () => void): () => void {
     this.outputListeners.add(listener);
@@ -28,6 +36,7 @@ export class Stage {
   /** 出声的舞台页（OBS 的浏览器源）；预览页静音、不回执 */
   private speakers = new Set<Listener>();
   private pending = new Map<string, () => void>();
+  private pendingAudio = new Map<string, { watcherId: string; finish(result: AudioResult): void }>();
   /** 状态类事件的最新一条：舞台页中途连上（OBS 刷新）时先补给它，不用等下一次变化 */
   private latest = new Map<string, StageEvent>();
 
@@ -37,13 +46,22 @@ export class Stage {
   }
 
   /** speaker：这个页面出声、念完回执（OBS 的浏览器源）；控制台里的预览传 false */
-  subscribe(listener: Listener, speaker = true, outputProtocol?: string): () => void {
-    this.listeners.set(listener, { speaker, capable: outputProtocol === OWNED_OUTPUT_PROTOCOL });
-    if (speaker) this.speakers.add(listener);
-    for (const event of this.latest.values()) listener(event);
+  subscribe(listener: Listener, speaker = true, outputProtocol?: string, watcherId = randomUUID()): () => void {
+    const capable = outputProtocol === OWNED_OUTPUT_PROTOCOL;
+    this.listeners.set(listener, { speaker, capable, id: watcherId });
+    if (speaker) {
+      this.speakers.add(listener);
+      for (const pending of this.pendingAudio.values()) pending.finish('unknown');
+    }
+    if (speaker) for (const notify of this.speakerListeners) notify();
+    for (const event of this.latest.values()) {
+      if (event.type !== 'course' || capable) listener(event);
+    }
     return () => {
       this.listeners.delete(listener);
       this.speakers.delete(listener);
+      if (speaker) for (const pending of this.pendingAudio.values()) pending.finish('unknown');
+      if (speaker) for (const notify of this.speakerListeners) notify();
     };
   }
 
@@ -58,10 +76,15 @@ export class Stage {
     return counts;
   }
 
+  isSpeaker(id: string): boolean {
+    return [...this.listeners.values()].some((listener) => listener.speaker && listener.capable && listener.id === id);
+  }
+
   broadcast(event: StageEventInput): void {
     const full = { v: 1, at: Date.now(), ...event } as StageEvent;
     if (full.type === 'room' || full.type === 'brain' || full.type === 'usage' || full.type === 'media' || full.type === 'board' || full.type === 'orders' || full.type === 'game' || full.type === 'gameStatus' || full.type === 'notice') this.latest.set(full.type, full);
-    const owned = full.type === 'output' || full.type === 'invalidate' || (full.type === 'say' && !!full.owner);
+    if (full.type === 'course' && full.action !== 'command') this.latest.set('course', full);
+    const owned = full.type === 'output' || full.type === 'invalidate' || full.type === 'course' || (full.type === 'say' && !!full.owner);
     for (const [listen, options] of this.listeners) {
       if (owned && !options.capable) continue;
       try {
@@ -92,7 +115,33 @@ export class Stage {
   }
 
   said(id: string): void {
+    this.pendingAudio.get(id)?.finish('unknown');
     this.pending.get(id)?.();
+  }
+
+  waitAudio(id: string, estimateMs: number, signal: AbortSignal): Promise<AudioResult> {
+    if (signal.aborted) return Promise.resolve('cancelled');
+    const capabilities = this.outputCapabilities();
+    if (capabilities.capableSpeakers !== 1 || capabilities.legacySpeakers !== 0) return Promise.resolve('unknown');
+    const watcherId = [...this.listeners.values()].find((listener) => listener.speaker && listener.capable)?.id;
+    if (!watcherId) return Promise.resolve('unknown');
+    return new Promise((resolve) => {
+      const finish = (result: AudioResult) => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', abort);
+        this.pendingAudio.delete(id);
+        resolve(result);
+      };
+      const abort = () => finish('cancelled');
+      const timer = setTimeout(() => finish('timeout'), estimateMs + 15_000);
+      signal.addEventListener('abort', abort, { once: true });
+      this.pendingAudio.set(id, { watcherId, finish });
+    });
+  }
+
+  audioResult(id: string, result: 'ended' | 'error', watcherId: string): void {
+    const pending = this.pendingAudio.get(id);
+    if (pending?.watcherId === watcherId && this.isSpeaker(watcherId)) pending.finish(result);
   }
 
   /** 一句一句说：谁先要谁先说 */

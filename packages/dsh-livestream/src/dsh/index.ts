@@ -43,7 +43,7 @@ import { assertBiliCurrent, beginBiliOperation, biliOperationsActive, inBiliOper
 import { normalizeDouyinBridgeUrl } from '../core/platforms/douyin/douyinSource';
 import { DouyinRoomControl } from './douyinRoomControl';
 import type { RoomControlSnapshot } from '../shared/roomControl';
-import { agentReady, asr, broadcast, cookie, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, sessionTools, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, queryServiceStatus, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { agentReady, asr, broadcast, cookie, course, courseContext, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, sessionTools, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, queryServiceStatus, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
@@ -115,6 +115,7 @@ function makeState(roomControl: DouyinRoomControl) {
   return {
     ok: true,
     show: show.status(),
+    course: course.view(),
     broadcast: broadcast.status(),
     settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined, sessionContext: undefined },
     runtime: { localRehearsal, ttsBackend: settings.tts.backend },
@@ -277,6 +278,18 @@ function cancelNativeQueryTurn(lease: QueryTurn): void {
 }
 
 export function apply(ctx: HostContext): void {
+  const currentCourseContext = () => {
+    const sessionId = show.currentSession;
+    if (!show.isOnAir || !sessionId || !sessionTools.verify?.(sessionId).bound) return null;
+    const snapshot = snapshotForSession(sessionId);
+    if (!snapshot || snapshot.sessionId !== sessionId) return null;
+    return { sessionId, roots: snapshot.rootBindings };
+  };
+  courseContext.current = currentCourseContext;
+  ctx.effect(() => () => {
+    if (courseContext.current === currentCourseContext) courseContext.current = () => null;
+    course.end();
+  }, 'dsh-livestream course context');
   const roomControl = new DouyinRoomControl(dataDir);
   const roomControlSnapshot = () => makeRoomControlSnapshot(roomControl);
   const state = () => makeState(roomControl);
@@ -492,6 +505,27 @@ export function apply(ctx: HostContext): void {
     if (!result.ok) return json({ ok: false, error: result.note ?? '暂时不能重查' }, 429);
     return json(state());
   }, 'session context recheck');
+
+  route('/api/dsh-livestream/course', ['POST'], async (request) => {
+    const input = await controlBody<{ action?: unknown; rootId?: unknown; path?: unknown; index?: unknown }>(request);
+    if (!input || typeof input.action !== 'string') return fail('课程请求无效');
+    try {
+      if (input.action === 'load') {
+        if (typeof input.rootId !== 'string' || typeof input.path !== 'string') return fail('请选择资料根和课件路径');
+        await course.load(input.rootId, input.path);
+      } else if (input.action === 'end') {
+        course.end();
+      } else if (input.action === 'start' || input.action === 'pause' || input.action === 'resume' || input.action === 'reset' || input.action === 'step') {
+        if (input.action === 'step' && typeof input.index !== 'number') return fail('课程步骤无效');
+        await course.command(input.action, input.index as number | undefined);
+      } else {
+        return fail('课程操作无效');
+      }
+      return json(state());
+    } catch {
+      return fail('课程操作未完成，请检查会话、课件和舞台状态', 409);
+    }
+  }, 'course');
 
   // FEAT-006：控制台显式新会话（管理路径）；输入仅 {workspaceId?}
   route('/api/dsh-livestream/sessions', ['POST'], async (request) => {

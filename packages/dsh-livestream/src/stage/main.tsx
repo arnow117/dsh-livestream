@@ -9,7 +9,7 @@ import { arrange, type Mode, type Slot } from './layout';
 import type { WidgetType } from './protocol';
 import { assetUrl, connect, preview, unlockAudio } from './store';
 import { Effects } from './effects';
-import { AiLabel, Alerts, Board, Character, Chat, Game, Notice, Orders, Reply, Rice, Scene, Status, Subtitle, SUBTITLE_LINGER_MS, Terminal, useLinger, useStage, Video } from './widgets';
+import { AiLabel, Alerts, Board, Character, Chat, Course, Game, Notice, Orders, Reply, Rice, Scene, Status, Subtitle, SUBTITLE_LINGER_MS, Terminal, useLinger, useStage, Video } from './widgets';
 
 const WIDGETS: Record<WidgetType, React.ComponentType<{ options?: Record<string, unknown> }>> = {
   character: Character,
@@ -26,6 +26,7 @@ const WIDGETS: Record<WidgetType, React.ComponentType<{ options?: Record<string,
   video: Video,
   board: Board,
   game: Game,
+  course: Course,
   orders: Orders,
 };
 
@@ -67,9 +68,9 @@ function holePath(s: Slot, cw: number, ch: number): string {
 }
 
 function App() {
-  const { template, needsClick, media, game, line } = useStage();
+  const { template, needsClick, media, game, course, line } = useStage();
   // 玩游戏的时候放视频：视频照放（游戏画面让给视频）
-  const mode: Mode = media ? 'video' : game ? 'game' : 'chat';
+  const mode: Mode = course ? 'course' : media ? 'video' : game ? 'game' : 'chat';
   const slots = useMemo(() => (template ? arrange(template, mode) : []), [template, mode]);
   // 字幕和终端摆在同一块（看视频、玩游戏的布局）：她说话时（和字幕退场那一会儿）只露字幕，说完换回终端
   const [speaking] = useLinger(line, SUBTITLE_LINGER_MS);

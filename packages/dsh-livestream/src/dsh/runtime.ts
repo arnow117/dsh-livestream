@@ -24,6 +24,9 @@ import { Broadcast } from '../body/broadcast';
 import { DmManager } from '../body/dm';
 import { Packs } from '../body/packs';
 import { StageServer } from '../body/server';
+import { CourseController } from '../body/course/controller';
+import type { DirectoryBinding } from './sessionContextPaths';
+import type { CourseFrame } from '../shared/course';
 import { canSpeak, subtitleTimeline, synthesize, type TtsAuth } from '../body/tts';
 import { synthesizeMacos } from '../body/macosTts';
 import { synthesizeYovoice } from '../body/yovoiceTts';
@@ -364,6 +367,33 @@ export const show = new LiveShow(
   },
   { dataDir, names: currentCharacter()?.names ?? [], idleAfterMs: () => settings.idleAfterSec * 1000, pace: () => ownerPace(settings.pace), board: currentBoard, title: () => settings.liveTitle, gameChatGapMs: () => (settings.gameChatGapSec ?? 15) * 1000, blocked: (uid) => settings.blocked.some((b) => b.uid === uid) },
 );
+
+export const courseContext: {
+  current(): { sessionId: string; roots: Array<{ rootId: string; binding: DirectoryBinding }> } | null;
+} = { current: () => null };
+
+export const courseTools: {
+  activate(sessionId: string): boolean;
+  deactivate(sessionId: string): void;
+} = { activate: () => false, deactivate: () => {} };
+
+export const course = new CourseController({
+  current: () => courseContext.current(),
+  publish: (event) => show.stage.broadcast(event),
+  speakers: () => {
+    const counts = show.stage.outputCapabilities();
+    return counts.capableSpeakers === 1 && counts.legacySpeakers === 0 ? 1 : 0;
+  },
+  activate: (sessionId) => courseTools.activate(sessionId),
+  deactivate: (sessionId) => courseTools.deactivate(sessionId),
+});
+show.onCourseEnd = () => course.end();
+show.course = course;
+show.stage.onOutputChange(() => course.invalidateOutput());
+show.stage.onSpeakerChange(() => {
+  const counts = show.stage.outputCapabilities();
+  if (counts.capableSpeakers !== 1 || counts.legacySpeakers !== 0) course.markUnknown();
+});
 show.setPlatform(settings.livePlatform);
 
 /**
@@ -466,6 +496,19 @@ export const server = new StageServer({
   packageDir: packageDir(),
   packs,
   stage: show.stage,
+  courseAssets: () => course.assets,
+  courseReport: (value) => {
+    const speakers = show.stage.outputCapabilities();
+    if (speakers.capableSpeakers !== 1 || speakers.legacySpeakers !== 0) return false;
+    if (!value || typeof value !== 'object') return false;
+    const report = value as { epoch?: unknown; frame?: unknown; commandId?: unknown; watcherId?: unknown; instance?: unknown; sequence?: unknown };
+    if (typeof report.epoch !== 'string' || report.epoch.length > 128
+      || typeof report.watcherId !== 'string' || !show.stage.isSpeaker(report.watcherId)
+      || typeof report.instance !== 'string' || report.instance.length > 128
+      || typeof report.sequence !== 'number' || !Number.isSafeInteger(report.sequence) || report.sequence < 1
+      || (report.commandId !== undefined && (typeof report.commandId !== 'string' || report.commandId.length > 128))) return false;
+    return course.report(report.epoch, report.frame as CourseFrame, report.commandId as string | undefined, report.instance, report.sequence);
+  },
   current: () => ({ character: settings.character, template: settings.template }),
   media: {
     source: (id) => show.player.source(id),

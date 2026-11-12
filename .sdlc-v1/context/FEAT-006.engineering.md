@@ -1161,3 +1161,8 @@ N2核实为非阻塞owner诊断展示问题：全部Skill来源关闭后重查�
 ### 2026-11-12 宿主 smoke 资源观察边界补充
 
 后续FEAT-007取证发现复用的hostA/B定义仅拦截fetch、未监控listen；本地安装烟测smoke-run-T1c8Z4BE保留的自有settings.json中stagePort同为7390。此前安装前/收尾lsof无监听及零共享请求是真实快照/计数，但不能外推为烟测运行期从未绑定该端口；相应“零触碰”概括不作为该边界证明。主Agent当前重新核对共享3080/3081/7390/8757无监听，没有停止或修改共享服务。安装文件/hash与功能smoke结果未因此变化，仍保留其实际功能覆盖；将以新自有数据、import前stagePort=0与进程内listen拒绝校验补跑实际安装包的必要加载/查询smoke，并明确单独结果。当前未冒称该补跑已通过，不重写历史日志。
+
+
+### 2026-11-12 主 Agent 核对受监听保护的安装版本回归
+
+实际安装lib保持批准源d70fcf9的12文件哈希。读取FEAT-007执行者的guarded-installed-v1原始host A/B日志与listen guard，20/25项及离线天气/搜索替身smoke通过，正式运行中三次监听均127.0.0.1:0、拒绝计数0；共享请求/外部请求0，当前共享端口无监听。证据路径/private/tmp/feat007-build-FzbVf5iu/guarded-installed-v1/与runner-manifest-supersedes4.json。工作区stage静态目录含课程WIP，因此该证据仅证明已安装批准lib的加载、会话/工具与查询回归，不声称整包静态字节仍等于d70fcf9；真实用户profile保持停止。接受本轮补证，保留较早历史监听可能性；没有重新安装、替换lib、改用户数据或重记发布。

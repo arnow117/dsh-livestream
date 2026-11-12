@@ -5,6 +5,7 @@
 
 import { OWNED_OUTPUT_PROTOCOL, type BrainState, type CharacterManifest, type GameSource, type GameStatus, type StageEvent, type StageLiveEvent, type StageOrder, type StageOutputOwner, type StageUser, type TemplateManifest } from './protocol';
 import { type FxEvent, giftTier, pick, triggersOf } from './triggers';
+import type { CourseCommand } from '../shared/course';
 
 export interface ChatRow {
   id: string;
@@ -146,6 +147,7 @@ export interface StageState {
   game: GameSource | null;
   /** 游戏画面上那一行「她在干嘛」 */
   gameStatus: GameStatus | null;
+  course: { epoch: string; url: string; command?: CourseCommand } | null;
 }
 
 const MAX_CHATS = 30;
@@ -207,7 +209,7 @@ function startUpdating(): void {
 let state: StageState = {
   connected: false, character: null, template: null, brain: 'off', brainDetail: '', line: null, lineEndedAt: 0,
   chats: [], alerts: [], focus: new Set(), reply: [], replySeq: 0, onAir: false, needsClick: false,
-  phase: wasUpdating() ? 'updating' : 'waiting', stats: freshStats(), tokens: 0, model: '', term: [], media: null, board: '', orders: [], notice: '', game: null, gameStatus: null, fx: [], reaction: null,
+  phase: wasUpdating() ? 'updating' : 'waiting', stats: freshStats(), tokens: 0, model: '', term: [], media: null, board: '', orders: [], notice: '', game: null, gameStatus: null, course: null, fx: [], reaction: null,
 };
 const subscribers = new Set<() => void>();
 
@@ -231,6 +233,8 @@ const params = new URLSearchParams(location.search);
 export const token = params.get('token') ?? '';
 /** 控制台里的预览：静音、不回执 */
 export const preview = params.get('preview') === '1';
+let watcherId = '';
+export function currentWatcherId(): string { return watcherId; }
 /** 控制台里刚换了主题：预览页演示一遍开场动画和直播中的样子（只在预览页、没在播的时候） */
 const demo = preview && params.has('demo');
 
@@ -243,13 +247,17 @@ let audio: HTMLAudioElement | null = null;
 let audioLine: string | null = null;
 let pendingClick: (() => void) | null = null;
 
-function said(id: string): void {
-  if (!preview) void fetch(`/said?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`, { method: 'POST' }).catch(() => {});
+function said(id: string, audioEnded = false): void {
+  if (!preview) void fetch(`/said?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}${audioEnded ? `&audio=ended&watcher=${encodeURIComponent(watcherId)}` : ''}`, { method: 'POST' }).catch(() => {});
 }
 
-function endLine(id: string): void {
+function audioError(id: string): void {
+  if (!preview) void fetch(`/audio?id=${encodeURIComponent(id)}&state=error&token=${encodeURIComponent(token)}&watcher=${encodeURIComponent(watcherId)}`, { method: 'POST' }).catch(() => {});
+}
+
+function endLine(id: string, audioEnded = false): void {
   update((s) => (s.line?.id === id ? { ...s, line: null, lineEndedAt: Date.now() } : s));
-  said(id);
+  said(id, audioEnded);
 }
 
 interface PendingOwned {
@@ -319,14 +327,15 @@ function onOwnedSay(event: Extract<StageEvent, { type: 'say' }> & { owner: Stage
     begin(Number.isFinite(player.duration) ? player.duration * 1000 : event.estimateMs);
   };
   player.onended = () => {
-    if (pending.started || valid()) endLine(event.id);
+    if (pending.started || valid()) endLine(event.id, pending.started && valid());
     if (pendingOwned === pending) pendingOwned = null;
   };
-  player.onerror = fallback;
+  player.onerror = () => { audioError(event.id); fallback(); };
   player.play().catch(() => {
     if (!valid()) return;
     update((s) => ({ ...s, needsClick: true }));
     pendingClick = () => { if (valid()) update((s) => ({ ...s, needsClick: false })); };
+    audioError(event.id);
     fallback();
   });
 }
@@ -341,15 +350,18 @@ function onSay(event: Extract<StageEvent, { type: 'say' }>): void {
   };
   if (!event.audio || preview) return fallback();
   const player = new Audio(`data:audio/mpeg;base64,${event.audio}`);
+  let started = false;
   audio = player;
   audioLine = event.id;
   player.onloadedmetadata = () => begin(Number.isFinite(player.duration) ? player.duration * 1000 : event.estimateMs);
-  player.onended = () => endLine(event.id);
-  player.onerror = fallback;
+  player.onplaying = () => { started = true; };
+  player.onended = () => endLine(event.id, started);
+  player.onerror = () => { audioError(event.id); fallback(); };
   player.play().catch(() => {
     // 普通浏览器标签页没交互过不让出声（OBS 的浏览器源可以）：先按字数走，提示点一下
     update((s) => ({ ...s, needsClick: true }));
     pendingClick = () => update((s) => ({ ...s, needsClick: false }));
+    audioError(event.id);
     fallback();
   });
 }
@@ -575,6 +587,7 @@ function handle(event: StageEvent): void {
         return;
       }
       outputEpoch = event.outputEpoch ?? null;
+      watcherId = event.watcherId ?? '';
       pageBuild ??= event.build;
       helloAt = Date.now();
       update((s) => ({ ...s, connected: true, character: event.character, template: event.template }));
@@ -630,6 +643,10 @@ function handle(event: StageEvent): void {
     case 'notice': return update((s) => ({ ...s, notice: event.text }));
     case 'game': return update((s) => ({ ...s, game: event.source, ...(event.source ? {} : { gameStatus: null }) }));
     case 'gameStatus': return update((s) => ({ ...s, gameStatus: event.status }));
+    case 'course':
+      if (event.action === 'open') return update((s) => ({ ...s, course: { epoch: event.epoch, url: event.url } }));
+      if (event.action === 'close') return update((s) => s.course?.epoch === event.epoch ? { ...s, course: null } : s);
+      return update((s) => s.course?.epoch === event.epoch ? { ...s, course: { ...s.course, command: event.command } } : s);
     case 'note': return update((s) => term(s, event.tag, event.text));
   }
 }
@@ -668,6 +685,7 @@ export function connect(): void {
   if (state.phase === 'updating') setPhase('updating', { ms: UPDATING_MAX_MS, next: 'waiting' });
   connectionVersion++;
   outputEpoch = null;
+  watcherId = '';
   revokeOwned();
   activeSource?.close();
   const source = new EventSource(`/events?token=${encodeURIComponent(token)}&outputProtocol=${OWNED_OUTPUT_PROTOCOL}${preview ? '&preview=1' : ''}`);
@@ -684,6 +702,7 @@ export function connect(): void {
     if (source !== activeSource) return;
     connectionVersion++;
     outputEpoch = null;
+    watcherId = '';
     revokeOwned();
     update((s) => ({ ...s, connected: false }));
     // 直播中断线（插件在重启、在更新）：过一会儿还没接上就盖「更新中」

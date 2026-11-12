@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <title>课程舞台</title>
+  <style>html, body, iframe { width: 100%; height: 100%; margin: 0; border: 0; overflow: hidden; }</style>
+</head>
+<body>
+<iframe id="lesson" title="课件" allow="autoplay" referrerpolicy="no-referrer" tabindex="-1"></iframe>
+<script>
+(() => {
+  'use strict';
+  const lesson = document.getElementById('lesson');
+  let epoch = null;
+  let preview = false;
+  let probe = null;
+  let control = null;
+  const instance = crypto.randomUUID();
+  let sequence = 0;
+
+  function send(commandId) {
+    if (!probe || !epoch || preview) return;
+    try {
+      const frame = probe();
+      const doc = lesson.contentDocument;
+      const feedback = doc?.querySelector('.card.quiz .fb');
+      const choices = doc?.querySelectorAll('.card.quiz .opts .opt') ?? [];
+      const disabledChoices = Array.from(choices).flatMap((button, index) => button.disabled ? [index] : []);
+      frame.quiz = feedback ? {
+        result: feedback.classList.contains('ok') ? 'correct' : feedback.classList.contains('no') ? 'wrong' : 'pending',
+        disabledChoices,
+      } : null;
+      const left = doc?.querySelector('#left-arm');
+      const right = doc?.querySelector('#right-arm');
+      const force = doc?.querySelector('#force');
+      frame.lab = left && right && force ? {
+        left: Number(left.value), right: Number(right.value), force: Number(force.value),
+        balanced: !!doc.querySelector('.lab-result')?.textContent?.includes('平衡！'),
+      } : null;
+      parent.postMessage({ type: 'course-report', epoch, frame, instance, sequence: ++sequence, ...(commandId ? { commandId } : {}) }, location.origin);
+    } catch {
+      probe = null;
+      control = null;
+    }
+  }
+
+  lesson.addEventListener('load', () => {
+    try {
+      const win = lesson.contentWindow;
+      if (!win || win.location.origin !== location.origin) return;
+      // These are fixed probes into the authorized lesson realm. Input is never evaluated as code.
+      probe = win.eval('() => ({ index: P.i, id: BEATS[P.i].id, title: BEATS[P.i].title, playing: P.playing, waiting: P.waiting, done: P.done, generation: P.gen, steps: BEATS.map(b => ({ id: b.id, title: b.title })) })');
+      control = win.eval('(action, index) => { if (action === "play") { if (!P.started) hideCover(); setPlaying(true); } else if (action === "pause") setPlaying(false); else if (action === "seek") { hideCover(); seek(index, false); } else if (action === "reset") { hideCover(); seek(0, false); } }');
+      const frame = probe();
+      if (!Number.isInteger(frame.index) || !Array.isArray(win.eval('BEATS')) || win.eval('BEATS.length') !== 13) throw new Error('unsupported course');
+      send();
+    } catch {
+      probe = null;
+      control = null;
+    }
+  });
+
+  addEventListener('message', (event) => {
+    if (event.origin !== location.origin || event.source !== parent) return;
+    const message = event.data;
+    if (!message || typeof message !== 'object') return;
+    if (message.type === 'course-init') {
+      parent.postMessage({ type: 'course-bridge-ready' }, location.origin);
+    } else if (message.type === 'course-disconnect' && message.epoch === epoch && control) {
+      try { control('pause'); } catch { control = null; probe = null; }
+    } else if (message.type === 'course-open' && typeof message.epoch === 'string' && typeof message.url === 'string'
+      && /^\/course\/asset\/[A-Za-z0-9_-]{32}\/[A-Za-z0-9_./-]+\.html$/.test(message.url)
+      && !message.url.split('/').includes('..') && typeof message.preview === 'boolean') {
+      epoch = message.epoch;
+      preview = message.preview;
+      probe = null;
+      control = null;
+      lesson.src = message.url;
+    } else if (message.type === 'course-command' && message.epoch === epoch && !preview && control) {
+      const command = message.command;
+      if (!command || typeof command !== 'object' || typeof command.id !== 'string') return;
+      if (!['play', 'pause', 'seek', 'reset', 'read', 'apply'].includes(command.kind)) return;
+      if (command.kind === 'seek' && (!Number.isInteger(command.index) || command.index < 0 || command.index >= 13)) return;
+      try {
+        if (command.kind === 'apply') {
+          const frame = probe();
+          const doc = lesson.contentDocument;
+          const input = command.input;
+          if (!doc || !input || frame.generation !== command.generation || !frame.waiting || frame.done) return;
+          if (input.kind === 'param' && frame.id === 'lab') {
+            const id = input.which === 'left' ? 'left-arm' : input.which === 'right' ? 'right-arm' : input.which === 'force' ? 'force' : '';
+            const field = id && doc.getElementById(id);
+            if (!field || typeof input.value !== 'number' || !Number.isFinite(input.value)) return;
+            if ((input.which === 'force' && (input.unit !== 'N' || input.value < 10 || input.value > 100 || input.value % 5 !== 0))
+              || (input.which !== 'force' && (input.unit !== 'm' || input.value < 0.5 || input.value > 2.3 || Math.abs(input.value * 10 - Math.round(input.value * 10)) >= 1e-9))) return;
+            field.value = String(input.value);
+            field.dispatchEvent(new lesson.contentWindow.Event('input', { bubbles: true }));
+          } else if (input.kind === 'answer' && input.target === 'choice' && (frame.id === 'q1' || frame.id === 'q2')) {
+            const button = Number.isInteger(input.index) && input.index >= 0 && input.index <= 2 ? doc.querySelectorAll('.card.quiz .opts .opt')[input.index] : null;
+            if (!button || button.disabled) return;
+            button.click();
+          } else if (input.kind === 'answer' && input.target === 'blank' && frame.id === 'final1') {
+            const field = doc.querySelector('.card.quiz input.box');
+            const check = doc.querySelector('.card.quiz .acts button.btn');
+            if (!field || field.disabled || !check || check.hidden || typeof input.value !== 'string' || input.value.length > 32 || !/^-?\d+(?:\.\d+)?$|^-?\d+\/[1-9]\d*$/.test(input.value)) return;
+            field.value = input.value;
+            check.click();
+          } else return;
+        } else {
+          control(command.kind, command.index);
+        }
+        send(command.id);
+      } catch {
+        probe = null;
+        control = null;
+      }
+    }
+  });
+
+  setInterval(() => send(), 500);
+})();
+</script>
+</body>
+</html>

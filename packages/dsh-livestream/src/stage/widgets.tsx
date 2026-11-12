@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CharacterManifest, StageLiveEvent, StageOrder, StageUser } from './protocol';
-import { assetUrl, dropAlert, energy, riceOf, getState, litChars, mediaUrl, preview, reportMedia, subscribe, type Alert, type ReplyItem, type StageState } from './store';
+import { assetUrl, currentWatcherId, dropAlert, energy, riceOf, getState, litChars, mediaUrl, preview, reportMedia, subscribe, token, type Alert, type ReplyItem, type StageState } from './store';
 import { giftTier } from './triggers';
 
 export function useStage(): StageState {
@@ -488,6 +488,61 @@ export function Chat({ options }: { options?: Record<string, unknown> }) {
 }
 
 // ── 游戏画面 ─────────────────────────────────────────
+
+export function Course() {
+  const { course, connected } = useStage();
+  const frame = useRef<HTMLIFrameElement>(null);
+  const ready = useRef(false);
+
+  useEffect(() => {
+    ready.current = false;
+    if (!course) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== location.origin || event.source !== frame.current?.contentWindow) return;
+      const message = event.data;
+      if (!message || typeof message !== 'object') return;
+      if (message.type === 'course-bridge-ready') {
+        if (ready.current) return;
+        ready.current = true;
+        frame.current?.contentWindow?.postMessage({ type: 'course-open', epoch: course.epoch, url: course.url, preview }, location.origin);
+      } else if (message.type === 'course-report' && message.epoch === course.epoch && !preview) {
+        void fetch(`/course/report?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ epoch: message.epoch, frame: message.frame, commandId: message.commandId, instance: message.instance, sequence: message.sequence, watcherId: currentWatcherId() }),
+        }).catch(() => {});
+      }
+    };
+    addEventListener('message', onMessage);
+    return () => removeEventListener('message', onMessage);
+  }, [course?.epoch, course?.url]);
+
+  useEffect(() => {
+    if (!course?.command || !ready.current || preview) return;
+    frame.current?.contentWindow?.postMessage({ type: 'course-command', epoch: course.epoch, command: course.command }, location.origin);
+  }, [course?.epoch, course?.command]);
+
+  useEffect(() => {
+    if (!connected && course) frame.current?.contentWindow?.postMessage({ type: 'course-disconnect', epoch: course.epoch }, location.origin);
+  }, [connected, course?.epoch]);
+
+  if (!course) return null;
+  return (
+    <iframe
+      key={course.epoch}
+      ref={frame}
+      className="ls-course-frame"
+      title="课程画面"
+      src={`/course/bridge?token=${encodeURIComponent(token)}`}
+      allow="autoplay"
+      referrerPolicy="no-referrer"
+      onLoad={() => {
+        ready.current = false;
+        frame.current?.contentWindow?.postMessage({ type: 'course-init' }, location.origin);
+      }}
+    />
+  );
+}
 
 /**
  * 她在直播里玩的游戏的画面位。网页画面直接放在这里；游戏窗口（Minecraft 的摄像机客户端）由 OBS 抓来叠在这一块上，

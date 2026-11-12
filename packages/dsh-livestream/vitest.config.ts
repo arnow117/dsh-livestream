@@ -2,12 +2,14 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    exclude: ['test/e2e/**', 'test/e2e-douyin/**', 'test/e2e-query/**', 'test/e2e-session-context/**', '.e2e/**', '**/node_modules/**'],
+    exclude: ['test/e2e/**', 'test/e2e-douyin/**', 'test/e2e-query/**', 'test/e2e-session-context/**', 'test/e2e-course/**', '.e2e/**', '**/node_modules/**'],
     coverage: {
       provider: 'v8',
       reportsDirectory: 'coverage/feat-001',
       reporter: ['text', 'json', 'lcov'],
       include: [
+        'src/body/course/**/*.ts',
+        'src/shared/course.ts',
         'src/shared/ttsSettings.ts',
         'src/shared/readOnlyQuery.ts',
         'src/shared/sessionContext.ts',
@@ -16,6 +18,8 @@ export default defineConfig({
         'src/shared/biliOperations.ts',
         'src/core/live.ts',
         'src/stage/protocol.ts',
+        'src/stage/main.tsx',
+        'src/stage/layout.ts',
         'src/stage/store.ts',
         'src/stage/widgets.tsx',
         'src/stage/effects.tsx',

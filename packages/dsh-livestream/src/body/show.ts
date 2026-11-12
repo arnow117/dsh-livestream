@@ -136,6 +136,8 @@ const TURN_MAX_MS = 3 * 60_000;
 /** 推道别以后最多等多久就收工 */
 const ENDING_GRACE_MS = 90_000;
 const RECENT_LINES = 40;
+/** 课程期间保留已接收观众事件，避免订阅重连时重新处理。 */
+const COURSE_AUDIENCE_EVENT_LIMIT = 5000;
 /** 道别时给她看刚才说的最后几句：多久以内的、最多几句 */
 const JUST_SAID_MS = 2 * 60_000;
 const JUST_SAID_LINES = 4;
@@ -184,6 +186,10 @@ function whenNow(d: Date): string {
 }
 
 export class LiveShow {
+  onCourseEnd?: () => void;
+  course?: import('./course/controller').CourseController;
+  private readonly courseAudienceEvents = new Set<string>();
+  private courseAudienceLimitReported = false;
   readonly hub = new LiveHub();
   readonly stage = new Stage();
   /** 舞台上放视频（她用 play_video）：放完了告诉她 */
@@ -348,6 +354,18 @@ export class LiveShow {
 
   private observe(event: LiveEvent, isUpdate: boolean): void {
     if (this.isBlocked(event.user.id)) return;
+    if (this.course?.view() && (event.kind === 'chat' || event.kind === 'superchat')) {
+      const key = `${event.platform}:${event.id}`;
+      if (this.courseAudienceEvents.has(key)) return;
+      if (this.courseAudienceEvents.size >= COURSE_AUDIENCE_EVENT_LIMIT) {
+        if (!this.courseAudienceLimitReported) {
+          this.courseAudienceLimitReported = true;
+          this.hooks.log?.('warn', '课程观众事件去重已达到上限，请开始新的直播会话');
+        }
+        return;
+      }
+      this.courseAudienceEvents.add(key);
+    }
     const now = Date.now();
     this.attention.observe(event, isUpdate, now);
     // 只记自己直播间的观众（主人在控制台勾了的）；模拟观众（控制台彩排）不记
@@ -394,6 +412,9 @@ export class LiveShow {
   // ── 开播、下播 ─────────────────────────────────────
 
   private retireSession(): void {
+    this.onCourseEnd?.();
+    this.courseAudienceEvents.clear();
+    this.courseAudienceLimitReported = false;
     this.invalidateSession(false);
     if (this.endingTimer) clearTimeout(this.endingTimer);
     this.endingTimer = null;
@@ -428,7 +449,10 @@ export class LiveShow {
     this.retireSession();
     this.brainSession = sessionId;
     this.gameSession = gameSessionId ?? null;
-    if (this.onAir) return;
+    if (this.onAir) {
+      this.stage.setOutputEpoch(randomUUID());
+      return;
+    }
     this.resetGameLine();
     this.onAir = true;
     this.ending = false;
@@ -520,6 +544,7 @@ export class LiveShow {
   /** 下播：先让她道别，说完（或等太久）就收工 */
   endLive(): void {
     if (!this.onAir || this.ending) return;
+    this.onCourseEnd?.();
     this.ending = true;
     this.query = null;
     this.stage.setOutputEpoch(null);
@@ -767,7 +792,7 @@ export class LiveShow {
   private takeLive(now: number): Topic | null {
     const body = this.priority.shift();
     if (body) return { ...body, id: `p-${now}`, priority: 200, heat: this.attention.heat(now), createdAt: now };
-    const topic = this.attention.next(now);
+    const topic = this.nextAttention(now);
     return topic && topic.kind !== 'idle' ? topic : null;
   }
 
@@ -784,6 +809,18 @@ export class LiveShow {
     const generation = this.sessionGeneration;
     const identity = this.sessionIdentity;
     const ending = topic.kind === 'ending';
+    this.pushing = true;
+    try {
+      if (this.course?.view()) await this.course.prepareSpeech();
+    } catch {
+      if (generation === this.sessionGeneration) this.pushing = false;
+      this.hooks.log?.('warn', '课件旁白未确认暂停，本轮暂不开始');
+      return false;
+    }
+    if (generation !== this.sessionGeneration) {
+      this.course?.speechTurn?.end(false);
+      return false;
+    }
     this.seq += 1;
     const focus = focusOf(topic);
     if (focus.length) this.stage.broadcast({ type: 'focus', userIds: focus });
@@ -807,7 +844,6 @@ export class LiveShow {
       orders: this.gameSession ? this.orders.summary() || undefined : undefined,
     });
     const text = this.platform === 'douyin' ? `当前是抖音只读接入 / 本地舞台，不向抖音发送消息。\n${prompt}` : prompt;
-    this.pushing = true;
     if (ending) this.endingPushIdentity = identity;
     this.setBrain('thinking', topicLabel(topic));
     try {
@@ -817,6 +853,7 @@ export class LiveShow {
         : generation === this.sessionGeneration;
       if (!current) return false;
       if (!ok) {
+        this.course?.speechTurn?.end(false);
         // 她的会话不在线（DSH 重启过、会话被关了）：要紧的事放回去，等控制台重新开播
         if (topic.kind === 'opening' || topic.kind === 'ending' || topic.kind === 'owner') this.priority.unshift(topic);
         this.setBrain('away', '她的会话不在线');
@@ -848,13 +885,14 @@ export class LiveShow {
   }
 
   /** 她这一轮结束了：话念完以后导演再推下一件 */
-  turnEnded(sessionId: string): void {
+  turnEnded(sessionId: string, completed = true): void {
     if (sessionId === this.gameSession && sessionId !== this.brainSession) {
       this.gameTurnRunning = false;
       this.gameTurnEndedAt = Date.now();
       return;
     }
     if (sessionId !== this.brainSession) return;
+    this.course?.finishSpeechTurn(completed);
     this.turnRunning = false;
     this.turnEndedAt = Date.now();
     if (this.onAir && this.speaking === 0) this.setBrain('listening');
@@ -863,7 +901,7 @@ export class LiveShow {
   private take(now: number): Topic | null {
     const body = this.priority.shift();
     if (body) return { ...body, id: `p-${now}`, priority: 200, heat: this.attention.heat(now), createdAt: now };
-    const topic = this.attention.next(now);
+    const topic = this.nextAttention(now);
     // 弹幕、礼物这些照常先回；没别的事时，先说收件箱，再说在放的视频（不用她找话说）
     if (topic && topic.kind !== 'idle') return topic;
     if (this.inbox.length) {
@@ -872,6 +910,17 @@ export class LiveShow {
     }
     if (this.player.current) return this.watching(now);
     return topic;
+  }
+
+  private nextAttention(now: number): Topic | null {
+    if (!this.course?.view()) return this.attention.next(now);
+    const original = this.attention.owner;
+    this.attention.owner = { ...original, chatPicks: 1 };
+    try {
+      return this.attention.next(now);
+    } finally {
+      this.attention.owner = original;
+    }
   }
 
   /** 边看边聊：她安静一会儿了，视频又往下放了一段，这段有人说话或者原视频有弹幕，就告诉她 */
@@ -920,11 +969,22 @@ export class LiveShow {
     const current = () => !owned || (owned.valid() && !owned.signal.aborted && this.onAir && !this.ending && this.stage.outputEpoch === owned.owner.epoch);
     // 嘴两条线共用、按先后念：游戏线的话一句不丢（死了、危险、拿到装备都在这里说）；直播线推下一件事时不等游戏线的话
     const game = line === 'game';
+    const preparedCourse = this.course?.prepareSpeech().then(
+      (turn) => ({ turn, finish: turn?.segment(), error: false }),
+      () => ({ turn: null, finish: undefined, error: true }),
+    );
     this.queued += 1;
     if (game) this.queuedGame += 1;
     return this.stage.withMic(async () => {
-      if (generation !== this.sessionGeneration) return '';
+      const prepared = await preparedCourse;
+      const speechTurn = prepared?.turn;
+      const finishCourseSegment = prepared?.finish;
+      if (generation !== this.sessionGeneration) {
+        finishCourseSegment?.('cancelled');
+        return '';
+      }
       if (!current()) {
+        finishCourseSegment?.('cancelled');
         this.queued -= 1;
         if (game) this.queuedGame -= 1;
         return '';
@@ -935,7 +995,12 @@ export class LiveShow {
       this.setBrain('speaking');
       const start = Date.now();
       let committed = false;
+      let audioResult: import('./stage').AudioResult = 'unknown';
       try {
+        if (prepared?.error) {
+          this.hooks.log?.('warn', '课件旁白未确认暂停，本句不会播放');
+          return '';
+        }
         let speech: { audio: Uint8Array; timeline: Array<{ chars: number; atMs: number }> } | null = null;
         // 合成一段平时不到 2 秒：一次最多等 SYNTH_TIMEOUT_MS，卡住了马上再试一次（实测豆包偶尔一个请求一直不回，等满两分钟直播就冷场了）
         for (let attempt = 1; attempt <= 2 && !speech && !signal.aborted; attempt++) {
@@ -945,10 +1010,11 @@ export class LiveShow {
             this.hooks.log?.('warn', `语音合成失败（第 ${attempt} 次）：${(err as Error).message}`);
           }
         }
-        if (!current()) return '';
+        if (!current() || (this.course && !this.course.allowsSpeech(speechTurn))) return '';
         const id = randomUUID();
         const estimateMs = estimateSpeechMs(text);
         const done = this.stage.waitSaid(id, estimateMs, signal);
+        const audioDone = speech ? this.stage.waitAudio(id, estimateMs, signal) : Promise.resolve('unknown' as const);
         this.stage.broadcast({
           type: 'say', id, text, mood, estimateMs,
           audio: speech ? Buffer.from(speech.audio).toString('base64') : null,
@@ -957,7 +1023,9 @@ export class LiveShow {
         });
         committed = true;
         await done;
+        audioResult = await audioDone;
       } finally {
+        finishCourseSegment?.(audioResult);
         this.activeSpeech -= 1;
         if (generation === this.sessionGeneration) {
           this.speaking -= 1;
@@ -985,10 +1053,21 @@ export class LiveShow {
     const text = speakable(raw);
     if (!text || !this.onAir) return '';
     const generation = this.sessionGeneration;
+    let committed = false;
     this.queued += 1;
     try {
       await this.stage.withMic(async () => {
         if (generation !== this.sessionGeneration) return;
+        const previousTurn = this.course?.speechTurn;
+        let courseTurn;
+        try {
+          courseTurn = await this.course?.prepareSpeech();
+        } catch {
+          this.hooks.log?.('warn', '课件旁白未确认暂停，嘉宾本句不会播放');
+          return;
+        }
+        const finishCourseSegment = courseTurn?.segment();
+        let audioResult: import('./stage').AudioResult = 'unknown';
         this.activeSpeech += 1;
         try {
           const start = Date.now();
@@ -999,24 +1078,30 @@ export class LiveShow {
               return null;
             });
           }
+          if (this.course && !this.course.allowsSpeech(courseTurn)) return;
           const id = randomUUID();
           const estimateMs = estimateSpeechMs(text);
           const done = this.stage.waitSaid(id, estimateMs, signal);
+          const audioDone = speech ? this.stage.waitAudio(id, estimateMs, signal) : Promise.resolve('unknown' as const);
           this.stage.broadcast({
             type: 'say', id, text, mood: '', estimateMs, speaker: who,
             audio: speech ? Buffer.from(speech.audio).toString('base64') : null,
             ...(speech?.timeline.length ? { timeline: speech.timeline } : {}),
           });
+          committed = true;
           await done;
+          audioResult = await audioDone;
           if (generation === this.sessionGeneration) this.record({ type: 'guest', who, text, start, end: Date.now() });
         } finally {
+          finishCourseSegment?.(audioResult);
+          if (courseTurn && !previousTurn) courseTurn.end(true);
           this.activeSpeech -= 1;
         }
       });
     } finally {
       if (generation === this.sessionGeneration) this.queued -= 1;
     }
-    if (generation !== this.sessionGeneration) return '';
+    if (generation !== this.sessionGeneration || !committed) return '';
     this.ownerSay(raw, who);
     return text;
   }
@@ -1243,6 +1328,7 @@ export class LiveShow {
 
   /** 插件停了（多半是 DSH 重启、更新）：在播的这一场不收尾，存好，起来以后接着播 */
   dispose(): void {
+    this.onCourseEnd?.();
     if (this.onAir && !this.ending) {
       this.persistLive();
       this.record({ type: 'suspend' });

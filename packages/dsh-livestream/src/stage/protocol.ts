@@ -10,6 +10,8 @@
 export const STAGE_PROTOCOL = 1;
 export const OWNED_OUTPUT_PROTOCOL = 'owned-live-v1';
 
+import type { CourseStageEvent } from '../shared/course';
+
 export interface StageOutputOwner {
   epoch: string;
   turn: string;
@@ -110,7 +112,7 @@ export type EffectSpec = string | { name: string; ms?: number; [option: string]:
  * game：她在玩的游戏的画面位（她在直播里玩游戏时才有）：网页画面直接放这里；游戏窗口由 OBS 抓来叠在这一块上
  * effects：整屏特效层：进场、礼物、上舰时放的彩带、横幅……（放在画布 0,0，宽高和画布一样，排在 scene 前面）
  */
-export type WidgetType = 'character' | 'subtitle' | 'chat' | 'alerts' | 'status' | 'ai-label' | 'reply' | 'rice' | 'terminal' | 'scene' | 'video' | 'effects' | 'board' | 'game' | 'orders';
+export type WidgetType = 'character' | 'subtitle' | 'chat' | 'alerts' | 'status' | 'ai-label' | 'reply' | 'rice' | 'terminal' | 'scene' | 'video' | 'effects' | 'board' | 'game' | 'course' | 'orders';
 
 /** 点单栏的一行（见 core/orders） */
 export interface StageOrder {
@@ -171,8 +173,9 @@ export type StageLiveEvent = (
 export type BrainState = 'off' | 'listening' | 'thinking' | 'speaking' | 'away';
 
 export type StageEvent =
+  | (CourseStageEvent & { v: 1; at: number })
   /** build：舞台页代码的版本（插件更新后变）；连上时先发 */
-  | { v: 1; type: 'hello'; character: CharacterManifest; template: TemplateManifest; build?: string; outputEpoch?: string | null; at: number }
+  | { v: 1; type: 'hello'; character: CharacterManifest; template: TemplateManifest; build?: string; outputEpoch?: string | null; watcherId?: string; at: number }
   /**
    * 她说一句话。timeline：逐字时间（音频里的毫秒 → 亮到第几个字），字幕按实际播放位置走；
    * 没有时（没语音、旧版身体）按 estimateMs 匀速走

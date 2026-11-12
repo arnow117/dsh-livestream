@@ -913,3 +913,10 @@ html, body {
   box-shadow: inset 0 0 120px 30px color-mix(in srgb, var(--c) 70%, transparent), inset 0 0 0 8px color-mix(in srgb, var(--c) 55%, transparent);
   animation: ls-glow-pulse var(--ls-fx-ms) ease-in-out both; }
 @keyframes ls-glow-pulse { 0% { opacity: 0; } 20% { opacity: 1; } 45% { opacity: 0.55; } 65% { opacity: 1; } 100% { opacity: 0; } }
+.ls-course-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  pointer-events: none;
+}

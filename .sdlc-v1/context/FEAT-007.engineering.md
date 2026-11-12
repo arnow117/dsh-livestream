@@ -65,6 +65,12 @@
 
 在同一监听保护下，对已安装批准源d70fcf9的只读实际包路径补一次必要宿主加载/查询烟测，校正旧本地交付的资源观察边界；不得构建/替换安装lib，结果另标“已安装版本回归”，不能抵扣FEAT-007候选验证。该检查沿用已有交付授权与同一guarded runner，无需新Agent/环境。真实模型/TTS/正式音频对齐/观众预算仍0；③④⑤分层缺口如实保持。已完成任务允许的单个字幕边框旧样式不属本Task，保持原样，不作为阻塞或另起视觉改造。
 
+#### 2026-11-12 最终 Build 接收时的实现参数
+
+主Agent核对实际共享DTO与实现：未加载/已结束课程以course=null表示，有效课程phase为loading/ready/playing/paused；舞台事件沿既有v1 envelope加性扩展，owner新API不落盘，不另引持久化版本。共享字段以src/shared/course.ts为权威，本文早期示例中的idle/ended枚举由上述null表达。CourseTurns保留最多100项turn；同一直播会话的课程观众事件去重最多5000项，满额拒绝新课程观众事件并提示新会话，退役会话清除，普通无课程交互保持；参数来源与使用说明已同步。该有限预算为原Plan允许的资源细化，不新增投票/冷却玩法。
+
+本轮验证使用已列SHA绑定的隔离runner适配：声音/抖音fixture增加外网拒绝和计数、启动器显式导入listen guard，查询升级fixture改为固定自有代理+动态后端以符合监听约束并传播SSE断流；生产源码和测试断言未被替换。原始candidate与overlay差异必须在独立Validate明确核对，不能声称未经适配的runner字节相同。新稳定入口e2e-course.config.ts、test/e2e-course与stage/course-bridge.html构成project.md后续定向刷新候选；Build结果的project_candidates=[]不外推为仓库事实无变化，发布前由指定文档writer核实维护导航。
+
 #### 背景
 
 以下事实经本轮只读核实（读法见基线说明；lever-lab 资产在兄弟工作区按实际文件只读读取），均为静态事实、不是运行通过证据。`src/` 均指 `packages/dsh-livestream/src/`。
@@ -352,6 +358,27 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 
 ## 实现记录（实际）
 
+### 2026-11-12 T001 宿主隔离恢复与最终 Build 证据
+
+- 工作区 `codex/macos-yovoice`、HEAD `4cfc184ef422020457bf2484417f1eefa2934a6c`，业务与差异覆盖基线 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`。源码与测试为未提交候选；先前阶段增量 `.../.e2e/feat-007-build-real-desktop-r3/` 已报告，不能代替最终结果。此前 7390 监听边界事件保留在下方历史记录，本轮使用已裁定的隔离方法重新取证。
+- 追加修正：主人暂停或选步后尚未继续时拒绝观众状态变更；从课件回读禁用选项和正确结果，拒绝重复错误选项及已完成题的再次作答；保留会话内有界的课程观众事件 ID，防止断订阅后重连重放；在播会话切换后建立新的输出 epoch。课程事件去重上限为每会话 5000 条，达到后保守拒绝新课程观众消息并记录提示；新会话清除，普通无课程互动不受限制。
+- TDD 反例先观察到：主人暂停或初始未播放仍发出调参命令、正确题仍显示开放、旧消息 ID 重连后再次显示、在播切换会话的输出 epoch 为 null；针对各自反例修正后均通过。既有查询窄屏 runner 首次因守卫环境变量被启动器清除而未启动；显式绑定后发现原升级 fixture 会重复绑定旧端口，改成稳定代理与动态后端；代理未转发流中断的反例修正后，原重连和升级断言均通过。失败轨迹保留在本 Task 的隔离 `.e2e/feat-007-guarded-query-*` 产物中。
+- 隔离副本 `tsc -p tsconfig.json`、`node build.mjs` 及四 bundle／host index 依赖边界检查 exit 0。`vitest run --coverage --exclude test/macosTts.test.ts --coverage.reportsDirectory coverage/feat-007-build-final4` exit 0：96 文件、697 通过、9 跳过。9 项中 1 项真实资产条件用例已以 `FEAT007_REAL_ASSET_ROOT=... vitest run test/courseAssets.test.ts -t 'serves the real authorized asset bytes'` 独立通过；另有既有 attention 2 项和 decode 6 项跳过。两项真实 OS 语音因整个文件排除为 NOT_RUN。差异覆盖对 d70fcf9：行 917/1099（83.44%）、分支 579/686（84.40%），exit 0。
+- Web 证据：`e2e run --config e2e-course.config.ts --target desktop|narrow` 分别 exit 0；真实课件桌面旅程 `.../.e2e/feat-007-final-v6-real/` exit 0，包含 7 项资源源字节/hash、两个选择题、错误及重复答案拒绝、填空、30 N 平衡与力臂调参回读。声音设置、抖音、查询、会话配置四套既有 E2E 的 desktop 与 narrow 均在最终生产源码上通过。真实课件旅程以可见舞台承载，不代替正式全屏或音频对齐证据。测试产物的实例资产凭据已脱敏。
+- 宿主监听守卫先用三项不触达 OS 的负例验证；正式候选宿主 A/B 使用新数据与 import 前 `stagePort=0`，分别 31/27 项通过，真实 stage 的同一当前凭据允许资产字节读取、对真实 owner API 返回 401 且课程状态不变；在播切换到第二个真实管理会话后旧资源 404、新 epoch 与独占工具可用；新进程在新端口对旧资源返回空正文 404。五阶段 SC-002 分别 24/12/18/19/25 项通过。监听与请求 guard 的意外拒绝、共享请求、外部请求均为 0；退出后记录的动态端口均无残留。
+- 已安装 d70fcf9 `lib` 的只读宿主 A/B 分别 20/25 项通过，离线天气／公开资料查询替身 smoke 通过；12 个 `lib` 文件与批准制品逐项哈希一致。该结果单列，不抵扣本候选。安装包的工作区舞台静态目录含本 Task WIP，故此 smoke 不声称整包静态内容仍为 d70fcf9。E2E CLI 为 app 预选动态 loopback 端口并传给 fixture；其 guard 仅允许该端口及其他 `127.0.0.1:0` 监听，宿主探针所有监听均从 0 分配。
+- 实际 runner、监听日志、命令与结果位于 `/private/tmp/feat007-build-FzbVf5iu/`；工作树、隔离 runner 和只读课件分别以同目录最终清单绑定。真实 GLM、正式音频对齐和独立真实观众层均未运行，按 SC-002③④⑤ 留待独立 Validate/Ship；专用屏幕全屏及同源可信课件限制保持。
+
+| 需求覆盖 | Build 证据及范围 |
+|---|---|
+| CRS-01、SCN-08/16/19 | `courseController`、`coursePanel`、`courseWidget` 与课程 E2E：加载、开始、暂停、继续、选步、重置、结束、状态未知；真实课件旅程复核画面与状态。 |
+| CRS-02、SCN-09/11/12 | `courseAction`、`courseAssets` 与真实课件 E2E：题目原判定、禁用选项、30 N 平衡、范围/步长/单位/固定阻力和静态权限。 |
+| CRS-03、SCN-11/12/13 | `courseTurns`、`courseController` 与课程 E2E：真实 native turn 单项动作、不同观众的待处理竞争、主人切步优先；未选消息不承诺处理。 |
+| CRS-04、SCN-09/10/13/16 | `courseController` 和真实课件 E2E：错误可重答、已关闭题拒绝、旧 attempt/重开/主人操作后的迟到动作不污染当前状态。 |
+| CRS-05、SCN-10/13–17 | `courseLifecycle` 的受控合成屏障与课程 E2E：暂停、切步、重置、结束、断订阅、会话及目标切换后旧输出为零；独立查询在结束课程后仍可完成。 |
+| CRS-06、SCN-14/15 | `courseSpeech`、`courseAudio`、`courseLifecycle`：先确认暂停、完整真实 turn 与多段 ended 才恢复；错误、取消、超时、legacy、无/多 watcher 和 owner 操作保持暂停。 |
+| CRS-07、SCN-17/18/19/20 | `courseLifecycle`、宿主 A/B 和 SC-002：实例及输出撤销、仅断订阅保留课程、旧 ID 重连去重、新进程拒绝旧凭据；SCN-20 正式独立观众与全屏音画仍为外部验证缺口。 |
+
 ### 2026-11-12 T001 续建候选（未完成验收）
 
 - 工作区 `codex/macos-yovoice`、HEAD `0f8d0af65f9b67f0bfb7be2284a77910afa405de`，业务及差异覆盖基线仍为 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`。实现与测试保留为未提交 WIP；实现包括实例资产清单与撤销、课程控制器与受限工具、舞台 bridge、音频回执和控制台。根 README 与 macOS 示例增加课程使用说明。
@@ -377,6 +404,12 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 - **原Plan阶段状态（历史）**：当时仅新建工程上下文，未执行实现/测试；当前T001的部分实现与缺口以上方2026-11-12记录为准。
 - **实际改动与 Task 引用**：FEAT-007-T001 为计划 ID，尚未登记。源码核实全部只读：$REPO 侧用 `git show 7e72c8c:<path>`（读取 HEAD `c858712cab837ad68f20dd5fd2191a7fc0832da1`）；课件资产在兄弟工作区按实际文件只读读取。
 - **工作区事实**：开始时工作树存在 FEAT-006 修正段 WIP（10 个已跟踪修改 + 2 个未跟踪测试，集中于 `sessionContext*`/`agent.ts`/`index.ts`/`SessionContextSettingsPanel.tsx` 及其测试），属其他在跑 worker；本阶段未读取其 diff、未采用其内容、只写了本文件。
+
+### 2026-11-12 主 Agent 接受 T001 本地 Build
+
+完整候选38文件清单SHA-256为5eb3961ae4fd151475935b69a3c1b5a56c823139007cd402f6843b545528cd71，接收时逐项与工作树一致；runner清单逐项哈希无差异。主Agent读取关键资产/课程控制、受信任工具与生命周期接线、音频回执、usage变更和原始宿主/guard结果，核对31/27宿主检查、98项SC002、完整697/9及覆盖83.44%/84.40%、课程与回归Web证据。当前共享端口无监听、执行者无active/pending；源改动限T001范围，实际安装lib未改。接受T001的实现与当前规定①②本地Build条件，依请求通过CLI置done并提交集成候选；此接收不是独立Validate/Review或整个REQ-008验收。
+
+真实GLM、正式音频对齐、独立观众层SC-002③④⑤仍未执行，后续Validate必须对当前产品必需条件分别判断，不能因本地Build done将这些自动改成非阻塞PASS。独立验证将绑定提交后的业务候选，代码/测试/usage只读；必要条件受预算0限制时按实际归因返回而不冒称通过。旧宿主7390事件保持历史，guarded重验只修正本轮资源证据，不能证明历史从未监听。
 
 ## 验证记录（实际）
 

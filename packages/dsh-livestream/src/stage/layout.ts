@@ -4,10 +4,10 @@
 
 import type { LayoutPlacement, TemplateManifest, WidgetPlacement } from './protocol';
 
-export type Mode = 'chat' | 'video' | 'game';
+export type Mode = 'chat' | 'video' | 'game' | 'course';
 
 /** 聊天布局以外的布局 */
-const SPECIAL: Array<Exclude<Mode, 'chat'>> = ['video', 'game'];
+const SPECIAL: Array<Exclude<Mode, 'chat'>> = ['video', 'game', 'course'];
 
 export interface Slot extends WidgetPlacement {
   key: string;
@@ -25,6 +25,7 @@ function defaultVideoLayout(t: TemplateManifest): LayoutPlacement[] {
 /** 一种布局里写的位置；game 没写就借 video 的，视频的位置给游戏画面 */
 export function layoutOf(t: TemplateManifest, mode: Exclude<Mode, 'chat'>): LayoutPlacement[] {
   if (mode === 'video') return t.layouts?.video ?? defaultVideoLayout(t);
+  if (mode === 'course') return layoutOf(t, 'game').map((item) => item.type === 'game' ? { ...item, type: 'course' } : item);
   return t.layouts?.game ?? layoutOf(t, 'video').map((l) => (l.type === 'video' ? { ...l, type: 'game' as const } : l));
 }
 
