@@ -771,3 +771,46 @@ requested_transitions:
 主 Agent 实际核对 `/private/tmp/dsh-validate-0b38f9d-114156/repo` 的 312 个跟踪文件 Git blob 与候选 `0b38f9dfda7b6c2d0e6add27f47cb2c2a0d9b196` 全部一致；工作树只有两份允许的工程记录追加，无业务差异。原验证线程后台作业通知后的同线程续接已完成，最终 `logs/summary.txt`/`chain-final.txt` 给出各步骤 exit 0。实际日志确认 605 项相关单测、两基线差异覆盖率、四套 E2E、五阶段 98 项及 hostA20/hostB25 均通过，未检测到本任务残留进程。
 
 接受本候选统一独立验证和规范 `requested_transitions`，由 CLI 分别记录 FEAT-004/FEAT-006 pass。两条状态中的 `node test/live-query/run.mjs` 为实际执行的代表入口，完整检查链和本条会话验收证据以上表和原日志为准。排除的两项真实 macOS TTS、未执行完整 90 秒宽限、CLI 顶层包装及舞台/观众播放继续保持明确限制；不把测试替身或 finish 收束断言外推。下一步独立 Sol 对 2b107efc 以来 delta、R1～R8/N1 及受影响契约正式复审，不预判结果。
+
+
+### 正式Sol复审（2026-11-12，候选 0b38f9d，建议 changes_requested，待主 Sol 验收）
+
+本轮为新的独立正式评审执行者，自行串行采用 qa、security、architect、server-dev、client-dev 及相关 design 视角，未 spawn、nested delegate、Workflow 或创建新线程。运行时说明明确为 T3 Code / Codex harness / `gpt-6.1-sol` / `xhigh`；本轮没有单独 executedModel 或工具返回的 target/options 配置对象，未复用历史线程元数据冒充本轮实测。已读取根 AGENTS/soul/user、`sdlc-review`、role-routing/角色卡及相关证据/usage 协议、project、REQ-006/REQ-010、两 Feature 当前有效方案；目标和源码路径无更近 AGENTS.md。结论依据当前源码、原始 Validate 和本轮边界探针，不采用实现对话或“已修好”的自评。
+
+**入口与范围**：业务候选 `0b38f9dfda7b6c2d0e6add27f47cb2c2a0d9b196`，开始及落笔前 HEAD `a74683ff3eb6f824e15e8a29bbe5ecb4336beccd`，branch `codex/macos-yovoice`。实际 `git diff --quiet 0b38f9d..HEAD -- . ':(exclude).sdlc-v1/**'` exit 0、业务 `git status --porcelain --untracked-files=all -- . ':(exclude).sdlc-v1/**'` 为空；本 Feature state 为 validated/pass 且 validation.commit 是该候选，review pending。优先检查上次正式评审对象 `2b107efc1672b2d51aa8984ba45d5b88dd5484b3` 以来 delta、R1～R8/N1 与受影响链路，必要累计对照基线 `fd48d0a5d9a18a3759428c3286f28480630eeb9a`。
+
+**原始证据与实际命令**：引用上文「统一独立 Validate（候选 0b38f9d）」及 FEAT-004 同日记录，不重建验证表。已读 `/private/tmp/dsh-validate-0b38f9d-114156/run-validate.sh`、`verify-blobs.mjs`、`logs/{summary.txt,chain-final.txt,check.log,build.log,vitest.log,coveragediff-004.log,coveragediff-006.log,e2e-sc.log,e2e-voice.log,e2e-douyin.log,e2e-query.log,livequery.log,sc002-phase1.log,sc002-phase2.log,sc002-phase3.log,sc002-phase4.log,sc002-phase5.log,hostA.log,hostB.log}`，并定向读取 `sc002/{sc002-validate-rerun,host-journey-a,host-journey-b}.mjs`。日志支持既有检查链 exit 0、87 文件 605 pass/8 skip、两基线覆盖、四套 E2E、五阶段 98 检查及 hostA20/hostB25；宿主 A/B 含 '/' 401→launch-token 303→200 SPA、原生冷恢复首个 toolset 早于 onair、冻结正文与快照 mtime/size/hash 保持。312 blob 对候选一致为主 Agent 已核实的版本事实，本轮未机械重跑整套验证。
+
+实际执行了 `git diff 2b107efc..0b38f9d -- <相关生产文件>`、定向 `nl -ba`/`rg`，以及三次 `node --input-type=module` 内联最小探针（全部 exit 0）。探针用已安装 esbuild 将候选 `sessionContext.ts`/`sessionContextPaths.ts` 只读打包至自有临时目录，`./runtime` 通过显式 bundler 插件替换成仅 settings/show/hooks/dataDir 的数据替身，未 import 生产 runtime、启动服务/端口或请求外部。对照版本通过 `git show 2b107efc:...` 只读取源并在同样边界打包。仅临时 fixture 有 mkdir/write/rename/symlink；原始结果在 `/var/folders/zn/9h5xx7817g1byxssf2d_8k7w0000gn/T/dsh-sol-rereview-0b38f9d-YFL3r5/{probe-result,comparison-result,health-result}.json`，是探针原始输出，不是独立评审报告。三次均在秒内收束，没有实现/修补尝试，不消耗或重置主 Agent 已用的唯一诊断额度。
+
+**旧发现与正常/失败链路核对**：
+
+- R1 原 root 内中间段移出+symlink 换回的具体实例已被共享整链 walk/fd/读后核对处理；R3 原始 alias 在创建时不再参与来源解析，canonical 文件/目录绑定及直接 SKILL.md/一级容器发现规则可追踪。新整合同时引入下述 R9，以及独立新发现 R10/R11，不能据旧实例通过推定全部边界正确。
+- R2 的 stateView 对 invalid 与 legacy 区分，Console 初始 null 时禁止开始、加载/修正/轮询通过 host 更新，goLive:632 在 native create/preset select/broadcast/onair 前执行实际拒绝；按钮 disabled 为补充。结合真实组件原始证据和显式修正后的 managed POST，未发现本次守卫新回归。
+- R4 每次 read 返回、读后复核和 readMaterial 提交前检查组合 signal；首因按 `timeout.reason === deadlineSignal.reason` 分类，外部先取消、IO 收束前本地 deadline 也过期仍为 cancelled。R5 IO 前按剩余缓冲约束，实际已读量先结算捕获的原 turn budget，再分类；会话 inflight 独立，跨 turn 保持 busy 至真实 IO/close 收束。已核对实际 FileHandle.read 字节计数、取消后结算、跨 turn barrier 和首因回归原始测试/日志；512KiB 缓冲、32KiB 正文、单文件256KiB、4尝试/单在途/2秒保持。
+- R6 历史 loaded 与本 turn 已输出集合分离，首次完整冻结正文计量、重复 body 空，execute 返回短提示，output.render 原样交给 native 消息；新 native turn 在实际 pre-step 推进并重新计量，4次/128KiB 不变。现有单元和真实工具输出 E2E 断言支持，没有新重复正文证据。
+- R7 activeView 使用 show.isOnAir/currentSession 对应绑定，不依登记顺序；保存/准备/恢复不冒作 active。show.endLive 的既有 90秒道别与 finish 收束未被此次 delta 修改；原始测试的 endLive+finish 只证明收束后 null，不证明真实等待90秒。
+- R8 空来源在保存的 discoverSource 分支现为 not_found，合法 canonical 重复与失败保留旧记录有原始 IO/路由断言；owner 启动/显式重查仍有下述残余。N1 的旧同步 helper/无读取集合已删除，定向 `rg` 在 src/test 均未命中旧符号；删除未移除真实身份校验或串号拒绝，未扩成清理任务。
+- 旧权限链仍为 owner exact fetch → 原子 settings/revision → canonical snapshot 先落盘 → native create/resume 串行 agent/created 早绑定 → 真实首个 toolset → 每 step 实际 loader 组合检查 → 实际 execute/render；onair 仅核对 ready/platform/cwd。真实 ENOENT 才 legacy，坏快照/首装失败回滚、刷新永久锁定及双 preset 卸 A 后 B 保持均有当前原始 SC002 证据。只读核对实际 installed `@deepseek-ai/*@0.2.2-rc.1`，dsh-tools 类型的 private layers 与 lib registration.definition/chainLayers 语义匹配当前适配；缺结构拒绝/锁定路径保持，不仅因 private/any 宣告漏洞。cwd 预算、冻结 hash、index 无静态 agent 依赖、共享 bundle/runtime、平台及查询取消/归属未见本次回归。
+
+**必须修复发现（按严重度；均为独立源码与探针事实）**：
+
+1. **R9 / HIGH — 共用读取重新接受变化后的 canonical 根，资料可返回保存根外正文（本次引入）**。`packages/dsh-livestream/src/dsh/sessionContextPaths.ts:201`，关联 `:195-212`、`:258-267` 与 `sessionContext.ts:1299`。新的 helper 用每次 `realpath(rootPath)` 得到的当前地址作为授权边界，取消了旧资料路径的固定 canonical 根/verifyDirectory 检查；walk 只检查根本体及其以下路径。真实触发：绑定 parent/root 后把 parent 移到 moved-outside，在 parent 放指向 moved-outside 的 symlink，就地改写原 doc inode。root/末端 inode 都不变；独立 `verifyDirectory(root)` 已为 identity_mismatch，但实际 readMaterial 返回 `available` 和 `outside-after`，readBoundedFile 也 accepted=true。同样 fixture 的 2b107efc 返回 denied/零正文。违反 CFG-04、保存 canonical 绑定及 R1 共享整链边界合同。建议始终以保存/发现时固定的 canonical 根为边界，打开前后/读后核对它未改变；保留首次合法别名规范化（含 macOS /var）兼容，不能把访问时新 realpath 当重新授权。验证新增“根之上的祖先移动+symlink 换回、保留 root/末端 inode”的工具级零正文断言，并对共享 Skill helper 的调用边界核对同一规则。本轮在 runtime 替身边界直接调用候选 readMaterial 已复现，完整原生工具链未另跑；execute/render 直传该正文由静态调用链核对。不把直接 helper 的事实外推为已证明全部 Skill 生产调用可利用。
+
+2. **R10 / MEDIUM — 创建时把不同 canonical 文件的新同名冲突静默去重（本次引入）**。`packages/dsh-livestream/src/dsh/sessionContext.ts:395`。两个文件 a.md/b.md 在保存时分别 name:first/second；保存成功后把 b.md 改成 name:first。新的文件型创建分支只看 seenNames 就 continue，prepareSnapshot 返回 ok:true、仅 first、issues=[]；同一保存记录在 2b107efc 返回409“不同来源的 Skill 同名”。目录分支仍会通过 discoverSource:271 拒绝，因此来源形状/顺序改变了同一冲突合同。违反 CFG-02/03、创建时新冲突整体拒绝及合法 canonical 去重应与同名异源区分的设计。建议先按 canonical 文件去重，不同文件同名返回 conflict，并共用目录/文件的同名判定。验证保存后变更 name 的文件/目录混合两种顺序，确认 native create/onair 零调用；同一 canonical 重叠来源继续正常去重。
+
+3. **R11 / MEDIUM — 发现失败分支绕过 Skill 文件/总量预算（本次引入）**。`packages/dsh-livestream/src/dsh/sessionContext.ts:386`、`:424-435`。单文件 read 的 limit_exceeded 被转成“不可读”issue并继续；实测将已保存 b.md 增至65536字节以上，当前 prepareSnapshot 仍成功，旧版为409预算超限。另 discoverSource 会原地 push 已通过的前缀，遇后一个坏声明返回 invalid；调用方继续时跳过 totalBytes 结算，却保留已 push 定义。受控五个容器先各保存两个合法小声明，再各将 a.md 改成约60KB合法正文、b.md 改坏，当前创建成功，最终5份冻结正文合计300005字节（仅正文已大于262144原始总预算），issues=5；旧版在首个坏声明即409。违反既定每份64KiB/总256KiB预算及“预算超限整体拒绝、不保存部分超额候选”合同。建议单文件预算失败保持 limit_exceeded 分类，来源结果在纳入 snapshot 前明确暂存/结算，不能在失败 continue 上留下未计量正文；若允许保留合法部分，也必须按全部实际纳入定义计量。验证同时断言最终快照字节、失败分支预算和 native create零调用，不只看issue存在。
+
+4. **R8 残余 / MEDIUM — 已保存来源变空后，owner 重查仍显示 valid（原缺陷未完全处置）**。`packages/dsh-livestream/src/dsh/sessionContext.ts:623`，关联 `:582-600`。保存一个含 SKILL.md 的来源后删除该文件、保留空目录，实际 recheckSessionContext 返回 ok:true，stateView.health.entries[0].status 仍为 valid。该分支只确认目录存在/可读，不检查任何可发现声明，启动 refreshHealth 同样经过它。保存时的空来源拒绝已成立；此处保留的是原 R8 的健康状态义务，非否定该修正或重开已解决的保存分支。违反 CFG-01/03、SCN-03/06 和 R8 的空/仅references/scripts/缺SKILL.md 为not_found要求，使 owner 重查报告可用而下一次创建实际没有 Skill。建议健康重查以现有有界发现规则至少确认声明存在，不执行 Skill/脚本、不扩展来源；合法重复 canonical 仍应 valid。验证删除SKILL.md后的重查/启动、仅references/scripts与合法重复来源，核对 owner 实际状态与创建结果一致。
+
+**有界相关实例、工程债与可读性**：搜索限定两条读取 wrapper/共用原语及 readMaterial、两种 Skill 来源创建/保存/健康分支、实际工具 execute/render 与 owner 状态调用方。R9 在资料调用链确认，Skill 生产调用另有 verifyDirectory 预检，未据 helper 单独结果扩大结论；R10/R11 在新 canonical 单文件与容器分支出现，保存分支保留原有拒绝。新增 discoverSkillsFromBindings 与 discoverSource/原 discovery 的名称、失败和预算纪律已发生实际漂移，相关可避免重复规则的影响归入 R10/R11，不另按删行/风格增加阻塞项。除此之外，本次 diff 未发现有证据支持的重复实现或可避免工程债；代码保持正常缩进/JSX/逻辑分段，没有仅因长行或 any 要求无关重写。
+
+**usage / design 与限制**：README 的 LIVE-SESSION-CONTEXT/SKILL-LOAD/MATERIAL-READ → REQ-010 SCN → shared schema/owner参数/Mac指南 → 现有真实 Console/原生create-resume/文件读取证据可追踪；其“symlink零正文、同名异源拒绝、失效可核对”承诺仍受上述发现影响，正常旅程不抵扣失败链。UI 按 Operate 的状态、文字反馈和语义静态检查，引用最新桌面/375px E2E；Impeccable 可加载且文件可读，未启动 launcher/浏览器或完整 critique，不声称本轮独立渲染/键盘通过。两项真实macOS TTS、完整90秒真实道别计时、dsh web CLI顶层包装、实际舞台/正式观众播放未测；旧真实GLM仅等效引用，模型非确定性、1M容量与单独executedModel未知维持。无真实外部调用/共享服务/在用lib/用户Skill与资料修改。
+
+**结论与交接**：复审执行完整，原 R2/R4/R5/R6/R7/N1 处置及原 R1/R3 具体实例均有进展，但 R9～R11 为 delta 新回归、R8 健康状态残余未消除，故建议 FEAT-006 changes_requested；不以605项通过抵消这些独立可复现触发。发现批量交主 Sol 接收，不实现、不重新启动推测修补链，既有失败历史与诊断额度已用事实保持。`stage: review`、`status: awaiting_acceptance`；`project_candidates=[]`。只请求 `record-review --feature-id FEAT-006 --decision changes_requested --by sdlc-review-sol-0b38f9d-20261112`，未执行 lifecycle mutation、Git写入/推送、部署或宣称目标完成。
+
+### 2026-11-12 主 Agent 接受 0b38f9d 复审：R9/R10/R11 与 R8 残余
+
+主 Agent 核对当前读取 helper、canonical 来源合并与健康重查调用链，接受独立 Sol 的 FEAT-004 approved、FEAT-006 changes_requested 请求。R9 为本轮共同 helper 对根重新 realpath 定义边界的新回归；R10/R11 为创建时按来源分支合并的冲突及错误出口问题；R8 残余为健康重查仍只检查目录存在。以上均有新的明确因果证据，本次不重复打开无新证据的旧发现，不执行新的主 Agent 诊断实验。
+
+同一实现者按下列当前有效方案补充约束继续修正，保留此前失败历史和唯一主 Agent 诊断额度已用事实。旧候选独立 Validate 的通过只覆盖其实际场景；新的边界需要失败先行及对应零正文/原子合并/原生创建零调用/重查状态证据。FEAT-004 当前批准仍不独立发布，统一组合等待 FEAT-006 最终候选重建验证和复审。

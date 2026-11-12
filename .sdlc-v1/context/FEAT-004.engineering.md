@@ -363,3 +363,18 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 | 舞台/观众播放、真实服务全链路 | 不在本轮范围 | tts:0/合成 0；运行期观察项保持 |
 
 **收尾与状态请求**：进程零残留、共享端口零请求、副本产物保留于 `/private/tmp/dsh-validate-0b38f9d-114156/`；共享 checkout 收尾仅新增两条允许的工程记录。canonical `stage:validate`，`status:awaiting_acceptance`；`requested_transitions`＝请求 `record-validation --feature-id FEAT-004 --result pass --test-command "node test/live-query/run.mjs" --commit 0b38f9dfda7b6c2d0e6add27f47cb2c2a0d9b196`（完整命令列表见 FEAT-006.engineering.md 同日共享记录与本节）。`context_updates.project_candidates`＝[]。未执行任何 lifecycle mutation，不自称正式 review 或已发布。
+
+
+### 正式Sol复审（2026-11-12，候选 0b38f9d，建议 approved，待主 Sol 验收）
+
+本轮为新独立执行者，按 `sdlc-review` 与 role-routing 串行完成 qa、security、architect、server-dev、client-dev，用户可见部分补 design；未创建任何下级 Agent。运行时说明明确为 T3 Code / Codex harness / `gpt-6.1-sol` / `xhigh`，本轮没有单独的 `executedModel` 或工具返回的 target/options 配置对象，不从历史线程配置推断。只读核对根 AGENTS/soul/user、项目上下文、REQ-006/REQ-010、两 Feature 当前有效方案与最新统一独立 Validate；目标与源码范围未发现更近 AGENTS.md。
+
+**版本与范围**：业务候选 `0b38f9dfda7b6c2d0e6add27f47cb2c2a0d9b196`，开始及落笔前 HEAD `a74683ff3eb6f824e15e8a29bbe5ecb4336beccd`，分支 `codex/macos-yovoice`。实际 `git diff --quiet 0b38f9d..HEAD -- . ':(exclude).sdlc-v1/**'` exit 0，业务 `git status --porcelain --untracked-files=all -- . ':(exclude).sdlc-v1/**'` 为空；state 中本 Feature validated/pass 绑定该候选，review pending。优先审查 `2b107efc..0b38f9d` delta 与共享调用链，累计一致性基线仍为 `67d4df44e3c119b5a799029913cdef6c29c73aeb`。
+
+**契约与证据覆盖**：delta 的 agent.ts 仅改变 Skill 重复加载输出，console.tsx 增加 invalid 开始拒绝，sessionContext.ts 改路径发现、预算及 active；定向 `git diff --name-only 2b107efc..0b38f9d --` 对 queryTurns/queryCredential、body/readOnlyQuery/weather/weatherCache、shared 查询 DTO、test/live-query、test/e2e-query、cordis.patch.yml 均无输出。结合当前 Agent 的 query ownership/pre-step、可信原文 admission、工具 execute、assistant 接纳与原有 show/Stage 归属链核对，未见此次会话限制或 Skill 输出改变查询权限、平台隔离、取消、断订阅后新 owner turn 或晚到输出规则。宿主 index 仍只经 runtime 回调核对 ready；只读检索最新独立副本 lib/index.js 未命中 `@deepseek-ai/dsh-agent`/`dsh-tools`/`dsh-llm`，共享 bundle/runtime 边界保留。
+
+引用本文件「统一独立 Validate 重建（候选 0b38f9d）」及 FEAT-006 同日共享记录，不复制验证表。已实际读取 `/private/tmp/dsh-validate-0b38f9d-114156/run-validate.sh`、`logs/{summary.txt,chain-final.txt,check.log,build.log,vitest.log,coveragediff-004.log,coveragediff-006.log,e2e-sc.log,e2e-voice.log,e2e-douyin.log,e2e-query.log,livequery.log,hostA.log,hostB.log,sc002-phase1.log,sc002-phase2.log,sc002-phase3.log,sc002-phase4.log,sc002-phase5.log}`，并定向核对 sc002 原始脚本。原日志支持完整链各 STEP exit 0、605 pass/8 skip、查询 E2E 与离线原生两题；旧真实 GLM/来源样本仅按未变协议引用，未新增外部调用，不把模型遵循视为确定保证。
+
+**usage / design / 限制**：README 的 LIVE-QUERY-WEATHER/SEARCH/CONTROL → REQ-006 story → Mac 指南/shared schema/owner 配置 → 原生离线与实际 E2E 结果链一致；来源时间、limited、取消入口、静音预览及未部署范围没有被文档检查替代。UI 仅做静态状态/语义检查，引用现有桌面/375px E2E；Impeccable 在运行时目录可见且 SKILL.md 可读，本轮未启动其 launcher、浏览器或完整 critique，不声称独立渲染/键盘通过。两项真实 macOS TTS、完整 90 秒道别、dsh web CLI 顶层包装、实际舞台/正式观众播放仍未验证；1M 容量及单独 executedModel 未验证。
+
+**结论**：FEAT-004 没有新的必须修复项，建议 approved。FEAT-006 本轮 R9～R11 与 R8 残余统一记录在其工程上下文，不重复作为查询发现；既有查询的有据保留/延期项没有新的回归证据，不重新打开。本次 diff 未发现有证据支持的查询重复实现或可避免工程债。`project_candidates=[]`。仅请求 `record-review --feature-id FEAT-004 --decision approved --by sdlc-review-sol-0b38f9d-20261112`；未执行 mutation、Git 写入或部署。
