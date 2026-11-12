@@ -1134,3 +1134,25 @@ N2核实为非阻塞owner诊断展示问题：全部Skill来源关闭后重查�
 原GLM准备任务未进入打包，原始activity仅有读取soul/user与加载ship技能；最后provider错误为429/1308「已达到5小时使用上限，2026-11-12 19:01:53重置」。属于明确额度耗尽，按既有授权直接准备兜底，不把普通测试失败/网络异常当换模型理由。已task_cancel原任务（返回failed），thread实为failed/activeRunId=null/pendingRequestCount=0；目标Git干净、无所属artifact写入/测试进程，未触碰安装目录/lib。
 
 只读Terra探针成功：工具返回provider=codex、model=gpt-6.1-terra、reasoningEffort=xhigh，executedModel字段未返回保持未验证；两条git命令exit0，HEAD37d0416、实际分支codex/macos-yovoice、无修改。探针把brief中“branch/clean”简写误读为分支名，主Agent以原始命令输出核对分支与干净状态均符合，不将该文字误判视为环境冲突。替换执行者只接续原完整Ship准备/必要smoke，不自写state/Git、不操作共享目标。正式批准/验证仍绑定d70fcf9，记录不冒称发布已完成。
+
+
+### 2026-11-12 Ship 制品准备（待主 Agent 接收，尚未安装或发布）
+
+批准业务源 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`；本次 checkout `92a301967e4499e3c170f0b0896b4a85369f7398` 到业务源仅 SDLC 差异，两个 Feature 当前 reviewed、T001 done，正式 Validate 与 Sol Review 均绑定批准源。全新 `git archive` 副本按 Git blob 验证 312/312，既有依赖 APFS 克隆，无安装/联网；仅副本执行 `node build.mjs`，再经实际 `npm pack --help` 核对参数后以 `npm pack --ignore-scripts --json --pack-destination` 打包。产物 `/private/tmp/dsh-ship-d70fcf9-zuAaRTzv/artifact/package.tgz`，SHA-256 `7eda2d14de7b7957627db424c75593dd1f4b36841cc7b314ffd73de6012a9e4d`，模式 0444；55 个文件完整路径与逐项 SHA、npm 清单和命令/来源见同目录 `logs/{package-manifest.txt,package.sha256,npm-pack.json,blob-verification.log}` 及 `INSTALL-HANDOFF.md`。解包独立目录含四个 bundle、三个 JS chunk、五个 map；入口静态引用完整、host index 零 dsh-tools/dsh-llm、peer 及安装版 dsh/tools/llm 均为 0.2.2-rc.1。仅包含声明的 lib/stage/assets/README/cordis patch/license/package，无 env、凭据、测试或报告。
+
+新解包的实际编译 bundle + 真实安装 Harness 组件、全新隔离 DSH_HOME、动态端口：SC002 五阶段 98/98，两个独立进程 host A/B 45/45，均 exit 0；覆盖 owner 401/200/403、认证后静态 `/`、native create/早期工具绑定、冻结 Skill、允许资料/越界零内容、冷恢复与 onair，shared/external 请求均为 0。离线查询用新解包 `agent.js` 与共享 runtime chunk，fixture transport/weather、源代码测试 harness；weather_lookup 与 public_search 均完成，真实提供方/语音/播出为零，不把 fixture 代码称作交付 bundle。日志、原始 JSON、受控端口与命令见 `INSTALL-HANDOFF.md`；可重绑实际包路径的 `run-delivered-smoke.sh` 对解包目录通过。首次该 runner 的路径替换错误导致自有 phase1 未加载即失败，修正后全阶段通过，失败日志保留；未修改业务实现。
+
+实际 profile link 指向 checkout 包；当前 `lib` 为普通目录，旧 8 文件 SHA/type/owner 清单及 incoming 12 文件 SHA 清单见同目录 logs，旧产物来源 commit/known-good 未证实。43 个打包 non-lib 文件及 stage/assets 集合与候选相同。安装与恢复步骤、再次核对与独占前提、保留旧完整目录的两次 rename、失败恢复、实际安装路径 smoke 命令均在 `INSTALL-HANDOFF.md`；本执行者没有写目标、settings、profile、数据、状态或 Git。共享及本次探针监听端口退出后均未监听、任务 Node 进程为零。技术观察下次为主 Agent 完成实际安装后立即在自有宿主进行 smoke；当前尚无生产观测。产品结果观察引用 REQ-006 与 REQ-010 的“发布后观察计划”，尚未实际观察。真实 macOS TTS 两项、90 秒真实等待、CLI 顶层包装、真实舞台/音频/观众/live、真实 GLM 非确定性及 1M 容量未测；协作式截止不能抢占已发出的 OS IO，私有宿主注册结构升级需重验；N2 disabled Skill 健康行非阻塞待后续维护。`stage: ship` / `status: awaiting_acceptance` 指准备单元，实际安装与记录 release 由主 Agent 执行；`project_candidates=[]`、`requested_transitions=[]`。
+
+
+### 2026-11-12 主 Agent 接受 Ship 并完成本地安装
+
+批准源仍为 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`，正式 Validate/Review 与当前业务源码一致。接受上节准备单元。实际目标为父 Harness 的 `.dsh/profiles/web/node_modules/dsh-livestream` 所链接的 checkout 包；安装前核对制品 SHA-256 `7eda2d14de7b7957627db424c75593dd1f4b36841cc7b314ffd73de6012a9e4d`、43 个 non-lib 文件、静态集合、旧 lib 的 inode/type/owner/mode 与 8 文件哈希均一致；无活动 DSH 进程、匹配的 launch job、目标 lib 打开句柄或共享端口监听。
+
+08:04:22 UTC，主 Agent 在同文件系统复制并核验完整 12 文件 lib，再将旧 lib 改名为 `lib.previous-92a3019`、incoming 改名为 lib。保留旧目录及清单，旧产物来源 commit 与 known-good 状态仍未知；目录名只标识准备时 checkout，不声称旧版本经过验证。为避免备份进入源码提交，仅在本地 Git info/exclude 添加该备份目录的精确路径；未修改已跟踪构建配置。
+
+实际执行 `run-delivered-smoke.sh <实际包路径>` exit 0；SC002 24/12/18/19/25 合计 98/98、跨进程 hostA 20/20 + hostB 25/25、离线查询两题 failureCode=null、scopesDisposed=2、synthesis=0。再次实读探针 COPY 常量和 import，确认加载的是实际安装的 lib/index.js 与 lib/agent.js；安装后 12 文件哈希仍与制品相等。证据统一保留 `/private/tmp/dsh-ship-d70fcf9-zuAaRTzv/`：`logs/primary-{preflight,install,installed-acceptance}.json`、`smoke-run-T1c8Z4BE/logs/summary.txt` 与原始 JSON/日志。主 Agent 首次附加核对将模板 import 误当成字符串直拼而断言失败，实读 COPY 与 import 后修正该核对并通过；未重跑或改变产品，烟测始终通过。
+
+安装路径已由真实安装的 Harness 0.2.2-rc.1 在自有宿主实际加载并通过必要烟测，满足 project.md 声明的本地插件交付目标。08:06 UTC 收尾核对：任务进程零残留，共享 3080/3081/7390/8757 未监听；保留原停止状态，未启动用户 profile 或真实直播。未执行回滚，保留完整旧产物供按 INSTALL-HANDOFF.md 恢复。技术观察覆盖本次隔离宿主的加载、权限、快照、重开与工具路径；产品观察继续引用 REQ-006/REQ-010 的“发布后观察计划”，下一次获准真实使用时核对，不把本次 smoke 外推为生产或观众成功。
+
+真实 macOS TTS 两项、真实90秒等待、dsh web CLI 顶层包装、实际舞台/音频/观众/live、真实 GLM 非确定性及1M容量仍未验证；N2保留非阻塞，私有 ToolsService.layers 在升级宿主时重验。主 Agent 据上述实际安装与 smoke 接受发布，随后通过 lifecycle CLI 将两 Feature 的 release 绑定批准源；课程 FEAT-007 仍需交付，整体请求未完成。

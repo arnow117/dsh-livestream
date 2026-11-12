@@ -475,3 +475,19 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 原GLM准备任务未进入打包，原始activity仅有读取soul/user与加载ship技能；最后provider错误为429/1308「已达到5小时使用上限，2026-11-12 19:01:53重置」。属于明确额度耗尽，按既有授权直接准备兜底，不把普通测试失败/网络异常当换模型理由。已task_cancel原任务（返回failed），thread实为failed/activeRunId=null/pendingRequestCount=0；目标Git干净、无所属artifact写入/测试进程，未触碰安装目录/lib。
 
 只读Terra探针成功：工具返回provider=codex、model=gpt-6.1-terra、reasoningEffort=xhigh，executedModel字段未返回保持未验证；两条git命令exit0，HEAD37d0416、实际分支codex/macos-yovoice、无修改。探针把brief中“branch/clean”简写误读为分支名，主Agent以原始命令输出核对分支与干净状态均符合，不将该文字误判视为环境冲突。替换执行者只接续原完整Ship准备/必要smoke，不自写state/Git、不操作共享目标。正式批准/验证仍绑定d70fcf9，记录不冒称发布已完成。
+
+
+### 2026-11-12 Ship 制品准备（待主 Agent 接收，尚未安装或发布）
+
+批准业务源 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`；本次 checkout `92a301967e4499e3c170f0b0896b4a85369f7398` 到业务源仅 SDLC 差异，两个 Feature 当前 reviewed、T001 done，正式 Validate 与 Sol Review 均绑定批准源。全新 `git archive` 副本按 Git blob 验证 312/312，既有依赖 APFS 克隆，无安装/联网；仅副本执行 `node build.mjs`，再经实际 `npm pack --help` 核对参数后以 `npm pack --ignore-scripts --json --pack-destination` 打包。产物 `/private/tmp/dsh-ship-d70fcf9-zuAaRTzv/artifact/package.tgz`，SHA-256 `7eda2d14de7b7957627db424c75593dd1f4b36841cc7b314ffd73de6012a9e4d`，模式 0444；55 个文件完整路径与逐项 SHA、npm 清单和命令/来源见同目录 `logs/{package-manifest.txt,package.sha256,npm-pack.json,blob-verification.log}` 及 `INSTALL-HANDOFF.md`。解包独立目录含四个 bundle、三个 JS chunk、五个 map；入口静态引用完整、host index 零 dsh-tools/dsh-llm、peer 及安装版 dsh/tools/llm 均为 0.2.2-rc.1。仅包含声明的 lib/stage/assets/README/cordis patch/license/package，无 env、凭据、测试或报告。
+
+新解包的实际编译 bundle + 真实安装 Harness 组件、全新隔离 DSH_HOME、动态端口：SC002 五阶段 98/98，两个独立进程 host A/B 45/45，均 exit 0；覆盖 owner 401/200/403、认证后静态 `/`、native create/早期工具绑定、冻结 Skill、允许资料/越界零内容、冷恢复与 onair，shared/external 请求均为 0。离线查询用新解包 `agent.js` 与共享 runtime chunk，fixture transport/weather、源代码测试 harness；weather_lookup 与 public_search 均完成，真实提供方/语音/播出为零，不把 fixture 代码称作交付 bundle。日志、原始 JSON、受控端口与命令见 `INSTALL-HANDOFF.md`；可重绑实际包路径的 `run-delivered-smoke.sh` 对解包目录通过。首次该 runner 的路径替换错误导致自有 phase1 未加载即失败，修正后全阶段通过，失败日志保留；未修改业务实现。
+
+实际 profile link 指向 checkout 包；当前 `lib` 为普通目录，旧 8 文件 SHA/type/owner 清单及 incoming 12 文件 SHA 清单见同目录 logs，旧产物来源 commit/known-good 未证实。43 个打包 non-lib 文件及 stage/assets 集合与候选相同。安装与恢复步骤、再次核对与独占前提、保留旧完整目录的两次 rename、失败恢复、实际安装路径 smoke 命令均在 `INSTALL-HANDOFF.md`；本执行者没有写目标、settings、profile、数据、状态或 Git。共享及本次探针监听端口退出后均未监听、任务 Node 进程为零。技术观察下次为主 Agent 完成实际安装后立即在自有宿主进行 smoke；当前尚无生产观测。产品结果观察引用 REQ-006 与 REQ-010 的“发布后观察计划”，尚未实际观察。真实 macOS TTS 两项、90 秒真实等待、CLI 顶层包装、真实舞台/音频/观众/live、真实 GLM 非确定性及 1M 容量未测；协作式截止不能抢占已发出的 OS IO，私有宿主注册结构升级需重验；N2 disabled Skill 健康行非阻塞待后续维护。`stage: ship` / `status: awaiting_acceptance` 指准备单元，实际安装与记录 release 由主 Agent 执行；`project_candidates=[]`、`requested_transitions=[]`。
+
+
+### 2026-11-12 主 Agent 接受 Ship 并完成本地安装
+
+批准源 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e` 已实际安装到既有 profile 链接目标；12 文件 lib 与制品哈希一致，43 个 non-lib 文件一致。安装前独占核对、完整旧 lib 保留、实际路径烟测及收尾的唯一公共证据见 [FEAT-006 本地安装记录](FEAT-006.engineering.md#2026-11-12-主-agent-接受-ship-并完成本地安装) 与 `/private/tmp/dsh-ship-d70fcf9-zuAaRTzv/logs/primary-installed-acceptance.json`。实际安装 bundle 的 SC002 98/98、宿主 A/B 45/45 全通过；查询两题经安装 agent/runtime chunk 和离线 transport/weather fixture 完成（failureCode=null、model=4/mcp=1、零合成），不是新增真实来源或语音/观众验证。
+
+主 Agent 接受准备与实际安装交付，record-release 绑定上述批准源。共享服务保持停止，旧产物来源未知且保留供恢复；无回滚。产品观察引用 REQ-006“发布后观察计划”，真实播出/舞台音频、GLM非确定性与已披露运行缺口保留，在下一次获准真实使用时检查。AnySearch 仅完成只读选型讨论，未并入本次安装或切换查询提供方；后续课程 FEAT-007 继续按既定范围交付。
