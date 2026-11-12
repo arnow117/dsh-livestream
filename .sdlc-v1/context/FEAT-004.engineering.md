@@ -423,3 +423,25 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 ### 2026-11-12 主 Agent 接受 5aa3354 正式复审
 
 已核对并记录本Feature approved，绑定5aa3354验证候选；共享R12仅归FEAT-006扫描预算，新的源码delta暂无查询缺陷证据。统一分发仍等待FEAT-006返修候选及其必要验证/复审，不宣称已发布。
+
+### 独立 Validate 重建（2026-11-12，通过：最终候选 d70fcf9 全部必要检查通过）
+
+执行环境与共享证据同 [FEAT-006.engineering.md](FEAT-006.engineering.md) 同日「独立 Validate（最终候选 d70fcf9）」一节：候选 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`、312 blob 逐字节核验（verified=312 mismatch=0）、隔离副本/依赖只读 APFS 克隆/共享服务零触碰/无新增真实调用/runner 哈希/收尾核对均在该节记录，此处引用不重跑。本验证为本 Feature 在最终组合 HEAD 的重建（旧 reviewed/pass 绑定 5aa3354，候选已变更不能抵扣本候选），全部命令本轮实际执行；执行环境 T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`（runtime_info 声明 glm-5.3-flash[1m]，独立 executedModel 字段未由宿主返回，1M 容量未验证）。
+
+| 检查（本 Feature 验收条件） | 结果 | 证据或缺口 |
+|---|---|---|
+| typecheck / build | PASS | exit 0（15:05:36–39，共享记录同两条命令）；四 bundle，lib/index.js 零 dsh-tools/dsh-llm 引用 |
+| 完整相关 Vitest+coverage（含本 Feature 全部查询测试，一次证明 unit+coverage） | PASS | exit 0（15:05:39–15:07:11，90.28s）：87 文件、630 通过、8 跳过（排除 macosTts.test.ts，2 项真实 OS 语音 NOT_RUN）；readOnlyQuery/queryTurns/queryPreset/queryHarness/weather/cache/live-query 全部在内，与预期 87/630/8 精确吻合 |
+| coverage-diff **本 Feature 基线 67d4df4**（80%行/70%分支） | PASS | exit 0：行 3262/3606（90.46%）、分支 1809/2253（80.29%，Build 记录同计数按 80.30% 呈现）；同一映射报告，不与 006 基线混用 |
+| 四套 Web E2E（本 Feature 的 e2e-query 为其中 10 项） | PASS | e2e-query 10/10 exit 0（15:07:55–15:08:40），JUnit failures=0/errors=0；`query.e2e.ts` L40/L261 `sharedRequests=0` 断言在通过项中；其余三套 4/6/12 同通过（共享记录） |
+| 离线原生入口（本 Feature 验收入口默认 offline） | PASS | exit 0（15:07:11）：weather_lookup 北京 limited（geocode 1/current 1/model 2，failureCode=null，limitation「区域内没有可确认时间的气温观测站。」）＋ public_search 逐字原文「OBS Studio许可证」evidence（search 1/model 2，failureCode=null，来源 github.com/obsproject/obs-studio），总 model 4/mcp 1，scopesDisposed=2、cleanup finished、homeRemoved=true |
+| 真实 GLM 样本引用（协议等效性） | PASS（按协议引用，无新增真实调用） | `git diff 5aa3354..HEAD` 业务 delta 仅 sessionContext 两文件+2 测试：queryTurns/queryCredential/body/readOnlyQuery/weather/weatherCache、shared DTO、test/live-query、cordis.patch.yml、test/e2e-query、agent.ts **零差异**。既有 2b107efc 真实样本按协议等效链对本候选继续引用；模型遵循仍为非确定假设，不外推到 live |
+| 舞台/观众播放、真实服务全链路 | 不在本轮范围 | tts:0/合成 0；livequery 输出 stagePlayback/audiencePlayback not_tested；运行期观察项保持 |
+
+**验收条件对应**：沿用本文件既有 FR/SCN 映射不重抄：FR-01/03/05（SCN-01/02/04/06）→ 查询单元/天气适配器测试在 630 项中执行＋livequery 离线两题（weather limited 语义、来源/时间证据结构）；FR-04/06/08（SCN-05/08/10）→ livequery 逐字原文/evidence＋e2e-query 10/10（取消/失效/来源旅程）；FR-02/07/09（SCN-03/09/13）→ 查询归属/断订阅回归（queryHarness/queryTurns）在 630 项中＋e2e-query 断订阅后本地交互旅程；SC-002 分层→①隔离替身本轮全链 ②③真实层按协议等效引用（查询面零差异，d70fcf9 delta 不含查询面）④⑤舞台/观众播放维持不在范围。R12 为 FEAT-006 扫描预算修正，不含查询面变更。完整共享检查链、探针哈希、收尾核对与 unresolved_items 见 FEAT-006 同日记录。
+
+**状态请求（仅请求，不执行 mutation）**：canonical `stage:validate`，`status:awaiting_acceptance`；`requested_transitions`＝请求 `record-validation --feature-id FEAT-004 --result pass --test-command "node test/live-query/run.mjs" --commit d70fcf9519069ac5ede0ef04629dd000cc25eb6e`（完整命令列表见 FEAT-006.engineering.md 同日共享记录与本节）。`context_updates.project_candidates`＝[]。未执行任何 lifecycle mutation，不自称正式 review 或已发布。
+
+### 2026-11-12 主 Agent 接受 d70fcf9 独立 Validate
+
+共享312项blob、18步exit0及资源收尾核对见FEAT-006同日接收记录；接受本Feature pass，绑定d70fcf9519069ac5ede0ef04629dd000cc25eb6e。旧5aa3354批准不抵扣最终组合复审；查询协议等效引用/真实业务调用0的边界继续保留。
