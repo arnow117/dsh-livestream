@@ -550,3 +550,37 @@ node --import ./register.mjs sc002-correction-r2.mjs phase{1..5}
 主 Agent 接受规范的 `set-task-status --feature-id FEAT-006 --task-id FEAT-006-T001 --status done` 请求并已由 CLI 执行；重读 `next` 后选择 FEAT-006 的 Validate（FEAT-004 在最终业务 HEAD 同步重验/复审，FEAT-007 继续等待）。这只确认 Build 实现与必要验证完成，不是正式 validation/review/release。当前业务工作树未提交，正式 `record-validation --result pass` 的干净候选前提尚不满足。下一步先展示 17 文件变更清单，按根 soul.md 现有规则取得 commit/push 确认；未提交、未推送、未部署或重启共享宿主。
 
 **后续授权**：主 Agent 展示上述 17 文件逐项摘要后，用户于 2026-11-12 明确回复“没问题 不用再找我确认了 你直接做”。据此已授权提交并推送当前功能分支，并在既定目标和范围内连续推进，不重复索要 commit/push 或阶段确认。该授权不改写已明确的真实外部调用预算、共享服务归属、暂缓需求或产品验收标准。
+
+### 统一独立 Validate（2026-11-12，通过：候选 2b107efc 全部必要检查通过）
+
+执行环境：T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`（executedModel 元数据沿用交接记录：返回不含上下文后缀，1M 容量未独立验证）。独立验证执行者，非实现者；真实 GLM/TTS/天气/MCP 搜索/账号/推流预算 0；未改实现/产品/state，未 commit/push，共享服务零触碰。
+
+**被测候选与副本**：`2b107efc1672b2d51aa8984ba45d5b88dd5484b3`（分支 `codex/macos-yovoice`；开始时共享 checkout 工作树干净）。隔离副本 `/private/tmp/dsh-unified-validate-20261112/repo` 经 `git archive` 提取后 311 个跟踪文件按 git blob 哈希逐字节核验与候选一致；依赖为既有已安装 node_modules 的只读 APFS 克隆（候选 pnpm-lock/package.json 与修正段零差异），未新装依赖；构建/测试全部仅在副本执行，共享在用 lib 未触碰。环境：Node v26.13.0、HeadlessChrome/156.0.8078.4、真实安装 `@deepseek-ai/*` 0.2.2-rc.1（只读）。全部命令本轮实际执行，单并发，未复用旧 PASS。
+
+| 检查（验收条件） | 结果 | 证据或缺口 |
+|---|---|---|
+| typecheck | PASS | `npm_config_manage_package_manager_versions=false pnpm --filter dsh-livestream check` exit 0（09:18:21） |
+| build（四 bundle、index/agent 共享 chunk） | PASS | 副本包目录 `node build.mjs` exit 0（09:18:28）；lib/index.js 零 dsh-tools/dsh-llm 引用（bundle 边界保持） |
+| 完整相关 Vitest+coverage（一次同时证明 unit 与 coverage） | PASS | exit 0（56.83s）：86 文件、587 通过、8 跳过（`--exclude test/macosTts.test.ts`；87−1 文件、589−2 测试与三轮最终代码精确吻合）；报告 `coverage/feat-006-validate/`；DSH_HOME 为自有临时目录 |
+| coverage-diff 基线 fd48d0a（80%行/70%分支） | PASS | exit 0：行 1908/2197（86.85%）、分支 899/1184（75.93%）；副本报告按既有方法映射路径后从仓库根执行 |
+| e2e-session-context（workers1/retries0/trace on，1440×900+375×812） | PASS | exit 0（09:21:43–09:21:55）：4/4，JUnit failures=0/errors=0；fixture 日志 `sharedRequests=0 externalRequests=0`，native create 全部携带真实 cwd+`agentPreset=dsh-livestream` |
+| 既有回归 e2e / e2e-douyin / e2e-query | PASS | exit 0：6/6（09:21:55–09:22:06）、12/12（09:22:06–09:22:29）、10/10（09:22:29–09:22:48），JUnit failures=0/errors=0；e2e-query fixture `sharedRequests=0 externalRequests=0`；声音/抖音 fixture 不打印该计数器（既有 fixture 风格，隔离由内部 stub/拦截承担） |
+| usage 锚点 | PASS | 候选 README `LIVE-SESSION-CONTEXT`/`LIVE-SKILL-LOAD`/`LIVE-MATERIAL-READ`（128–130 行）与 `examples/macos-yovoice/README.md`「新直播会话」核对存在；代表目标/操作/参数来源与 E2E 及发行组合证据对应 |
+| SC002 真实安装组合独立复跑（401/200/403、首装失败回滚、首个工具集合、同名 global 遮蔽/恒零、A 卸载后 B 刷新仍可用） | PASS | 探针复制自 `sc002-correction-r2.mjs`（路径改指本候选副本，逐项核对零残留旧路径引用），全新 DSH_HOME/动态端口独立运行五阶段：24/12/18/19/25＝98 项检查 0 失败，全部 exit 0（09:23–09:27）；`sharedRequests=0/externalRequests=0`；安装版本 dsh-api-session-controller/client-connection/host-webserver 均 0.2.2-rc.1 |
+| **补齐检查#5：完整宿主进程重启旅程**（真实 '/' 静态入口 + owner 路由保存配置并创建管理会话 → 停止 owned 宿主 → 同 owned DSH_HOME 新宿主原生重开 → onair 前首个工具集合已受限 → 冻结快照未重取 → owner 状态一致） | PASS | 两独立进程 `host-journey-a.mjs`（20/20，exit 0，09:33:44）→ `host-journey-b.mjs`（23/23，exit 0，09:33:44 后顺序执行），组合新增真实 `@deepseek-ai/dsh-web-app`（frontend-static fallback）。A：'/' 未认证 401（准入完好）→ 浏览器 launch-token 交换 303+authority 绑定 cookie → '/' 200 text/html SPA index；owner cookie 经真实 settings 路由保存配置（Papermorph 源为真实文件逐字节副本 12167B/SHA-256 eacef139…，真实用户文件未动）+ 真实 sessions 路由创建管理会话（header cwd=workdir、绑定 ready）；驱动真实 turn 落盘后**修改源副本**（冻结后变异，快照文件 stat 不变）→ 干净退出。B（新进程、新动态端口、同 DSH_HOME）：'/' 同样 401→303→200；磁盘快照未动；`controller.resolveAgent` 原生冷重开（无任何手动 bind/restore/onair 前置）→ header cwd 一致；**onair 前**首个工具集合＝[show_stats, load_livestream_skill, read_livestream_material]、根 probe_global_tool 被排除、verifySessionBinding bound=true；loader 返回冻结正文**不含冻结后变异标记**（未重取），快照文件 mtime/size/SHA-256 三项与 A 记录逐项相等（13139B/mtime/9a2c522c…）；允许读取真实资料、越界拒绝零内容；owner state：saved revision 与 A 保存后权威值一致、active=重开会话、cwd 一致；未认证 /api 仍 401；`sharedRequests=0/externalRequests=0` |
+
+**探针脚本修正历史（全部为验证脚本自身修正，无实现改动；失败日志保留 attempt*.log）**：① 首跑 `dsh-web-app` 无 default 导出（插件为命名导出对象）→ 改命名空间导入；② '/' 用 /api operator cookie 仍 401 → 核实 frontend-static 走 Connection 浏览器准入（`/?<launchToken>`→303→浏览器 cookie），改为真实浏览器交换流程；③ A 记录了保存前 revision 导致 B 比对差 1 → 改为保存后重读 state 记录权威值。
+
+**收尾**：本轮探针/测试进程全部退出（ps 零残留）；共享 3080/3081/7390/8757 零请求（fetch 钩子计数）；共享 checkout 收尾仅本执行者按允许写边界新增 `.sdlc-v1/context/FEAT-004.engineering.md` 与本文件两条验证记录；副本与临时产物保留于 `/private/tmp/dsh-unified-validate-20261112/` 可复验。
+
+**unresolved_items（运行期观察项，不阻塞本候选 PASS）**：舞台实际播放与正式观众端不在本轮范围（audio offline_not_requested、stagePlayback/audiencePlayback not_tested）；检查#5 组合为真实安装发行栈在进程内组装（webserver/web-app/frontend-static/connection/session-controller/presets＋候选 lib bundle）并跨真实进程重启取证，`dsh web` CLI 顶层包装进程未组合（插件名解析经宿主 plugins 目录机制），CLI 级进程监督保留为观察项；`ToolsService.layers` private 内部结构依赖在本轮 SC002 复跑（含 phase5 A 卸载/B 刷新）真实安装组合上继续按主 Agent 记录的行为工作，正式 Sol 评审仍按既定安排核对该依赖与失败行为。
+
+**状态请求（仅请求，不执行 mutation）**：canonical `stage:validate`，`status:awaiting_acceptance`；artifacts.changed_files＝上述两个工程记录文件；evidence.commands/revision/workspace_status 见本节；`allowed_transitions`＝依次请求 `record-validation --feature-id FEAT-006 --result pass --test-command "pnpm exec e2e run --config e2e-session-context.config.ts --workers 1 --retries 0" --commit 2b107efc1672b2d51aa8984ba45d5b88dd5484b3`（完整命令列表见本节表格）。`context_updates.project_candidates`＝[]（无仓库级稳定事实变化）。不自称生命周期已推进或 Feature 已发布。
+
+### 2026-11-12 主 Agent 接受统一独立 Validate
+
+主 Agent 逐项核对副本的 311 个跟踪文件 Git blob 与候选 `2b107efc1672b2d51aa8984ba45d5b88dd5484b3` 完全一致，业务工作树无差异；检查实际单测/E2E、五阶段真实组合及新宿主日志。宿主最终结果以较新的 `sc002/hostA.log`（20/20，包含保存后 revision 断言）和 `hostB.log`（23/23）为准；`hostA.final.log` 是此前 19 项版本，汇总 `logs/host-journey.log` 留有早期探针失败，均未覆盖或冒作最终通过证据。
+
+本次相关套件实际为 86 文件、587 通过/8 跳过：排除的 `test/macosTts.test.ts` 两项会调用真实 macOS 语音合成与 ffprobe，并非缺失修正测试；该模块未受本修正影响，排除符合本轮真实 TTS 预算为零的边界。对本次相关改动的独立验证可接受，但不能宣称本轮执行了这两项真实语音集成测试。安装发行栈跨真实进程重启及静态入口证据予以接受，未组合的 `dsh web` CLI 顶层包装、实际音频/观众播放继续保留为明确范围限制。
+
+执行者已对同一结果补充规范的 `requested_transitions`，分别请求 FEAT-004、FEAT-006 在同一候选上通过验证；此格式补充未重跑、未改文件或改变结论。主 Agent 接受相应请求，下一步以 CLI 记录并进入新的独立 Sol 正式 Review；本节不预判评审或发布结论。

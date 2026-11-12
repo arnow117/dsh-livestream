@@ -315,3 +315,21 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 ### 合并候选上的验证重建（2026-11-11，通过）
 
 FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效（业务路径变化须重新验证）。FEAT-006 的独立 Validate 在合并候选 04746f6bc0062eb8313e07f37be993768e9e3eee（= e20f22da 业务内容 + FEAT-006 实现，本 Feature 生产文件在该候选上与已评审内容的一致性由 FEAT-006 评审对本 Feature diff 的覆盖承接）上执行了全套件与本 Feature 全部入口：完整 Vitest（含本 Feature 全部测试）84 文件 544 通过/8 跳过 exit 0、e2e-query 10/10、离线原生入口 exit 0、真实原生入口单次 exit 0（两题 evidence、第 2 题逐字原文、预算内 model 4/4/mcp 1/2/tts 0）。六项必要检查在合并候选上全部保持通过；证据明细存于 FEAT-006.engineering.md 同日验证记录与 smoke/readonly-tools/validate-feat-006/。本 Feature 状态按该证据在合并 HEAD 重建 validation（pass）与 review（approved，评审主体为本文件上文的正式 sdlc-review 结论；共享文件在 FEAT-006 变更后的行为由 FEAT-006 独立验证的三套回归与 e2e-query 复核）。
+
+### 统一独立 Validate（2026-11-12，通过：候选 2b107efc 全部必要检查通过）
+
+执行环境：T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`（executedModel 元数据沿用交接记录：返回不含上下文后缀，1M 容量未独立验证）。独立验证执行者，非实现者；真实 GLM/TTS/天气/MCP 搜索/账号/推流预算 0，本轮**无新增真实调用**；未改实现/产品/state，未 commit/push，共享服务零触碰。本节与 FEAT-006.engineering.md 同日「统一独立 Validate」共享同一候选、同一隔离副本与命令证据（引用一次，不重跑）；此处只补本 Feature 专属行。
+
+**候选与副本绑定**：`2b107efc1672b2d51aa8984ba45d5b88dd5484b3`（分支 `codex/macos-yovoice`，开始时工作树干净）；副本 311 个跟踪文件 blob 哈希逐字节核验一致；依赖只读 APFS 克隆；环境 Node v26.13.0、HeadlessChrome/156.0.8078.4。
+
+| 检查（本 Feature 验收条件） | 结果 | 证据或缺口 |
+|---|---|---|
+| typecheck / build | PASS | exit 0（09:18:21 / 09:18:28，四 bundle，lib/index.js 零 dsh-tools/dsh-llm 引用） |
+| 完整相关 Vitest+coverage（含本 Feature 全部测试，一次证明 unit+coverage） | PASS | exit 0：86 文件、587 通过、8 跳过（`--exclude test/macosTts.test.ts`；87−1/589−2 与三轮最终代码精确吻合）；报告 coverage/feat-006-validate/ |
+| coverage-diff **本 Feature 基线 67d4df4**（80%行/70%分支，不复用 006 基线） | PASS | exit 0：行 3050/3408（89.50%）、分支 1603/2027（79.08%）；同一映射报告对两个基线分别执行 |
+| 四套 Web E2E（e2e-session-context / e2e / e2e-douyin / e2e-query） | PASS | 4/4、6/6、12/12、10/10 全 exit 0，JUnit failures=0/errors=0；HeadlessChrome/156.0.8078.4；e2e-query 与 e2e-session-context fixture `sharedRequests=0 externalRequests=0`（本 Feature 的 e2e-query 为其中 10 项） |
+| 离线原生入口 `node test/live-query/run.mjs`（默认 offline） | PASS | exit 0（09:21:31）：weather_lookup 北京 limited（geocode 1/current 1/model 2）＋ public_search 逐字原文「OBS Studio许可证」evidence（search 1/model 2），总 model 4/mcp 1，scopesDisposed=2、cleanup finished；audio offline_not_requested |
+| 真实 GLM 样本引用（协议等效性） | PASS（按协议引用，无新增真实调用） | `git diff e20f22da..2b107efc` 核对：queryTurns.ts/queryCredential.ts/body 三文件（readOnlyQuery/weather/weatherCache）/shared/readOnlyQuery.ts/test/live-query 全部**零差异**；agent.ts 仅新增会话上下文行（public_search/weather_lookup 工具描述与逐字提示、authorizesSearch 未动）；cordis.patch.yml 零差异。故 e20f22da 的真实样本（两题 evidence、逐字原文、预算内计数）对本候选按协议引用；模型遵循为非确定假设不变 |
+| 舞台/观众播放、真实服务全链路 | 不在本轮范围 | tts:0/合成 0；运行期观察项保持，不以外推当通过 |
+
+**收尾与状态请求**：进程零残留、共享端口零请求、副本产物保留于 `/private/tmp/dsh-unified-validate-20261112/`；共享 checkout 收尾仅新增两条允许的工程记录。canonical `stage:validate`，`status:awaiting_acceptance`；`allowed_transitions`＝请求 `record-validation --feature-id FEAT-004 --result pass --test-command "node test/live-query/run.mjs" --commit 2b107efc1672b2d51aa8984ba45d5b88dd5484b3`（完整命令列表见 FEAT-006.engineering.md 同日记录与本节）。`context_updates.project_candidates`＝[]。未执行任何 lifecycle mutation。
