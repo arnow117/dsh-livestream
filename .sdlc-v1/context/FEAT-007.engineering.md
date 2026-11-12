@@ -31,6 +31,20 @@
 
 资产前置实读（2026-11-12）：`ch01/index.html` SHA-256 `650460359a1202db4f1e4c78d23f24001ea95ae4a8b36d5d565f32be0c5a93df`，`lib/engine.js` `29738bbe5d57029a0477d7ba6ba5486bb8f0872844e396213fb9e4612d673026`，`lib/engine.css` `f2da3a079b3be1d9ccf2301c966ff31e1d75078e2c20c5e252b0697ec954f39e`，`ch01/audio/zh/timings.js` `e014e0aef5dead3e9517aaab9effd5cab02d65f1147186d467509c1f26d462bf`。章节仍13步，lab输入范围/步长与原表一致；这只是只读前置，不是集成播放PASS。decision-context只读召回 Papermorph 卡片仅支持复用既有资产的背景，没有DSH接入或音频恢复结论；具体契约以当前源码/产品为准。
 
+#### 2026-11-12 子资源鉴权接口补齐（supersedes 首次 Build brief）
+
+首次实现者只读定位后按STOP返回：StageServer所有请求先校验query token；真实课件相对script/style/timings/audio与CSS @import不会继承入口query。工作树仍干净、HEAD为5a66ad106247a52abdec73efba859da209624f05；未开始实现/构建/浏览器或服务，无修补失败。主Agent实读server.ts:99与真实HTML/CSS/音频拼接，并以Node URL对脚本/样式/timings、保留v的音频、CSS两级import、home导航及越出前缀作8项解析断言，exit0。这里只证明URL传递设计，不冒称HTTP/浏览器集成成功；集成仍由同一T001实现者验证。该接口证据导致实际方案变更，故发送完整supersedes brief；既有失败历史/停止纪律不重置。
+
+**选定方案：路径内的课程只读凭据。** 成功load在内存中生成至少192bit不可预测随机值（例如randomBytes(24)的base64url，32字符），只绑定本课程实例/加载版本/快照root与已经锁定的资产清单。资产URL为 `/course/asset/<assetCapability>/<relativePathFromBoundRoot>`；章节入口使用完整文件路径（如ch01/index.html），CSS、脚本与音频沿原相对层次解析，音频既有v参数原样保留。无需Cookie、ServiceWorker、重写HTML/CSS/JS或修改外部课件，响应正文保持验证过的原字节。StageServer仅在精确匹配该资产命名空间的GET请求中以此凭据鉴权（若支持HEAD必须相同校验且无正文）；其他方法不获得权限。该分支在原query-token检查前执行，其余 `/events`、`/said`、`/media`、`/course/bridge`、`/course/report`、普通pack/static路径的stage token鉴权保持；owner API依旧只接受owner身份。assetCapability绝不是可替代全局stage token的别名。
+
+**授权范围与失效。** 只读凭据仅能取当前有效清单内、同一固定canonical快照根中的资产；不允许目录列举、清单之外文件、伪造rootId、越界/编码路径或其它课程的资源。每次读取继续执行已定的身份/固定边界/hash/大小/读后核对，未通过不发出正文。未知、畸形、旧实例或撤销的凭据拒绝；成功重载/重置加载实例、结束课程、下播、会话/目标切换、dispose使旧凭据失效，进程重启不恢复；普通播放暂停/选步不撤销文件凭据。仅断抖音订阅保留有效本地课程，故保留其资产凭据，同时撤销旧观众动作/回答。加载失败不发布新凭据或替换当前有效课程；正式换入时才撤旧实例。
+
+**传递与保密。** owner成功load后只通过现有受token保护的舞台course事件/bridge把资产入口交给内层iframe；凭据不得进入模型prompt、普通状态诊断、对话或日志，不用真实token测试。bridge与资产响应使用no-store和Referrer-Policy:no-referrer。授权资产仍与舞台同origin/co-trusted；路径内资产凭据本身不授予舞台或owner控制能力，但这不构成对恶意同源资产的隔离，原残余风险不变。
+
+**拒绝的替代方案。** 不采用放松整个StageServer的query校验；不将全局stage token放入资产路径；不使用端口间共享Cookie（Cookie不按端口隔离且会扩大环境影响）；不改写课件响应或注册ServiceWorker。新只读凭据的内存生命周期是当前课程实例字段，不新增持久化格式、权限框架或用户配置。
+
+**必须补证。** 同一实现者在真实StageServer与真实lever-lab浏览器旅程中观察入口、engine.js、engine.css→volume.css/book.css、timings.js、带v的mp3实际均成功加载且字节/hash相同；错误/缺失/撤销凭据、跨清单/根/实例、编码路径、上级替换均零资产正文；同一资产凭据访问/events、/said、/media或owner API不得通过。验证load/reload/end/目标切换/进程重启撤销及仅断订阅保留本地课程，旧URL不能因同名文件复用授权。所有既有stage-token拒绝回归保持，已定SC-002①②、CRS-06及其余完成条件不变。工具/API/E2E指南中的鉴权描述同步本节，不把URL解析小实验当该验证的替代。
+
 #### 背景
 
 以下事实经本轮只读核实（读法见基线说明；lever-lab 资产在兄弟工作区按实际文件只读读取），均为静态事实、不是运行通过证据。`src/` 均指 `packages/dsh-livestream/src/`。
@@ -69,7 +83,7 @@
 
 ##### 课程静态资产服务（`server.ts` 扩展）
 
-- **职责**：`GET /course/bridge`（插件自带 bridge 页）与 `GET /course/asset/<rootId>/<path...>`：按**当前已加载课程**的快照 root 绑定限定（`CourseController` 持有绑定，server 不读 settings）；同 stage token；路径逐段校验：词法 containment → 目录身份（dev/ino）→ 逐段 lstat 拒绝 symlink → 普通文件 + 类型白名单（html/js/css/mp3/png/jpg/svg/woff2/json）+ 单文件大小上限；只读，`no-store` for html/js。与 `read_livestream_material` 的关系：**同一快照授权、两条独立路径**——工具路径面向模型读文本（256KiB 文本预算、行段语义）；静态路径面向舞台 iframe 送资产（类型/大小按静态服务语义，支持 mp3/png 等二进制）。互不冒充：静态路由不得被模型当作读取通道，工具也不能用于资产服务。
+- **职责**：`GET /course/bridge`（插件自带 bridge 页）与 `GET /course/asset/<assetCapability>/<relativePath...>`：按**当前已加载课程**的快照 root 绑定限定（`CourseController` 持有绑定，server 不读 settings）；bridge仍需stage token，资产GET使用上述当前课程清单专用凭据；路径逐段校验：词法 containment → 目录身份（dev/ino）→ 逐段 lstat 拒绝 symlink → 普通文件 + 类型白名单（html/js/css/mp3/png/jpg/svg/woff2/json）+ 单文件大小上限；只读，`no-store` for html/js。与 `read_livestream_material` 的关系：**同一快照授权、两条独立路径**——工具路径面向模型读文本（256KiB 文本预算、行段语义）；静态路径面向舞台 iframe 送资产（类型/大小按静态服务语义，支持 mp3/png 等二进制）。互不冒充：静态路由不得被模型当作读取通道，工具也不能用于资产服务。
 - **覆盖**：CRS-01、02；SCN-08；CFG-04 边界的消费侧一致性。
 
 ##### 课程动作语义解释与校验（agent 侧 + 宿主校验）
@@ -127,7 +141,7 @@
 
 ##### 决定 5：课件资产 = 快照授权根 + 舞台静态路由（独立预算语义），不复制不入库
 
-课程根必须是活动会话快照 `rootBindings` 之一；开始课程时重查目录身份（dev/ino），记录关键文件（`index.html`、`engine.js`、`timings.js`、13 个 mp3 存在性）清单与 SHA-256 到课程实例与 show 记录（证据用）。运行期仅伺服加载时清单中的资产，每次提交响应前核对固定 canonical 边界、文件身份与加载时 hash；文件或祖先发生变化则零内容拒绝并要求 owner 重新加载，不热更新（与 FEAT-006"活动会话不重读"一致）。`read_livestream_material` 继续用于模型读文本资料（如课件 README）；静态路由不进入模型上下文。**残余风险如实记录**：授权资产页运行在舞台 origin、与舞台页同级信任（可读自身 URL 中的 stage token），与既有角色/模板包同级；不声称内核级隔离，更强隔离（独立 origin/端口）超出本条边界。
+课程根必须是活动会话快照 `rootBindings` 之一；开始课程时重查目录身份（dev/ino），记录关键文件（`index.html`、`engine.js`、`timings.js`、13 个 mp3 存在性）清单与 SHA-256 到课程实例与 show 记录（证据用）。运行期仅伺服加载时清单中的资产，每次提交响应前核对固定 canonical 边界、文件身份与加载时 hash；文件或祖先发生变化则零内容拒绝并要求 owner 重新加载，不热更新（与 FEAT-006"活动会话不重读"一致）。`read_livestream_material` 继续用于模型读文本资料（如课件 README）；静态路由不进入模型上下文。**残余风险如实记录**：授权资产页运行在舞台 origin、与舞台页同级信任（自身URL仅含课程只读凭据，但可访问同源父realm，不能声称隔离stage token），与既有角色/模板包同级；不声称内核级隔离，更强隔离（独立 origin/端口）超出本条边界。
 
 **覆盖**：CRS-01/02；SCN-08；CFG-04 消费一致性；OUT-001。
 
@@ -178,7 +192,7 @@ interface CourseStateView {           // GET state.course / 控制台
 
 - `POST /api/dsh-livestream/course`（owner-only，`{ok:false,error}` 约定）：`{action:'load', rootId, path}`｜`{action:'start'|'pause'|'resume'|'reset'|'end'}`｜`{action:'step', index}`。校验：load 要求活动管理会话快照 + rootId 在 `rootBindings` 且可用、path 为根内普通文件、重查目录身份；start 要求 ready 且资料/展示能力就绪；step index 有界（回读 `BEATS` 长度）。失败保留当前课程状态并给可修正反馈；不自动开播/开课。
 - `GET /api/dsh-livestream/state` 增加 `course: CourseStateView | null`（owner-only/no-store 既有约定不变）。
-- `StageServer` 新增：`GET /course/bridge`（插件自带 bridge 页，带 token）；`GET /course/asset/<rootId>/<path...>`（仅当前已加载课程绑定的根；token；containment + symlink 拒绝 + 类型/大小上限）；`POST /course/report?id&token`（bridge 状态回执，模仿 `/said`/`/media`）。所有拒绝零内容、零路径回显（对舞台页可给受控文案）。
+- `StageServer` 新增：`GET /course/bridge`（插件自带 bridge 页，带 token）；`GET /course/asset/<assetCapability>/<relativePath...>`（仅当前已加载课程绑定的根/清单；路径内只读凭据；containment + symlink 拒绝 + 类型/大小上限）；`POST /course/report?id&token`（bridge 状态回执，模仿 `/said`/`/media`）。所有拒绝零内容、零路径回显（对舞台页可给受控文案）。
 - `StageEvent` 新增 `course` 事件（open/close/cmd/state），owned 类事件沿用 epoch 语义。
 - Agent 侧：课程状态经插件自有 context source 注入 prompt（每 turn 冻结快照，模仿 queryTurns/FEAT-006 manifest 模式）；模型课程动作为结构化候选，宿主 `applyAction()` 校验后下发；一轮至多一项。
 
