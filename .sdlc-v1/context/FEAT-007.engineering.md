@@ -413,9 +413,65 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 
 ## 验证记录（实际）
 
-- **状态**：尚未执行业务验证。Plan 只读核实不是 PASS；未启动浏览器、Harness、模型、TTS 或共享服务。
-- **被测版本、环境、命令与结果**：none；上文命令仅为策略。
-- **覆盖与缺口**：bridge 探针对真实引擎的运行兼容性、iframe 自动播放、CRS-06 端到端时序均无运行证据，归 T001 及独立 Validate。
+### 2026-11-12 独立正式 Validate（claudeAgent 终端执行者，非实现者）
+
+**被测候选**：`e87ac12dc9d9d44febdf9d21ae669e7d30caea0a`（`codex/macos-yovoice`，与 origin 一致，工作树干净）。候选固定：38 文件清单中 37 个生产/测试/usage 文件与该 commit 的 git blob 及工作树**逐字节一致**（含 runner 清单 50/50）；唯一差异 `.sdlc-v1/context/FEAT-007.engineering.md` 为 Build 接收后仅 SDLC 记录更新（该版本 450c9ba5 从未提交，符合主 Agent"只改 SDLC 记录"预声明）。业务/coverage 基线 `d70fcf9`；`git diff d70fcf9..e87ac12 -- pnpm-lock.yaml pnpm-workspace.yaml packages/dsh-livestream/package.json` 为空（依赖与 Build 种子一致）。
+
+**执行环境与版本**：独立克隆 `/private/tmp/feat007-validate-Gk7wQ2mL/candidate`（对共享仓库只读 `git clone --no-hardlinks`，HEAD=e87ac12 干净）；依赖 APFS clonefile 自 Build 只读种子克隆，无安装。Node v26.13.0；`@deepseek-ai/*` 0.2.2-rc.1（宿主旅程证据 `installedVersions`）；Vitest 3.2.4；e2e 0.23.0；HeadlessChrome/156.0.8078.4。共享实际 `lib/`、lib.previous、`.dsh/`、用户 profile、真实课件根全部只读未触碰；无 git add/commit/push。
+
+**模型路由元数据**：宿主环境报告 claudeAgent / glm-5.3-flash[1m]；无独立 executedModel 字段，实际配置标为未验证（1M 后缀不证明容量）。GLM 五小时配额于 2026-11-12 19:01:53 (+08) 重置；本轮自 20:05 起的全部工具/请求连续成功即恢复证据，非仅凭时间推断。本轮业务 GLM/TTS/真实天气/账号/推流调用为 0（journeys 删除 GLM/YOVOICE env、模型端点为本机协议替身；hostA `modelRequests=0`，连本机替身都无请求——turn 经循环落盘会话（zstd 文件存在且 hostB 冷重开成功），会话物化目的达成）。
+
+**命令与结果**（起止为本机时间，均 exit 0；完整日志在验证目录 `logs/`）：
+
+| # | 命令（验证目录内） | 时间 | 结果 |
+|---|---|---|---|
+| 1 | `node scripts/verify-candidate.mjs`（38+50 清单逐字节） | 20:07 | candidate 37 ok/1 SDLC 记录差异；runner 50/50 |
+| 2 | `GUARD_PATH=… node scripts/guard-negative.mjs`（负例） | 20:12 | 7390@loopback、0@0.0.0.0、3080@loopback 三拒截图 OS 前拒绝；控制组 port0@127.0.0.1 正常监听并关闭；负例计数 4 尝试/3 拒绝，单独记录 |
+| 3 | `./node_modules/.bin/tsc -p tsconfig.json` | 20:14:30–32 | exit 0 |
+| 4 | `node build.mjs` + 边界检查 | 20:14:37–38 | exit 0；四 bundle 存在；12 个 lib 文件与 Build 记录产物**逐字节一致**；host index/client/stage 零 dsh-tools/dsh-llm，agent.js 仅 1 处外部 import 说明符（与 Build 产物同形，非内联） |
+| 5 | `./node_modules/.bin/vitest run --coverage --exclude test/macosTts.test.ts --coverage.reportsDirectory coverage/feat-007-validate` | 20:15:52–20:16:11 | exit 0：**96 文件 / 697 通过 / 9 跳过**（courseAssets 1 条件 + attention 2 + decode 6；macosTts 两项真实 OS 语音整文件排除 NOT_RUN） |
+| 6 | `node packages/dsh-livestream/test/coverage-diff.mjs d70fcf9… packages/dsh-livestream/coverage/feat-007-validate/coverage-final.json`（在自有克隆根） | 20:16:28–29 | exit 0：行 917/1099（83.44%）、分支 578/685（84.38%）；分支分母与 Build 记录差 1（579/686），V8 插桩粒度波动，不影响 ≥80%/70% 阈值 |
+| 7 | 真实课件清单核对（28 文件逐个 sha256+bytes 对照 Build manifest） | 20:16 | 28/28 一致，总字节 1,435,956 精确匹配 |
+| 8 | `FEAT007_REAL_ASSET_ROOT=<lever-lab> ./node_modules/.bin/vitest run test/courseAssets.test.ts -t 'serves the real authorized asset bytes'` | 20:16:55–56 | exit 0（1 通过/10 跳过）：真实资产经真实 StageServer 字节一致 |
+| 9 | `FEAT007_GUARD_LOG=… node --import listen-guard.mjs --import register.mjs guarded/host-journey-a.mjs hostA` | 20:17:47–50 | exit 0：**31/31**；shared=0 external=0；guard 0 拒绝、监听全 loopback。同一实际 mint 课程 cap 先取真实资产成功 → 对真实 gateway owner API 401 且课程状态不变副作用 0；在播切换撤旧 cap（404 空正文）/新 epoch≠旧/新会话独占课程工具 |
+| 10 | 同上 `host-journey-b.mjs hostB`（同一 owned DSH_HOME 新进程新端口） | 20:18:06–09 | exit 0：**27/27**；新进程对新端口旧资产路径**空正文 404**（非连接失败抵扣）；冷重开受限首 toolset、冻结正文未重取、saved revision 跨重启一致、R7 冷重开不显示 active |
+| 11 | `guarded/sc002/sc002-validate-rerun.mjs phase1…phase5`（新 DSH_HOME 新数据） | 20:18:17–31 | exit 0 ×5：**24/12/18/19/25 项全过、0 失败**；owner/非owner 准入、首 toolset、冻结 Skill/资料允许与拒绝、故障锁定链、双 preset 实例隔离等既有消费不回归 |
+| 12 | `./node_modules/.bin/e2e run --config e2e-course.config.ts --target desktop\|narrow --workers 1 --retries 0 --trace on --reporter list,junit --max-duration 600000` | 20:19:09–36 | exit 0 ×2：合成课程旅程 desktop(1440×900)+narrow(375×812) |
+| 13 | `FEAT007_REAL_ASSET_ROOT=<lever-lab> e2e run --config e2e-course.config.ts --target desktop …` | 20:19:47–20:20:48 | exit 0（60.2s）：**真实杠杆课件浏览器旅程**——owner 保存资料根→会话生效→彩排→加载→舞台 iframe 内真实课件→开始/暂停/继续/选步→模拟观众弹幕：q1 真实判题"✓ 正确。60 × 1 ÷ 3 = 20 N。"（含错误反馈"✗ 还不对…"与重答）、final1"✓ 正确。80 × 0.5 ÷ 20 = 2 m。"、调参回读、重置、结束；7 项真实资源（ch01/index.html、engine.js/css、volume/book.css、timings.js、intro.mp3）经浏览器 SHA-256 与源逐字节一致；撤旧后 404 空正文；end 后 course=null、课程工具移除；trace 含 25 次资产请求 |
+| 14 | 四套既有 `e2e.config.ts / e2e-douyin / e2e-query / e2e-session-context` × desktop/narrow | 20:21:11–43 | exit 0 ×8：voice 3+3、douyin 6+6、query 5+5、session-context 2+2 = **32 项** |
+| 15 | 收尾核对：`lsof` 共享 3080/3081/7390/8757、自有端口、进程 | 20:24 | 共享端口无监听；自有进程全部退出、监听已释放；共享 Poki daemon（PID 29019，11-10 启动）按边界不动 |
+
+**runner 适配与透明度**：14 个 e2e runner 文件按 Build 已声明适配复用（5×start.mjs 注入 `--import` e2e listen guard + CLI 预分配端口；voice/douyin fixture 增外网拒绝计数与自端口白名单；query fixture 稳定代理+动态 StageServer 后端+SSE 中断转发+重开 port0；e2e-course fixture import 前写自有 `settings.json stagePort=0`；5×`.e2e.ts` 增浏览器级路由守卫 beforeEach/afterEach，**断言与场景零改动**——逐 diff 审查确认）。本轮 overlay 仅把 guard/日志路径从 Build 目录改指本轮自有目录；精确 diff 留存 `logs/runner-diffs/`（14 文件），before/after 哈希 `logs/runner-overlay-manifest.json`。宿主旅程与 SC002 脚本仅改 5 处路径常量（HOME/COPY/VDIR/SESSION/EVIDENCE）至本轮目录（journey A diff 共 10 行）。**不声称适配后 runner 字节等于候选原文**。
+
+**资源边界与守卫**：两个全新自有 DSH_HOME（hostjourney/sc002），首次 import 候选前预写 `{"stagePort":0,"stageToken":"isolated-stage-fixture"}`；StageServer 仍由真实插件 apply 启动、坐标从实际 listener 读取。负例先行（见命令 #2）且计数与正式运行分开；正式运行意外拒绝 **0**（hostA/B 各 3 尝试、sc002 各 3、e2e fixture 1–6 尝试，全部 loopback、进程内全部关闭/退出后释放）。journeys 的 fetch 拦截 shared=0/external=0；8 条 fixture 日志 `guarded network sharedRequests=0 externalRequests=0`；e2e-course fixture 报告同值。完整 Vitest 无全局外网计数，不泛称全链已计数（套件按 project.md 仅绑 127.0.0.1:0）。实例资产凭据仅存在于本轮私有工件（`artifacts/` 已 chmod 700），本记录不承载凭据值。历史 Build 期 7390 边界事件维持原裁定，不因本轮通过改写历史。
+
+**验收条件 | 结果 | 证据或缺口**（回读实现记录覆盖表，仅补本轮独立证据）：
+
+| 条件 | 结果 | 本轮证据 |
+|---|---|---|
+| CRS-01、SCN-08/16/19 | PASS(本地) | 单测含于 697；合成课程 E2E 双 target；真实旅程 owner 全控制（trace 步 14–19、51–52）；hostB 冷重开不自动恢复课程/活动（R7 两项） |
+| CRS-02、SCN-09/11/12 | PASS(本地) | courseAction/courseAssets 单测；真实旅程真实引擎判题（q1 错误反馈+重答+正确锁定、final1 填空、调参回读）；静态权限负例 |
+| CRS-03、SCN-11/12/13 | PASS(本地) | courseTurns 单测；课程 E2E 真实 native turn 单项动作 |
+| CRS-04、SCN-09/10/13/16 | PASS(本地) | courseController 单测；真实旅程重答/重复与关闭题拒绝断言随测试通过 |
+| CRS-05、SCN-10/13–17 | PASS(本地) | courseLifecycle 单测 + 课程/四套 E2E 回归 |
+| CRS-06、SCN-14/15 | PASS(本地①层)；真实音频层 NOT_RUN | courseSpeech/courseAudio/courseLifecycle 恢复真值表与禁止恢复分支单测；④层真实旁白+yovoice 正式音画对齐未执行 |
+| CRS-07、SCN-17/18/19 | PASS(本地) | courseLifecycle 单测；hostA/B 在播切换撤 cap/epoch/独占工具与新进程 404 空正文；E2E 断订阅保留与旧 ID 去重 |
+| SCN-20、SC-002⑤ | **NOT_RUN** | 正式播出与独立真实观众（专用屏幕全屏模式）：预算 0 + 外部授权，归主 Agent 安排 |
+| SC-002① | PASS | 完整单测套件 + 合成课程 E2E + 四套既有 E2E 本轮全部独立重跑 |
+| SC-002② | PASS | hostA/B 31/27、SC002 五阶段 24/12/18/19/25、真实课件旅程（7 资源字节 hash）、真实资产条件测试、28 文件清单比对 |
+| SC-002③ | **NOT_RUN** | 真实 GLM 工具调用/按当前状态回答：预算 0（历史真实查询样本不证明课程模型效果） |
+| SC-002④ | **NOT_RUN** | 正式音频/音画对齐：预算 0 |
+| SC-003 | PASS(本地) | 单控制台完成配置/全程控制/失败恢复旅程（真实+合成 E2E）；usage 锚点随候选交付，文档文字核对归 Review |
+
+**canonical 归因**：所有已授权本地必要检查实际执行且通过；SC-002③④⑤为当前产品必要条件、本轮预算 0 未执行（NOT_RUN，ENV/预算归因，非实现缺陷断言）→ 本轮不构成全部必要验证通过，按技能请求 `record-validation --result fail` 并保留缺口归因；不得以 Build 已通过或旧记录抵扣。macosTts 两项真实 OS 语音 NOT_RUN（整文件排除，与本轮课程验证无关）。
+
+### 2026-11-12 主 Agent 接受独立 Validate 归因
+
+主Agent核对当前业务源e87ac12、业务工作树干净、唯一修改为本验证记录，读取本轮guard负例、完整单测/coverage、宿主31/27及SC002、Web记录与必要条件映射；接受所有已授权本地检查通过，以及整体必要验证未完成的归因。已通过lifecycle CLI记录validation.result=fail/commit=e87ac12dc9d9d44febdf9d21ae669e7d30caea0a，不把该结果当已证明实现错误，T001保持done，不启动无依据返修或推进正式Review/Ship。分支分母差1的插桩原因未由主Agent独立定位，两份实际报告均满足阈值，不影响本轮预算/外部条件归因。
+
+宿主本次最终返回的recentRuns元数据进一步提供providerInstanceId=claudeAgent、model=glm-5.3-flash[1M]、executedModel=glm-5.3-flash；补充此前“未提供executedModel”的阶段性记录。由成功请求确认GLM额度恢复，后续实现/验证重新优先GLM。1M容量仍没有独立运行验证，不从请求后缀推定。
+
+下一步先由指定onboard writer定向刷新新course测试/bridge等稳定导航，不动需求和实现；真实SC-002③④⑤仍需安排可用的业务调用预算、音频运行条件及独立观众窗口。当前预算0不变，不自动启动真实GLM/TTS/账号或推流，不以本地通过改写产品必要条件。formal Review/release仍为pending，已发布FEAT-004/006不因本轮未完成的课程真实验收自动撤回。
 
 ## 评审记录（实际）
 

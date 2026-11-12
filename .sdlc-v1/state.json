@@ -196,12 +196,12 @@
           "updated_at": "2026-11-12T12:00:06Z"
         }
       },
-      "updated_at": "2026-11-12T12:00:06Z",
+      "updated_at": "2026-11-12T12:32:33Z",
       "validation": {
-        "at": null,
-        "command": null,
-        "commit": null,
-        "result": "pending"
+        "at": "2026-11-12T12:32:33Z",
+        "command": "cd /private/tmp/feat007-validate-Gk7wQ2mL/candidate/packages/dsh-livestream && ./node_modules/.bin/vitest run --coverage --exclude test/macosTts.test.ts --coverage.reportsDirectory coverage/feat-007-validate",
+        "commit": "e87ac12dc9d9d44febdf9d21ae669e7d30caea0a",
+        "result": "fail"
       }
     }
   },
@@ -316,7 +316,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-008.product.md",
       "status": "in_delivery",
       "title": "既有课件的直播讲解与弹幕互动",
-      "updated_at": "2026-11-12T12:00:06Z"
+      "updated_at": "2026-11-12T12:32:33Z"
     },
     "REQ-009": {
       "created_at": "2026-11-10T09:12:40Z",
