@@ -445,3 +445,23 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 ### 2026-11-12 主 Agent 接受 d70fcf9 独立 Validate
 
 共享312项blob、18步exit0及资源收尾核对见FEAT-006同日接收记录；接受本Feature pass，绑定d70fcf9519069ac5ede0ef04629dd000cc25eb6e。旧5aa3354批准不抵扣最终组合复审；查询协议等效引用/真实业务调用0的边界继续保留。
+
+
+### Fresh 独立正式 Sol 复审（2026-11-12，候选 d70fcf9，建议 approved，待主 Sol 验收）
+
+**边界与运行时**：本次为新独立 review 执行上下文，按 `sdlc-review`、stage-agent-protocol、receiving-feedback、role-routing，串行使用 QA/security/architect/server-dev/client-dev 及相关 design/usage 视角；未创建子代理、nested delegate 或线程，未实施修复。实际 checkout 为 `/Users/mac/hansen_agent_team/workspace/20261109-deepseek-harness/dsh-livestream`，分支 `codex/macos-yovoice`；业务候选 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`，进出场 HEAD 为 `fdbed41be73d78af1e41ba64b15a82baaa7253bb`。当前 `t3_thread_configure({})` 返回 instanceId=`codex`、model=`gpt-6.1-sol`、reasoningEffort=`xhigh`；本轮 `t3_thread_read(activity,runLimit=1)` 的 recentRun 同为 codex/Sol，但 `executedModel=null` 且未提供逐请求执行 options，后二者保持未验证。宿主当前 runtime_info 声明 Sol/xhigh；未从旧 transcript、角色名推断执行模型，未替换模型。
+
+**准入、范围与证据适用性**：实际读取 state：FEAT-004/006 均为 validated、validation=pass 且绑定 d70fcf9、review=pending，两个 T001 均 done。进场 `git status --porcelain=v1 --untracked-files=all` 为空；`git diff --quiet d70fcf9519069ac5ede0ef04629dd000cc25eb6e..HEAD -- . ':(exclude).sdlc-v1/**'`、`git diff --check` 均 exit 0。完整读取 5aa3354b15079539bb6bd02b99edad91c66226aa..d70fcf9 的相关业务 delta 与改动测试：仅 sessionContext.ts、sessionContextPaths.ts 和两个 session-context 测试，另有 SDLC 记录；查询、来源、Stage 协议、QueryTurns、preset、依赖与参数没有本轮业务变更。以 FEAT-004 固定基线 `67d4df44e3c119b5a799029913cdef6c29c73aeb` 做必要累计一致性核对，追踪 index 保存/新建、Agent 早绑定与查询共同调用面；当前 REQ-006/当前有效方案未因本轮扫描修复改变，未将旧实现者或主 Agent 正确性声明作为证明。
+
+**原始 Validate 核对**：引用上文「独立 Validate 重建（最终候选 d70fcf9）」及其唯一验收映射，不重建表。实际读取 `/private/tmp/dsh-validate-d70fcf9-1794467071/{run-validate.sh,logs/summary.txt}`、18 个 exitcode、相关 Vitest/双 coverage-diff/四套 E2E/livequery/SC002/hostA/B 日志与场景断言。本 review 用 Python + `git ls-tree -r d70fcf9519069ac5ede0ef04629dd000cc25eb6e` 重新计算归档副本全部 Git blob：312 个、0 mismatch（exit 0）；18 份 exitcode 全部 0。原始日志确有 87 文件、630 pass/8 skip、004 变更行90.46%/分支80.29%，以及 query E2E 10 项、offline live-query 两题。它们为本候选独立 Validate 的证据，本 review 没有重跑完整 suite、没有新 API/GLM/TTS 请求。
+
+**跨 Feature 结论**：R12 的迟到 Skill 数据现于 prepare 失败处返回，不能落盘快照或进入 native create；单调截止及 finally 所有权没有引入查询授权/取消状态的重置。原 R12 探针按本候选只读源码在自有临时目录复用，真实 IO 转发、计数 controller 替身的创建调用为0，详见 FEAT-006 本次正式复审段及原始 JSON；这不冒称真实 native 慢盘。当前 diff 未发现 FEAT-004 的新增或被放大的阻塞缺陷；没有新的回归证据重开既有已解决事项。FEAT-006 的 N2 仅影响关闭条目的 owner 诊断行，不阻塞 FEAT-004。
+
+**usage / design**：README 的 `LIVE-QUERY-WEATHER/SEARCH/CONTROL` → `examples/macos-yovoice/README.md#天气与公开资料查询` → REQ-006 FR/SCN 与本文件既有映射 → shared/readOnlyQuery、runtime/部署 env 的参数来源 → 本候选 query E2E/livequery 原始结果可追溯；默认关闭、凭据 owner、站点/时间/缓存限制、停止查询回复及旧舞台刷新说明与实际范围一致。历史真实查询/GLM 资料只保留其原协议等价范围与非确定性；没有用离线 fixture、截图或文档检查证明现场播放。此次无 UI 源码变化，仅静态检查既有状态/usage，不声称新做浏览器渲染、完整 Impeccable critique 或真人试用。
+
+**非阻塞边界与交回**：两项真实 macOS TTS NOT_RUN、真实90秒道别、dsh web 顶层包装、实际舞台/音频/观众/live 链、GLM 1M容量仍未验证；本轮无新增外部授权。E2E fixture stop 行未进 runner 日志这一缺口保留，已读取实际 `session-context.e2e.ts:135` 对 sharedRequests/externalRequests 的进程内断言，不能把缺日志写成已取得停止日志。当前范围未发现有证据支持的重复实现或可避免工程债；现有共享读取与 scan 所有权承担不同必要职责，源码控制流正常可读，无已确认独立 formatter/lint 入口。建议 `record-review --feature-id FEAT-004 --decision approved`，仅请求、不执行；仅追加两份工程记录，主 Sol 保留最终验收、生命周期、Git 与发布。历史失败与唯一主诊断额度 USED 保持，不新增诊断或盲修循环。
+
+### 2026-11-12 主 Agent 接受 d70fcf9 正式复审
+
+核对本轮源码范围、正式review原始R12 adapter/shared-budget JSON、业务候选到当前HEAD无业务差异及工作树事实，接受approved请求。R12迟到创建的失败阶段native计数为0、跨来源共享总截止与扫描后绑定迟到均拒绝，健康最终超时状态唯一，恢复另计；不以恢复后的计数冒称失败阶段执行。独立Validate/Review都绑定d70fcf9519069ac5ede0ef04629dd000cc25eb6e，主Agent据此批准并进入Ship。
+统一Ship继续与FEAT-006同一候选；尚未记录release，目标为既有本地安装及Harness加载，不将Git推送替代实际交付。
