@@ -26,7 +26,7 @@
 - **仅断订阅**：CRS-07/SCN-18 为权威。当前 show.disconnect 会换 outputEpoch，但保留 onAir/currentSession；应撤销断开前观众在途动作/回答并停止新订阅输入，保留本地课程及主人控制。不要以笼统 onOutputChange 或 invalidateSession 回调直接 end 课程；完整结束和仅输出撤销分别处理，重连不重放旧输入。
 - **窄课程动作**：采用 active session 内可撤销的 `apply_livestream_course_action` 工具，输入为 CourseActionInput，param 显式携带单位（left/right=m，force=N）；load 必须核对当前 onAir 会话、snapshotForSession 与 sessionTools.verify(bound) 一致；只允许当前题答案/当前实验一项参数/纯问题，不含 next/reset/end/任意代码。工具仅在对应有效课程会话可见，经已有受信任注册身份机制接线，结束/卸载时移除；其他会话及未加载课程时的工具集合不变。同一真实 native turn、选中消息/事件 id、courseEpoch、步骤/attempt/control revision 必须匹配，每轮至多一项；课程正文或模型文本不能直接调用 owner 管理 API。注册/注销的最小适配限 agent.ts，不回退按名称放行或改变 FEAT-006 的失败锁定。
 - **资产与打包**：bridge 放在包的 `stage/course-bridge.html`（现有 files.stage 交付），不用未打包的 src HTML 充当运行依赖。外部 lever-lab 只读引用，禁止复制进仓库或修改；加载时建立有界文件/hash清单，运行期资产身份/边界/hash不符即拒绝，重新加载才接受新内容。单源根全套当前28文件/1435956字节，最大文件152092字节，13段mp3；无需无限扫描/无限文件预算。静态额度初值 maxFiles=128、单文件=2MiB、清单总量=16MiB，并验证拒绝边界；每次响应缓冲有界，固定 canonical 根及其上级替换、逐段symlink、末端fd身份与读后复核均需覆盖，在复核通过前不发出正文，不重用模型文本读取预算。
-- **写入边界补齐**：除 T001 既有列表，允许上文 show.ts/stage.ts 的必要接线、stage/course-bridge.html 及对应既有测试；若选择编译桥接 TS 而非静态页，保持实际包内可达并说明，不添加新依赖或修改外部资产。check/build 必须在自有副本执行，实际安装 lib 与 lib.previous-92a3019 均为只读边界。
+- **写入边界补齐**：除 T001 既有列表，允许上文 show.ts/stage.ts 的必要接线、src/stage/main.tsx 的course组件注册与模式装配、实际 stage/stage.css、stage/course-bridge.html 及对应既有测试；若选择编译桥接 TS 而非静态页，保持实际包内可达并说明，不添加新依赖或修改外部资产。check/build 必须在自有副本执行，实际安装 lib 与 lib.previous-92a3019 均为只读边界。
 - **执行与证据**：同一个实现者完成三个实施阶段、测试和必要修正；先给可复验最早增量，再继续全部 T001。GLM 五小时额度明确耗尽至19:01:53，按已获授权的 Terra/xhigh 兜底执行，原首个只读路由探针成功；不推测1M已启用。业务模型/合成/天气/搜索/账号/推流预算0，coding-agent调用已获授权；SC-002①②必须实际取证，③④⑤的真实调用与正式观众层保留缺口，不外推为完成。两次不收敛停止纪律及已有失败历史保持，不能为新名字清除旧修正段历史。
 
 资产前置实读（2026-11-12）：`ch01/index.html` SHA-256 `650460359a1202db4f1e4c78d23f24001ea95ae4a8b36d5d565f32be0c5a93df`，`lib/engine.js` `29738bbe5d57029a0477d7ba6ba5486bb8f0872844e396213fb9e4612d673026`，`lib/engine.css` `f2da3a079b3be1d9ccf2301c966ff31e1d75078e2c20c5e252b0697ec954f39e`，`ch01/audio/zh/timings.js` `e014e0aef5dead3e9517aaab9effd5cab02d65f1147186d467509c1f26d462bf`。章节仍13步，lab输入范围/步长与原表一致；这只是只读前置，不是集成播放PASS。decision-context只读召回 Papermorph 卡片仅支持复用既有资产的背景，没有DSH接入或音频恢复结论；具体契约以当前源码/产品为准。
@@ -44,6 +44,12 @@
 **拒绝的替代方案。** 不采用放松整个StageServer的query校验；不将全局stage token放入资产路径；不使用端口间共享Cookie（Cookie不按端口隔离且会扩大环境影响）；不改写课件响应或注册ServiceWorker。新只读凭据的内存生命周期是当前课程实例字段，不新增持久化格式、权限框架或用户配置。
 
 **必须补证。** 同一实现者在真实StageServer与真实lever-lab浏览器旅程中观察入口、engine.js、engine.css→volume.css/book.css、timings.js、带v的mp3实际均成功加载且字节/hash相同；错误/缺失/撤销凭据、跨清单/根/实例、编码路径、上级替换均零资产正文；同一资产凭据访问/events、/said、/media或owner API不得通过。验证load/reload/end/目标切换/进程重启撤销及仅断订阅保留本地课程，旧URL不能因同名文件复用授权。所有既有stage-token拒绝回归保持，已定SC-002①②、CRS-06及其余完成条件不变。工具/API/E2E指南中的鉴权描述同步本节，不把URL解析小实验当该验证的替代。
+
+#### 2026-11-12 舞台入口与实际样式路径补齐（supersedes 第二次 Build brief）
+
+主Agent实读 `src/stage/main.tsx`：WIDGETS 注册表在第14行，App在69～73行仅按media/game选择video/game/chat，因此同一course组件必须在该入口注册并接入模式选择；`stage/index.html:7` 实际加载的舞台CSS为 `stage/stage.css`。当前有效写入范围明确增加 `src/stage/main.tsx` 的课程组件注册、模式选择与必要状态消费，并将误写的 `src/stage/stage.css` 更正为真实 `stage/stage.css`。这属于同一课程展示组件的必要装配，不新增产品行为、权限、API、依赖或另一个实现Task；其余边界和验证条件保持。
+
+本次续接保留实现者的部分WIP：`src/body/course/assets.ts`、`src/body/server.ts`、`test/courseAssets.test.ts`，以及既有本文件追加记录，来源HEAD 6b4945e8ab2039e13032903d3ce881e7eccd7d88。局部8项测试/tsc通过与真实7个文件HTTP字节一致属于有效增量证据，但未接runtime、未做浏览器或完整旅程，主Agent未接受Task完成，也不把该局部结果提升为全套通过。没有第二个写者，原实现者继续完整T001与必要测试；不重置既有失败史、停止条件或诊断额度，state仍in_progress。
 
 #### 背景
 
@@ -317,7 +323,7 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 #### FEAT-007-T001 [US2/US3] 交付既有课件直播讲解与弹幕互动完整旅程
 
 - **依赖**：无本 Feature 内 Task 依赖；外部前置见上（FEAT-006 修正段合并）。选择单 Task 的理由见实施层决定 1。
-- **写入范围**：包内路径均相对 `packages/dsh-livestream/`：新增 `src/body/course.ts`（或 `src/body/course/` 有界拆分）、`stage/course-bridge.html`（插件自带 bridge 页，由现有 package files.stage 一并交付）、必要的 `src/stage/{protocol.ts,store.ts,widgets.tsx,layout.ts,stage.css}` 加性扩展、`src/body/server.ts` 课程路由、`src/body/show.ts` 的课程/话题/语音生命周期接线、`src/body/stage.ts` 的课程保留事件与加性播放结果回执、`src/dsh/index.ts` 课程 owner 路由与失效挂接、`src/dsh/runtime.ts` 最小接线、`src/dsh/agent.ts` 课程 lease 注入/念出前校验（沿用既有模式）、必要的 `src/shared/course.ts` DTO、`src/console/console.tsx` 及可抽出的 `src/console/CoursePanel.tsx`；`test/course*.test.{ts,tsx}`、受影响既有测试、`test/e2e-course/**`、`e2e-course.config.ts`、`vitest.config.ts`；仓库根 `README.md`、`examples/macos-yovoice/README.md`。不写：`sessionContext*` 契约文件（消费不改）、upstream、其他 Feature 工程候选、共享服务、真实课件资产、已存在测试产物。`.gitignore` 仅在既有忽略不能覆盖新产物路径时有界补充。
+- **写入范围**：包内路径均相对 `packages/dsh-livestream/`：新增 `src/body/course.ts`（或 `src/body/course/` 有界拆分）、`stage/course-bridge.html`（插件自带 bridge 页，由现有 package files.stage 一并交付）、必要的 `src/stage/{main.tsx,protocol.ts,store.ts,widgets.tsx,layout.ts}` 与 `stage/stage.css` 加性扩展、`src/body/server.ts` 课程路由、`src/body/show.ts` 的课程/话题/语音生命周期接线、`src/body/stage.ts` 的课程保留事件与加性播放结果回执、`src/dsh/index.ts` 课程 owner 路由与失效挂接、`src/dsh/runtime.ts` 最小接线、`src/dsh/agent.ts` 课程 lease 注入/念出前校验（沿用既有模式）、必要的 `src/shared/course.ts` DTO、`src/console/console.tsx` 及可抽出的 `src/console/CoursePanel.tsx`；`test/course*.test.{ts,tsx}`、受影响既有测试、`test/e2e-course/**`、`e2e-course.config.ts`、`vitest.config.ts`；仓库根 `README.md`、`examples/macos-yovoice/README.md`。不写：`sessionContext*` 契约文件（消费不改）、upstream、其他 Feature 工程候选、共享服务、真实课件资产、已存在测试产物。`.gitignore` 仅在既有忽略不能覆盖新产物路径时有界补充。
 - **完成条件**：需求覆盖表全部实现；隔离副本中①②层证据具备（含真实 lever-lab 加载与舞台显示、owner 全控制、受限/静态两条授权路径的允许与拒绝）；CRS-02～07 的失败/失效分支逐条有测试；CRS-06 恢复条件真值表全过；越权/失效后新状态污染与新增输出为 0；无课程时既有行为/工具/声音/平台隔离回归通过；已提交 e2e、usage、coverage-diff（主 Agent 登记的基线）、check/build 可重复且通过；③④⑤层缺口如实标注不抵扣。任务完成不代替独立 Validate/Review。
 - **验证方式**：上文验证策略，绑定实际候选 SHA、源码 diff、版本、环境、身份、资产 hash 清单与产物；失败先定位，遵循仓库连续两次不收敛停止规则。
 - **覆盖**：REQ-008 全部 CRS/SCN(08～20)/SC；**计划**：三个实施阶段，由同一实现者持续完成。
@@ -332,7 +338,20 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 
 ## 实现记录（实际）
 
-- **状态**：尚未执行。仅新建本工程上下文候选；未运行任何 lifecycle 命令、测试、构建、依赖安装或 Git 写操作。
+### 2026-11-12 T001 资产层部分实现，舞台入口写入范围待协调
+
+- 工作区 `codex/macos-yovoice`，HEAD `6b4945e8ab2039e13032903d3ce881e7eccd7d88`；业务基线 `d70fcf9519069ac5ede0ef04629dd000cc25eb6e`。当前未提交：`src/body/course/assets.ts`、`src/body/server.ts`、`test/courseAssets.test.ts`。尚未接到生产 runtime，不能作为课程功能使用。
+- 资产清单初步实现：独立的 192-bit 实例凭据、文件数量/大小上限、加载时 hash、祖先与末端身份核对、只读与撤销；StageServer 对课程资产 GET 单独授权，其他路由继续检查舞台 token。此为局部实现，完整安全审查和全部负例仍未完成。
+- 阻塞：实际舞台注册表及模式选择位于 `src/stage/main.tsx:14` 与 `:69-73`，本 Task 当前授权写入列表不包含该文件。现有模式仅 `chat/video/game`，新 `course` 组件若不注册且不选择 course 模式不会渲染。需要主 Agent 更新唯一方案和写入边界后提供 supersedes；实际样式文件位于 `stage/stage.css`，而非 brief 所列 `src/stage/stage.css`，也需明确是否纳入写入边界。
+
+### 2026-11-12 T001 局部验证（未完成阶段 1）
+
+- 从 HEAD `6b4945e8...` 的 Git archive 建立隔离副本 `/private/tmp/feat007-build-FzbVf5iu/repo`，从既有发行验证副本克隆依赖，未安装依赖；将上述三个候选文件复制至副本。Node v26.13.0、Vitest 3.2.4、darwin-arm64。
+- TDD：首次 Vitest 因模块不存在失败；加入资源层后 3 项通过。添加 HTTP 测试后先观察到原 StageServer 返回 401，再加入资源路由。最终 `FEAT007_REAL_ASSET_ROOT=<只读 lever-lab> ./node_modules/.bin/vitest run test/courseAssets.test.ts test/queryStage.test.ts` exit 0，2 文件 8 项通过。覆盖测试 fixture 中清单外/变异/撤销/符号链接/大小/根上祖先替换，真实 StageServer 的凭据拒绝及旧 SSE 回归；真实课件 7 个文件经 HTTP 与源字节逐项相等（含带 `v` 的音频），不构成浏览器或完整课程旅程通过。
+- `./node_modules/.bin/tsc --noEmit`（同一隔离副本）exit 0；真实资产完整 SHA-256 清单见 `/private/tmp/feat007-build-FzbVf5iu/real-asset-sha256.txt`。未运行 build、coverage、E2E 或 SC-002；实际语音、模型和观众层均未运行。
+- 测试仅启动动态 loopback StageServer，finally 停止；共享 3080/3081/7390/8757 无监听（`lsof` exit 1、无输出）。测试过程无业务模型、语音或外部网络调用；本次未建立全局请求计数，不能报告已计数的 sharedRequests/externalRequests 数值。
+
+- **原Plan阶段状态（历史）**：当时仅新建工程上下文，未执行实现/测试；当前T001的部分实现与缺口以上方2026-11-12记录为准。
 - **实际改动与 Task 引用**：FEAT-007-T001 为计划 ID，尚未登记。源码核实全部只读：$REPO 侧用 `git show 7e72c8c:<path>`（读取 HEAD `c858712cab837ad68f20dd5fd2191a7fc0832da1`）；课件资产在兄弟工作区按实际文件只读读取。
 - **工作区事实**：开始时工作树存在 FEAT-006 修正段 WIP（10 个已跟踪修改 + 2 个未跟踪测试，集中于 `sessionContext*`/`agent.ts`/`index.ts`/`SessionContextSettingsPanel.tsx` 及其测试），属其他在跑 worker；本阶段未读取其 diff、未采用其内容、只写了本文件。
 
