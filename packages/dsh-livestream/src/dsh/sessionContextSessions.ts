@@ -47,9 +47,6 @@ export function generateSessionId(): string {
   return `livestream-${randomUUID()}`;
 }
 
-/** 本轮（本插件进程）内创建过的会话：native 返回别的 id 时可判定为复用/串号 */
-const requestedSessionIds = new Set<string>();
-
 /**
  * 管理会话创建的完整流程（工程上下文时序第 2 步）。
  * 捕获点在任何 await 之前：之后保存 B 不修改正在准备的 A。
@@ -79,7 +76,6 @@ export async function createManagedSession(ctx: AdapterContext, input: CreateSes
   }
   const composition = checkHostComposition(ctx.get?.('loader'));
   const sessionId = generateSessionId();
-  requestedSessionIds.add(sessionId);
   const prepared = await prepareSnapshot(record, sessionId, input.platform, preset);
   if (!prepared.ok) return { ok: false, status: prepared.status, error: prepared.error };
   const snapshot: SessionContextSnapshot = prepared.snapshot;
@@ -145,9 +141,4 @@ async function verifyNativeSession(ctx: AdapterContext, sessionId: string, expec
   const effective = workingDirectory.get(agent.session);
   if (effective !== expectedCwd) return { ok: false, status: 409, error: '实际生效的工作目录与所选目录不一致，已拒绝本次会话' };
   return { ok: true };
-}
-
-/** 创建流程结束后：本轮外的会话集合不保留；仅用于重复/串号判定 */
-export function forgetRequestedSession(sessionId: string): void {
-  requestedSessionIds.delete(sessionId);
 }

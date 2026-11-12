@@ -218,6 +218,17 @@ export async function createBrainSession(svc: ConsoleServices, line: 'live' | 'g
  * FEAT-006 管理路径：已保存会话设置的 live 主线走新的 /sessions（原生 create + 冻结快照 + 受限工具）。
  * 完成命名可保留 sessions.using()，不再对该新会话二次 preset.select。
  */
+/**
+ * FEAT-006（正式评审 R2）：损坏的保存记录（invalid）不同于真正无配置的 legacy。
+ * 开始动作共用这一守卫：invalid 状态返回拒绝理由（调用方在任何 native/preset/broadcast/onair
+ * 副作用之前抛出）；saved/legacy 返回 null。导出供真实组件动作与单元双层验证。
+ */
+export function sessionContextStartBlockReason(state: { sessionContext?: { invalid?: string } | null } | null): string | null {
+  const invalid = state?.sessionContext?.invalid;
+  if (!invalid) return null;
+  return `会话设置已损坏，无法开始直播（${invalid}）；请修正或关闭会话设置后再开始`;
+}
+
 export async function createManagedBrainSession(svc: ConsoleServices, platform: 'bilibili' | 'douyin', savedRevision: number | null): Promise<string> {
   void savedRevision;
   const workspace = svc.workspaces.list.getSnapshot().items[0];
@@ -616,7 +627,10 @@ export function Console() {
 
   const goLive = () => run(async () => {
     if (!svc) throw new Error('插件还没准备好，刷新一下页面再试。');
-    // FEAT-006 管理路径：已保存会话设置时先创建管理会话，之后才进入已明确要求的推流/开播（无效 cwd 不触发推流）
+    // FEAT-006（正式评审 R2）：损坏的保存记录（invalid）不同于真正无配置的 legacy——
+    // 开始动作在任何 native create / preset select / broadcast / onair 副作用之前拒绝；按钮禁用仅作补充
+    const blocked = sessionContextStartBlockReason(host);
+    if (blocked) throw new Error(blocked);
     const managed = host?.sessionContext?.saved != null;
     const sessionId = managed
       ? await createManagedBrainSession(svc, douyin ? 'douyin' : 'bilibili', host?.sessionContext?.saved?.revision ?? null)
@@ -744,7 +758,7 @@ export function Console() {
             )}
             {show?.onAir
               ? <button className="dl-btn dl-danger" disabled={busy} onClick={endLive}>下播（先让她道别）</button>
-              : <button className="dl-btn dl-primary" disabled={!host || busy || bc?.phase === 'preparing' || bc?.phase === 'face' || (bc?.phase === 'error' && bc.ownedActivity)} onClick={goLive}><i className="dl-go-dot" />{douyin ? '开始本地舞台' : settings?.broadcast ? '开播' : '开始彩排'}</button>}
+              : <button className="dl-btn dl-primary" disabled={!host || busy || !!host?.sessionContext?.invalid || bc?.phase === 'preparing' || bc?.phase === 'face' || (bc?.phase === 'error' && bc.ownedActivity)} title={host?.sessionContext?.invalid ? '会话设置已损坏：请修正或关闭会话设置后再开始' : undefined} onClick={goLive}><i className="dl-go-dot" />{douyin ? '开始本地舞台' : settings?.broadcast ? '开播' : '开始彩排'}</button>}
           </div>
         </header>
         {error && <p className="dl-error dl-banner">{error}</p>}

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile, rename } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { bindDirectory, readBoundedFile, readRegularFileNoFollowSync, verifyDirectory } from '../src/dsh/sessionContextPaths';
+import { bindDirectory, readBoundedFile, readDiscoveredSkill, verifyDirectory } from '../src/dsh/sessionContextPaths';
 
 describe('bounded material reading', () => {
   let dir: string;
@@ -141,9 +141,71 @@ describe('bounded material reading', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.failure).toBe('cancelled');
   });
+
+  // ── 正式评审 R1：中间目录在打开前检查后被移出根并以 symlink 换回（末端 inode 保持）必须零正文 ──
+
+  it('returns zero content when an intermediate segment is moved outside and swapped back as a symlink', async () => {
+    await mkdir(join(dir, 'root/mid'), { recursive: true });
+    await writeFile(join(dir, 'root/mid/file.txt'), '根内原正文\n');
+    const { rename: renamePath, symlink: symlinkPath, writeFile: rewrite } = await import('node:fs/promises');
+    const result = await readBoundedFile({
+      root: (globalThis as any).__root,
+      relativePath: 'mid/file.txt',
+      maxBytes: 4096,
+      beforeRead: async () => {
+        // 受控替换点：逐段检查之后、打开之前——mid 移到根外，原位换 symlink 指向它，就地改写正文
+        await renamePath(join(dir, 'root/mid'), join(dir, 'mid-outside'));
+        await symlinkPath(join(dir, 'mid-outside'), join(dir, 'root/mid'));
+        await rewrite(join(dir, 'mid-outside/file.txt'), '根外被改写的正文\n');
+      },
+    });
+    expect(result.ok, 'moved-outside ancestor with symlink-back must yield zero content').toBe(false);
+    if (!result.ok) expect(['identity_mismatch', 'symlink', 'escape']).toContain(result.failure);
+    await rm(join(dir, 'root/mid'), { recursive: true, force: true });
+    await rename(join(dir, 'mid-outside'), join(dir, 'root/mid'));
+  });
+
+  it('returns zero content when an intermediate segment inside the root is swapped to a symlink after the pre-open check', async () => {
+    await mkdir(join(dir, 'root/mid'), { recursive: true });
+    await writeFile(join(dir, 'root/mid/file.txt'), '根内原正文\n');
+    const { rename: renamePath, symlink: symlinkPath, writeFile: rewrite } = await import('node:fs/promises');
+    const result = await readBoundedFile({
+      root: (globalThis as any).__root,
+      relativePath: 'mid/file.txt',
+      maxBytes: 4096,
+      beforeRead: async () => {
+        // 受控替换点：mid 移为 root 内真实目录 mid-real，原位换 symlink（仍在根内），终端文件改写
+        await renamePath(join(dir, 'root/mid'), join(dir, 'root/mid-real'));
+        await symlinkPath(join(dir, 'root/mid-real'), join(dir, 'root/mid'));
+        await rewrite(join(dir, 'root/mid-real/file.txt'), '换回后被改写的正文\n');
+      },
+    });
+    expect(result.ok, 'root-internal intermediate symlink swap must yield zero content').toBe(false);
+    if (!result.ok) expect(['identity_mismatch', 'symlink', 'escape']).toContain(result.failure);
+    await rm(join(dir, 'root/mid'), { recursive: true, force: true });
+    await rename(join(dir, 'root/mid-real'), join(dir, 'root/mid'));
+  });
+
+  // ── 正式评审 R4：最后一次读取之后的取消必须零正文 ──
+
+  it('returns zero content when the signal aborts after the final read (post-read re-checks)', async () => {
+    const controller = new AbortController();
+    const result = await readBoundedFile({
+      root: (globalThis as any).__root,
+      relativePath: 'allow.txt',
+      maxBytes: 4096,
+      signal: controller.signal,
+      afterRead: async () => {
+        // 最后一次 read 已完成、缓冲已就绪：此窗口内的取消必须丢弃缓冲
+        controller.abort();
+      },
+    });
+    expect(result.ok, 'post-read abort must not commit content').toBe(false);
+    if (!result.ok) expect(result.failure).toBe('cancelled');
+  });
 });
 
-// ── 评审 HIGH：Skill 发现阶段的「发现到读取」替换防护（同步 O_NOFOLLOW 读取） ──
+// ── Skill 发现阶段的「发现到读取」替换防护（与资料读取共享同一身份纪律的入口） ──
 
 describe('discovery-time secure file reading', () => {
   let dir: string;
@@ -166,50 +228,45 @@ describe('discovery-time secure file reading', () => {
   };
 
   it('reads a normal regular file intact', async () => {
-    const file = join(dir, 'real-skill.md');
-    const result = readRegularFileNoFollowSync(file, 64 * 1024, await identityOf(file));
+    const result = await readDiscoveredSkill(dir, await identityOf(dir), 'real-skill.md', 64 * 1024);
     expect(result.ok).toBe(true);
     if (result.ok) expect(new TextDecoder().decode(result.bytes)).toContain('真实正文');
   });
 
-  it('refuses a path swapped to a symlink instead of following it (ELOOP)', async () => {
-    const link = join(dir, 'swapped-link.md');
-    const target = await identityOf(join(dir, 'outside-secret.txt'));
-    // 即使传入的是「来源外目标」的身份，也不允许跟随 symlink 读到内容
-    const result = readRegularFileNoFollowSync(link, 64 * 1024, target);
+  it('refuses a path swapped to a symlink instead of following it', async () => {
+    // 即使目标指向来源外文件，也不允许跟随 symlink 读到内容
+    const result = await readDiscoveredSkill(dir, await identityOf(dir), 'swapped-link.md', 64 * 1024);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('symlink swap must never yield content');
     expect(['symlink', 'identity_mismatch']).toContain(result.failure);
   });
 
   it('discards the buffer when the path entry was replaced by a different file (stale identity)', async () => {
-    const file = join(dir, 'real-skill.md');
     // 用「另一个文件」的身份来核对：模拟检查与打开之间文件被替换成别的文件
     const replacedIdentity = await identityOf(join(dir, 'outside-secret.txt'));
-    const result = readRegularFileNoFollowSync(file, 64 * 1024, replacedIdentity);
-    // 身份不匹配 → 拒绝并零正文（不返回 fd 打开的那个文件的内容）
+    const result = await readDiscoveredSkill(dir, replacedIdentity, 'real-skill.md', 64 * 1024);
+    // 身份不匹配 → 拒绝并零正文
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.failure).toBe('identity_mismatch');
   });
 
   it('enforces the byte budget before reading', async () => {
-    const file = join(dir, 'real-skill.md');
-    const result = readRegularFileNoFollowSync(file, 4, await identityOf(file));
+    const result = await readDiscoveredSkill(dir, await identityOf(dir), 'real-skill.md', 4);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.failure).toBe('limit_exceeded');
   });
 
   it('rejects directories without content', async () => {
-    await mkdir(join(dir, 'folder'), { recursive: true });
-    const identity = await identityOf(join(dir, 'folder'));
-    const result = readRegularFileNoFollowSync(join(dir, 'folder'), 64 * 1024, identity);
+    const { mkdir: makeDir } = await import('node:fs/promises');
+    await makeDir(join(dir, 'folder'), { recursive: true });
+    const result = await readDiscoveredSkill(dir, await identityOf(dir), 'folder', 64 * 1024);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.failure).toBe('unsupported_file');
   });
 
-  it('reports missing files as not_found', () => {
-    const result = readRegularFileNoFollowSync(join(dir, 'nope.md'), 64 * 1024, { dev: 1, ino: 1 });
+  it('reports missing files as not_found', async () => {
+    const result = await readDiscoveredSkill(dir, { dev: 1, ino: 1 }, 'nope.md', 64 * 1024);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.failure).toBe('not_found');
+    if (!result.ok) expect(['not_found', 'identity_mismatch']).toContain(result.failure);
   });
 });

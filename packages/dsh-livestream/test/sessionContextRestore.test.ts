@@ -137,7 +137,7 @@ describe('managed session restore from persisted snapshots', () => {
     routes = new Map();
     host.apply({
       effect(effect: () => unknown, label?: string) {
-        if (['dsh-livestream credentials', 'state', 'settings', 'session context recheck', 'sessions', 'onair'].includes(label ?? '')) effect();
+        if (['dsh-livestream credentials', 'state', 'settings', 'session context recheck', 'sessions', 'onair', 'offair'].includes(label ?? '')) effect();
       },
       provide() {},
       get(name: string) {
@@ -193,9 +193,17 @@ describe('managed session restore from persisted snapshots', () => {
     if (loaded.status === 'loaded') expect(loaded.body).toContain('恢复正文');
     const read = await sessionContext.readMaterial(sessionId, { rootId: 'root-1', path: '课件/lesson-1.txt' });
     expect(read.status).toBe('available');
-    // onair 核对通过；owner 状态重新显示活动快照
+    // onair 核对通过；owner 活动视图按实际开播状态显示当前直播会话（R7：未开播时 active 为 null）
     expect((await sessionContext.verifyManagedOnair(sessionId)).ok).toBe(true);
+    expect(sessionContext.stateView().active).toBeNull();
+    runtime.show.goLive(sessionId, undefined);
     expect(sessionContext.stateView().active?.sessionId).toBe(sessionId);
+    runtime.show.endLive();
+    // 立即收束 90s 道别宽限（finish 是 endLive 之后 onAir 变 false 的原生路径）
+    (runtime.show as any).finish();
+    expect(sessionContext.stateView().active).toBeNull();
+    clearInterval((runtime.show as any).director);
+    (runtime.show as any).director = null;
   });
 
   it('rejects onair with a correctable message when the disk snapshot is corrupted', async () => {
@@ -244,7 +252,10 @@ describe('managed session restore from persisted snapshots', () => {
     expect(runtime.sessionTools.verify?.(sessionId)?.bound).toBe(true);
     const routedAgain = await post('onair', { sessionId });
     expect(routedAgain.status).toBe(200);
-    // 清理 goLive 启动的导演定时器，不污染后续用例
+    // 下播复原（R7：owner active 依赖真实开播状态，不向后续用例泄漏 onAir）；立即收束道别宽限
+    await post('offair', {});
+    (runtime.show as any).finish();
+    expect(runtime.show.isOnAir).toBe(false);
     clearInterval((runtime.show as any).director);
     (runtime.show as any).director = null;
   });
@@ -297,12 +308,14 @@ describe('managed session restore from persisted snapshots', () => {
     expect(sessionContext.stateView().active?.sessionId).toBeUndefined();
     // 原生回滚会 dispose agent：其绑定 effect 清理连带清除 fail-closed 标记（与生产一致）
     for (const dispose of agents.get(sessionId).unbind.splice(0)) dispose();
-    // 再次冷恢复：正常绑定成功；恢复期登记进入活动视图
+    // 再次冷恢复：正常绑定成功（R7：恢复本身不改变 owner 活动视图——未开播 active 为 null）
     await runtime.sessionTools.onCreated!({ agent: agents.get(sessionId), source: 'resume' });
-    expect(sessionContext.stateView().active?.sessionId).toBe(sessionId);
+    expect(runtime.sessionTools.verify?.(sessionId)?.bound).toBe(true);
+    expect(sessionContext.stateView().active).toBeNull();
     // agent 释放（原生回滚/会话关闭路径）：活动登记一并撤销
     for (const dispose of agents.get(sessionId).unbind.splice(0)) dispose();
-    expect(sessionContext.stateView().active?.sessionId).toBeUndefined();
+    expect(runtime.sessionTools.verify?.(sessionId)?.bound).toBe(false);
+    expect(sessionContext.stateView().active).toBeNull();
     sessionContext.clearActiveSessionsForTest();
     agent.resetSessionBindingStateForTest();
   });
@@ -598,7 +611,9 @@ describe('managed session restore from persisted snapshots', () => {
     expect(persisted.ok).toBe(true);
     simulateRestart();
     await runtime.sessionTools.onCreated!({ agent: agents.get(created.sessionId), source: 'resume' });
-    expect(sessionContext.stateView().active?.effectiveCwd).toBe(await realpath(longCwd));
+    // R7：冷恢复不改变 owner 活动视图；绑定与快照的 effectiveCwd 经绑定状态与恢复结果核对
+    expect(runtime.sessionTools.verify?.(created.sessionId)?.bound).toBe(true);
+    expect(sessionContext.stateView().active).toBeNull();
     simulateRestart();
     // 回到短 cwd 基线，避免影响后续用例
     await save();

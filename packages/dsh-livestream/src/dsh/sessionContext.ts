@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto';
 import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, basename, join } from 'node:path';
 import {
   decodeSessionContextRecord,
   STATUS_TEXT,
@@ -31,7 +31,7 @@ import {
 } from '../shared/sessionContext';
 import { bindDirectory, readBoundedFile, readDiscoveredSkill, verifyDirectory, type DirectoryBinding, type DiscoveryReadHooks, type PathFailure } from './sessionContextPaths';
 import { parseSkillMarkdown, SKILL_LIMITS } from './sessionContextSkills';
-import { dataDir, hooks, settings } from './runtime';
+import { dataDir, hooks, settings, show } from './runtime';
 
 // ── 预算与目录常量 ────────────────────────────────────
 
@@ -232,6 +232,10 @@ async function discoverSource(entry: SessionContextEntry, canonicalRoot: string,
         if (skillStats.isSymbolicLink()) return { ok: false, code: 'invalid', field: `config.skillSources[${index}].path`, detail: `候选 SKILL.md ${name}/SKILL.md 是符号链接，已拒绝该来源` };
         if (skillStats.isFile()) candidates.push({ file: skillFile, relative: `${name}/SKILL.md` });
       }
+      // 正式评审 R8：启用的容器必须实际发现有效声明——空容器/仅 references/scripts/缺 SKILL.md 不是成功的空 Skill
+      if (candidates.length === 0) {
+        return { ok: false, code: 'not_found', field: `config.skillSources[${index}].path`, detail: '来源未发现任何 Skill 声明（空容器或子目录缺少 SKILL.md）' };
+      }
     }
   }
   for (const candidate of candidates) {
@@ -343,6 +347,98 @@ export async function discoverSkills(config: SessionContextConfig, options: { al
     }
   }
   return { ok: true, skills: discovered };
+}
+
+export type BindingsDiscoveryOutcome =
+  | { ok: true; skills: DiscoveredSkill[]; issues: string[] }
+  | { ok: false; code: 'limit_exceeded' | 'conflict'; field: string; detail: string };
+
+/**
+ * 创建时的 Skill 发现（正式评审 R3）：只消费保存记录里的 canonical 文件/目录与对象身份，
+ * 原始别名不参与解析（owner 回显/脱敏用）。每个绑定先核对身份（目录 realpath/dev/ino；
+ * 文件经共享的整链身份读取），身份不符或缺失按降级记入 issues（可用条目仍组成会话）；
+ * 同名冲突与字节/时间预算超限整体拒绝。发现深度与去重规则与保存时完全一致。
+ */
+async function discoverSkillsFromBindings(record: SessionContextRecord): Promise<BindingsDiscoveryOutcome> {
+  const discovered: DiscoveredSkill[] = [];
+  const issues: string[] = [];
+  const seenNames = new Set<string>();
+  const seenPaths = new Set<string>();
+  let totalBytes = 0;
+  const deadline = Date.now() + SKILL_LIMITS.scanBudgetMs;
+  for (const binding of record.bindings.skills) {
+    if (Date.now() > deadline) return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: '发现整体超时' };
+    const entry = record.config.skillSources[binding.index];
+    if (!entry || !entry.enabled) continue;
+    if (discovered.length >= SKILL_LIMITS.maxSkills) {
+      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `唯一 Skill 超过 ${SKILL_LIMITS.maxSkills} 份` };
+    }
+    if (binding.file) {
+      // 文件型来源：canonical 文件必须仍在身份核对过的父目录内；经共享读取原语取正文
+      const parentIdentity = { path: binding.path, dev: binding.dev, ino: binding.ino };
+      const parentFailure = await verifyDirectory(parentIdentity);
+      if (parentFailure) {
+        issues.push(`Skill 来源 ${entry.path} 已失效`);
+        continue;
+      }
+      const relative = binding.file.startsWith(`${binding.path}/`) ? binding.file.slice(binding.path.length + 1) : basename(binding.file);
+      const read = await readDiscoveredSkill(binding.path, { dev: binding.dev, ino: binding.ino }, relative, SKILL_LIMITS.maxFileBytes);
+      if (!read.ok) {
+        issues.push(`Skill 来源 ${entry.path} 已失效（${read.failure === 'symlink' ? '路径包含符号链接' : read.failure === 'not_found' ? '声明不存在' : '不可读'}）`);
+        continue;
+      }
+      const parsed = parseSkillMarkdown(read.bytes);
+      if (!parsed.ok) {
+        issues.push(`Skill 来源 ${entry.path} 的声明已失效（${parsed.failure}）`);
+        continue;
+      }
+      if (seenNames.has(parsed.skill.name)) continue;
+      seenNames.add(parsed.skill.name);
+      seenPaths.add(binding.file);
+      discovered.push({
+        name: parsed.skill.name,
+        description: parsed.skill.description,
+        modelInvocable: parsed.skill.modelInvocable,
+        userInvocable: parsed.skill.userInvocable,
+        sourcePath: binding.file,
+        raw: read.bytes,
+        body: parsed.skill.body,
+        sourceHash: sha256(read.bytes),
+        contentHash: sha256(new TextEncoder().encode(parsed.skill.body)),
+      });
+      totalBytes += read.bytes.byteLength;
+      if (totalBytes > SKILL_LIMITS.maxTotalBytes) {
+        return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 原始字节合计超过 ${SKILL_LIMITS.maxTotalBytes}` };
+      }
+      continue;
+    }
+    // 目录型来源：身份核对后按与保存时相同的容器规则发现（深度/去重/预算一致）
+    const canonical = { path: binding.path, dev: binding.dev, ino: binding.ino };
+    const identityFailure = await verifyDirectory(canonical);
+    if (identityFailure) {
+      issues.push(`Skill 来源 ${entry.path} 已失效`);
+      continue;
+    }
+    const before = discovered.length;
+    const result = await discoverSource(entry, binding.path, binding.index, discovered, seenPaths, {});
+    if (!result.ok) {
+      if (result.code === 'conflict' || result.code === 'limit_exceeded') {
+        return { ok: false, code: result.code, field: result.field, detail: result.detail };
+      }
+      // 其余（缺失/不可读/身份变化等）按降级记入问题，可用条目仍组成会话
+      issues.push(`Skill 来源 ${entry.path} 已失效（${result.detail}）`);
+      continue;
+    }
+    for (const skill of discovered.slice(before)) {
+      if (seenNames.has(skill.name)) continue;
+      seenNames.add(skill.name);
+      totalBytes += skill.raw.byteLength;
+    }
+    if (totalBytes > SKILL_LIMITS.maxTotalBytes) {
+      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 原始字节合计超过 ${SKILL_LIMITS.maxTotalBytes}` };
+    }
+  }
+  return { ok: true, skills: discovered, issues };
 }
 
 // ── 保存 ──────────────────────────────────────────────
@@ -623,16 +719,18 @@ export function compositionForSession(sessionId: string): { ok: true } | { ok: f
   return activeSessions.get(sessionId)?.composition ?? null;
 }
 
-export function activeSnapshotSessionId(): string | null {
-  for (const sessionId of activeSessions.keys()) return sessionId;
-  return null;
-}
-
+/**
+ * owner 的「活动会话」按实际开播状态 + 当前直播会话 id 选择（正式评审 R7）：
+ * 未开播或当前直播会话没有管理快照时显示无活动；仅创建/恢复/准备其他快照不改变它。
+ * 按会话 id 的绑定存储继续保留（恢复/核对用），不以登记顺序代替当前直播。
+ */
 function activeView() {
-  const sessionId = activeSnapshotSessionId();
-  if (!sessionId) return null;
-  const { snapshot } = activeSessions.get(sessionId)!;
-  return snapshotView(snapshot);
+  if (!show.isOnAir) return null;
+  const current = show.currentSession;
+  if (!current) return null;
+  const entry = activeSessions.get(current);
+  if (!entry) return null;
+  return snapshotView(entry.snapshot);
 }
 
 export function snapshotView(snapshot: SessionContextSnapshot): SessionContextSnapshotView {
@@ -721,36 +819,12 @@ export async function prepareSnapshot(record: SessionContextRecord, sessionId: s
   }
   let skills: SessionSnapshotSkill[] = [];
   if (config.enabled && config.skillSources.some((entry) => entry.enabled)) {
-    // 创建时缺失/不可读来源按降级处理（标记问题、可用条目仍组成会话）；冲突与预算超限仍拒绝
-    const discovered = await discoverSkills(config, { allowMissing: true });
+    // 正式评审 R3：创建只消费保存的 canonical 文件/目录与对象身份；原始 alias 仅供 owner 回显/脱敏，
+    // 不在创建时重新解析（alias 改指更深目录/根外不能改变保存时确定的来源集合）
+    const discovered = await discoverSkillsFromBindings(record);
     if (!discovered.ok) return { ok: false, status: 409, error: `Skill 来源在创建时失效：${discovered.detail}` };
-    for (const binding of record.bindings.skills) {
-      const entry = config.skillSources[binding.index];
-      if (!entry || !entry.enabled) continue;
-      // 创建时逐条重查保存的目录身份，不接受被替换成 symlink 或不同 inode 的根
-      const canonical: DirectoryBinding = { path: binding.path, dev: binding.dev, ino: binding.ino };
-      if (binding.ino > 0 && await verifyDirectory(canonical)) {
-        issues.push(`Skill 来源 ${entry.path} 已失效`);
-        continue;
-      }
-      const prefix = binding.path.endsWith('/') ? binding.path : `${binding.path}/`;
-      const matched = discovered.skills.filter((item) =>
-        (item.sourcePath === binding.file || item.sourcePath.startsWith(prefix)) && !skills.some((existing) => existing.name === item.name));
-      if (binding.file) {
-        const exact = discovered.skills.find((item) => item.sourcePath === binding.file);
-        if (!exact) {
-          issues.push(`Skill 来源 ${entry.path} 未发现可用声明`);
-          continue;
-        }
-        if (!skills.some((existing) => existing.name === exact.name)) skills.push(toSnapshotSkill(exact));
-        continue;
-      }
-      if (!matched.length) {
-        issues.push(`Skill 来源 ${entry.path} 未发现可用声明`);
-        continue;
-      }
-      for (const skill of matched) skills.push(toSnapshotSkill(skill));
-    }
+    skills = discovered.skills.map(toSnapshotSkill);
+    issues.push(...discovered.issues);
   }
   const snapshot: SessionContextSnapshot = {
     schemaVersion: 1,
@@ -1040,40 +1114,58 @@ export function clearActiveSessionsForTest(): void {
 
 // ── 每 turn 预算与运行时观测 ──────────────────────────
 
-interface SessionObservation {
-  turn: number;
-  skills: Map<string, { status: SessionContextStatus; loadedAt: number | null; hash: string | null }>;
+/**
+ * 单个 native turn 的预算与输出归属（四轮接收核对 2）：与会话级状态分离存储，
+ * 按实际 native turn 键控——在途 IO 闭包捕获进入时的预算对象，切 turn 原地清零不再污染结算。
+ */
+interface TurnBudget {
   skillCalls: number;
   skillBodyBytes: number;
+  /** 本 turn 已实际输出正文的 Skill 名称（正式评审 R6：与跨 turn 的历史加载状态分开计量） */
+  turnEmittedSkills: Set<string>;
   readAttempts: number;
   readBufferBytes: number;
   readOutputBytes: number;
+}
+
+interface SessionObservation {
+  turn: number;
+  turns: Map<number, TurnBudget>;
+  skills: Map<string, { status: SessionContextStatus; loadedAt: number | null; hash: string | null }>;
+  /** 会话级在途保护：真实 IO 收束前 busy 不释放（与各 turn 预算无关） */
   inflight: boolean;
 }
 
 const observations = new Map<string, SessionObservation>();
 
+function budgetFor(observed: SessionObservation, turn: number): TurnBudget {
+  let budget = observed.turns.get(turn);
+  if (!budget) {
+    budget = { skillCalls: 0, skillBodyBytes: 0, turnEmittedSkills: new Set<string>(), readAttempts: 0, readBufferBytes: 0, readOutputBytes: 0 };
+    observed.turns.set(turn, budget);
+    // 有界：只保留当前与近两个 turn 的预算
+    for (const key of observed.turns.keys()) {
+      if (key < turn - 2) observed.turns.delete(key);
+    }
+  }
+  return budget;
+}
+
 function observationFor(sessionId: string): SessionObservation {
   let existing = observations.get(sessionId);
   if (!existing) {
-    existing = { turn: 0, skills: new Map(), skillCalls: 0, skillBodyBytes: 0, readAttempts: 0, readBufferBytes: 0, readOutputBytes: 0, inflight: false };
+    existing = { turn: 0, turns: new Map<number, TurnBudget>(), skills: new Map(), inflight: false };
     observations.set(sessionId, existing);
   }
   return existing;
 }
 
-/** agent pre-step 在每个真实 turn 开始时调用：预算按 turn 重置 */
+/** agent pre-step 在每个真实 turn 开始时调用：只推进当前 turn 号，各 turn 预算按键惰性创建，
+ * 不做原地清零——在途 IO 闭包捕获的旧 turn 预算对象继续归属旧 turn，结算不污染新 turn */
 export function noteSessionTurn(sessionId: string, turn: number): void {
   const existing = observations.get(sessionId);
   if (!existing) return;
-  if (existing.turn !== turn) {
-    existing.turn = turn;
-    existing.skillCalls = 0;
-    existing.skillBodyBytes = 0;
-    existing.readAttempts = 0;
-    existing.readBufferBytes = 0;
-    existing.readOutputBytes = 0;
-  }
+  if (existing.turn !== turn) existing.turn = turn;
 }
 
 function sessionObservation(sessionId: string): SessionObservation | undefined {
@@ -1091,7 +1183,7 @@ export function registerObservationSession(sessionId: string): void {
 // ── 模型工具：Skill 加载 ──────────────────────────────
 
 export type SkillLoadResult =
-  | { status: 'loaded'; name: string; body: string; contentHash: string }
+  | { status: 'loaded'; name: string; body: string; contentHash: string; /** 同 turn 重复：明确不重复注入正文（内部有界标记，对外状态仍是 loaded） */ repeated?: true }
   | { status: 'limit_exceeded'; detail: string }
   | { status: 'unavailable'; detail: string }
   | { status: 'denied'; detail: string };
@@ -1104,18 +1196,28 @@ export function loadSkill(sessionId: string, name: unknown): SkillLoadResult {
   const skill = snapshot.skills.find((item) => item.name === name);
   if (!skill) return { status: 'unavailable', detail: `没有名为 ${name.slice(0, 64)} 的可加载 Skill。` };
   if (!skill.modelInvocable) return { status: 'denied', detail: `Skill ${skill.name} 已被 owner 设置为不可由模型加载。` };
-  if (observed.skillCalls >= SKILL_TURN_LIMITS.callsPerTurn) {
+  const budget = budgetFor(observed, observed.turn);
+  if (budget.skillCalls >= SKILL_TURN_LIMITS.callsPerTurn) {
     return { status: 'limit_exceeded', detail: `本轮 Skill 加载次数已达上限（${SKILL_TURN_LIMITS.callsPerTurn}）。` };
   }
-  // 相同 name 在一 turn 重复不重复注入，但仍返回同一份冻结正文；无磁盘重读
-  const alreadyLoaded = observed.skills.get(name)?.status === 'loaded';
+  // 正式评审 R6：分离「跨 turn 历史加载状态」与「本 turn 已输出正文集合」——
+  // 同 turn 同名首次成功才输出一份冻结正文（计入 128 KiB），重复请求只返回无正文提示；
+  // 新 turn 再次请求可返回同一冻结正文并重新计入该 turn 预算。调用次数上限不变。
+  const alreadyEmittedThisTurn = budget.turnEmittedSkills.has(name);
   const bodyBytes = Buffer.byteLength(skill.body, 'utf8');
-  if (!alreadyLoaded && observed.skillBodyBytes + bodyBytes > SKILL_TURN_LIMITS.turnBodyBytes) {
+  if (!alreadyEmittedThisTurn && budget.skillBodyBytes + bodyBytes > SKILL_TURN_LIMITS.turnBodyBytes) {
     return { status: 'limit_exceeded', detail: `本轮 Skill 正文字节预算（${SKILL_TURN_LIMITS.turnBodyBytes}）不足。` };
   }
-  observed.skillCalls += 1;
-  if (!alreadyLoaded) observed.skillBodyBytes += bodyBytes;
+  budget.skillCalls += 1;
+  if (!alreadyEmittedThisTurn) {
+    budget.skillBodyBytes += bodyBytes;
+    budget.turnEmittedSkills.add(name);
+  }
+  // 历史加载状态只供 owner 视图（loadedAt/hash），不参与本 turn 计量
   observed.skills.set(name, { status: 'loaded', loadedAt: Date.now(), hash: skill.contentHash });
+  if (alreadyEmittedThisTurn) {
+    return { status: 'loaded', name: skill.name, body: '', contentHash: skill.contentHash, repeated: true };
+  }
   return { status: 'loaded', name: skill.name, body: skill.body, contentHash: skill.contentHash };
 }
 
@@ -1164,7 +1266,8 @@ export async function readMaterial(sessionId: string, input: MaterialReadInput):
   if (!root) return { status: 'denied', detail: '没有这个资料根。' };
   const observed = observationFor(sessionId);
   if (observed.inflight) return { status: 'busy', detail: '已有一次资料读取在进行。' };
-  if (observed.readAttempts >= MATERIAL_LIMITS.attemptsPerTurn) {
+  // 尝试次数预算按进入时的 turn 计（与下方 readMaterial 的结算归属一致）
+  if (budgetFor(observed, observed.turn).readAttempts >= MATERIAL_LIMITS.attemptsPerTurn) {
     return { status: 'limit_exceeded', detail: `本轮资料读取次数已达上限（${MATERIAL_LIMITS.attemptsPerTurn}）。` };
   }
   const startLine = input.startLine === undefined ? MATERIAL_LIMITS.defaultStartLine : Number(input.startLine);
@@ -1172,19 +1275,37 @@ export async function readMaterial(sessionId: string, input: MaterialReadInput):
   if (!Number.isSafeInteger(startLine) || startLine < 1 || !Number.isSafeInteger(maxLines) || maxLines < 1 || maxLines > MATERIAL_LIMITS.maxLines) {
     return { status: 'denied', detail: `行段无效：startLine 从 1 开始，maxLines 1～${MATERIAL_LIMITS.maxLines}。` };
   }
-  observed.readAttempts += 1;
+  // 四轮接收核对 2：进入时捕获本次调用的 turn 预算对象——之后 noteSessionTurn 切换 turn
+  // 也不影响本次结算的归属（旧 IO 结算不记新 turn）；busy 由会话级 inflight 单独保护。
+  // entryTurnBudget 与 turnBudget 在同一同步段内捕获，指向同一 turn 的同一预算对象
+  const turnBudget = budgetFor(observed, observed.turn);
+  turnBudget.readAttempts += 1;
   observed.inflight = true;
-  const startedAt = Date.now();
-  const timeout = AbortSignal.any([AbortSignal.timeout(MATERIAL_LIMITS.readTimeoutMs), ...(input.signal ? [input.signal] : [])]);
+  // 组合信号保留最先触发的原因：外部先取消后，即使 IO 收束时本地 deadline 也已到期，
+  // 仍须返回 cancelled。只有组合原因确实来自本地 deadline 时才分类为 timeout。
+  const deadlineSignal = AbortSignal.timeout(MATERIAL_LIMITS.readTimeoutMs);
+  const timeout = input.signal ? AbortSignal.any([deadlineSignal, input.signal]) : deadlineSignal;
+  const classifyAbort = (): 'timeout' | 'cancelled' => (
+    deadlineSignal.aborted && timeout.reason === deadlineSignal.reason ? 'timeout' : 'cancelled'
+  );
   try {
+    // 正式评审 R5：IO 前按剩余预算约束本次读取上限（同时是文件大小上限）；剩余额度为零时不发出任何读取
+    const remainingBudget = Math.max(0, MATERIAL_LIMITS.turnBufferBytes - turnBudget.readBufferBytes);
+    if (remainingBudget <= 0) {
+      return { status: 'limit_exceeded', detail: `本轮读取缓冲预算（${MATERIAL_LIMITS.turnBufferBytes} 字节）已用完。` };
+    }
     const result = await readBoundedFile({
       root: root.binding,
       relativePath: input.path,
-      maxBytes: MATERIAL_LIMITS.maxFileBytes,
+      maxBytes: Math.min(MATERIAL_LIMITS.maxFileBytes, remainingBudget),
       signal: timeout,
     });
+    // 四轮接收核对 1：先把真实已读字节结算到进入时捕获的原 turn 预算（失败/取消不免单），
+    // 再决定 cancelled/timeout/正文提交——早于任何 aborted 提前返回
+    turnBudget.readBufferBytes += result.ok ? result.bytes.byteLength : (result.consumedBytes ?? 0);
+    // 正式评审 R4：读取返回即核对组合信号——取消/内部超时零正文，晚到缓冲不提交
+    if (timeout.aborted) return { status: classifyAbort(), detail: '' };
     if (!result.ok) {
-      if (timeout.aborted) return { status: timeout.reason === 'TimeoutError' ? 'timeout' : 'cancelled', detail: '' };
       if (result.failure === 'escape') return { status: 'denied', detail: '路径超出授权范围。' };
       if (result.failure === 'symlink') return { status: 'denied', detail: '路径包含符号链接，已拒绝。' };
       if (result.failure === 'not_found') return { status: 'unavailable', detail: '资料文件不存在。' };
@@ -1195,8 +1316,7 @@ export async function readMaterial(sessionId: string, input: MaterialReadInput):
       return { status: 'unavailable', detail: '资料读取失败。' };
     }
     const bytes = result.bytes;
-    observed.readBufferBytes += bytes.byteLength;
-    if (observed.readBufferBytes > MATERIAL_LIMITS.turnBufferBytes) {
+    if (turnBudget.readBufferBytes > MATERIAL_LIMITS.turnBufferBytes) {
       return { status: 'limit_exceeded', detail: `本轮读取缓冲预算（${MATERIAL_LIMITS.turnBufferBytes} 字节）不足。` };
     }
     // 只接受 UTF-8 文本；二进制/NUL 拒绝
@@ -1218,11 +1338,12 @@ export async function readMaterial(sessionId: string, input: MaterialReadInput):
       // 请求行段超过输出上限则拒绝并提示缩小行段，不默默截断
       return { status: 'limit_exceeded', detail: `请求行段的输出超过 ${MATERIAL_LIMITS.maxOutputBytes} 字节，请缩小行段。` };
     }
-    if (observed.readOutputBytes + encoded.byteLength > MATERIAL_LIMITS.turnOutputBytes) {
+    if (turnBudget.readOutputBytes + encoded.byteLength > MATERIAL_LIMITS.turnOutputBytes) {
       return { status: 'limit_exceeded', detail: `本轮返回正文预算（${MATERIAL_LIMITS.turnOutputBytes} 字节）不足。` };
     }
-    observed.readOutputBytes += encoded.byteLength;
-    void startedAt;
+    turnBudget.readOutputBytes += encoded.byteLength;
+    // 正式评审 R4：结果提交前最后核对组合信号（读后复核与切片都可能跨越取消时点）
+    if (timeout.aborted) return { status: classifyAbort(), detail: '' };
     return {
       status: 'available',
       rootId: root.rootId,
@@ -1235,6 +1356,7 @@ export async function readMaterial(sessionId: string, input: MaterialReadInput):
       bytes: bytes.byteLength,
     };
   } finally {
+    // 真实在途操作跨 turn 收束前 busy 不提前释放：finally 只在本函数真正返回时解除
     observed.inflight = false;
   }
 }

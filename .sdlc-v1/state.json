@@ -157,12 +157,12 @@
         "FEAT-006-T001": {
           "depends_on": [],
           "id": "FEAT-006-T001",
-          "status": "in_progress",
+          "status": "done",
           "title": "交付直播会话目录、Skill 与受限资料配置完整旅程",
-          "updated_at": "2026-11-12T02:08:45Z"
+          "updated_at": "2026-11-12T03:35:30Z"
         }
       },
-      "updated_at": "2026-11-12T02:08:45Z",
+      "updated_at": "2026-11-12T03:35:30Z",
       "validation": {
         "at": null,
         "command": null,
@@ -346,7 +346,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
       "status": "in_delivery",
       "title": "直播会话的工作目录与 Skill 设置",
-      "updated_at": "2026-11-12T02:08:45Z"
+      "updated_at": "2026-11-12T03:35:30Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

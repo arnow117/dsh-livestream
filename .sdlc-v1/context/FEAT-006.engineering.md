@@ -639,3 +639,79 @@ node --import ./register.mjs sc002-correction-r2.mjs phase{1..5}
 主 Agent 核对当前源码、CFG-01～05、读取与 Skill 每 turn 预算、状态归属及独立评审的受控探针记录，接受 FEAT-004 approved、FEAT-006 changes_requested 的规范状态请求。R1～R8 均为当前 Feature 累计契约的确定缺口；本次不是以测试数量否定既有证据，也不把新实例称为三轮修正新引入。N1 为有依据的可选清理，不作为单独交付或阻塞项。
 
 同一实现者继续完整修正段，保留原失败历史及已经使用的主 Agent 唯一诊断额度。现有独立证据只覆盖其已执行场景，新交错与预算分支需要失败先行和对应实际输出/IO 断言；之后在新的最终业务提交上重新独立验证和评审。FEAT-004 的批准对当前候选有效，但合并 Ship 仍等待 FEAT-006，不据此发布未完成组合。主 Agent 不运行新的诊断实验。
+
+### 2026-11-12 四轮实现与验证（同执行者，R1～R8 + N1 逐项处置完成，awaiting_acceptance）
+
+执行环境沿用 T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`（executedModel 元数据同前，1M 容量未验证）。起点 HEAD `4f973514dfc86655af593761225244bc95d11974`（干净树，业务源码等同已验收候选 `2b107efc`）；本轮为干净树上的新增 dirty（15 files changed 基础 + 1 new test file），无 Git 写操作、无 lifecycle mutation、共享服务/在用 lib 零触碰、真实外部调用预算 0。隔离副本 `/private/tmp/feat006-r4/repo`（311 项起始清单与目标逐字节一致 `bd026847…a002c1`；收尾清单 `681d0c4e…1de5` 目标与副本一致）。Sol 评审自有探针目录 `/private/tmp/dsh-sol-review-20261112-Kq3TAI/` 只读引用，未重做根因实验；本轮 failing-first 红状态全部实测（12 项红断言逐条核对红因，其中 1 项夹具冲突空过已修正夹具后重证红）。
+
+**逐项处置**（实现与证据均绑定隔离副本最终代码）：
+
+1. **R1 HIGH 资料中间目录替换**：`sessionContextPaths.ts` 整体重构为单一实现 `readViaIdentifiedPath`——资料 `readBoundedFile` 与 Skill 发现 `readDiscoveredSkill` 共享同一身份纪律：逐段 lstat 建立「根+全部祖先段+末端」dev/ino 身份 → realpath 边界（两侧 canonical，兼容 macOS /var symlink）→ beforeRead 钩子 → **重走整条路径核对身份未变** → O_NOFOLLOW 打开 + fd 身份比对 → 有界读取 → afterRead 钩子 → **读后重走整条路径核对身份与实际边界**；不等价旧 helper 删除（见 N1）。测试：根外移动+symlink 换回+保留末端 inode 就地改写 → identity_mismatch/symlink/escape 拒绝零正文；根内中间段 symlink 换回同断言。
+2. **R2 HIGH 损坏记录走 legacy**：`console.tsx` 新增导出守卫 `sessionContextStartBlockReason`（saved/legacy 放行、invalid 返回拒绝理由），goLive 在任何 native/preset/broadcast/onair 副作用前抛出；开始按钮在 invalid 时禁用（title 提示）。新 `test/consoleStartGuard.test.tsx` 双层验证：守卫函数（invalid 两种损坏来源拒绝、saved/legacy 放行）+ 真实组件（unknown schemaVersion 与加严 bindings 解码失败两种损坏都使按钮禁用、点击零副作用；owner 显式替换后走管理创建路径——POST /sessions 真实发出）。
+3. **R3 MEDIUM 原始 alias 重解析**：新增 `discoverSkillsFromBindings(record)`——创建时只消费保存记录的 canonical 文件/目录与对象身份（目录 verifyDirectory 核对、文件经共享身份读取原语读 canonical 路径），原始别名不参与解析；同名冲突/预算超限整体拒绝，缺失/不可读/身份变化降级为 issues（可用条目仍组会话）；发现深度与去重规则与保存一致。`prepareSnapshot` 改用它。测试：alias 改指更深 hidden 目录（其中 SKILL.md 按规则不该发现）后再创建，快照仍只有保存时集合，hidden 来源 unavailable。
+4. **R4 MEDIUM 最后读取取消仍提交**：`readViaIdentifiedPath` 在每次 `FileHandle.read` 返回后、afterRead 钩子后、读后复核后、结果提交前都核对组合 signal；取消即丢弃缓冲并携带实际消耗字节。`readMaterial` 在读取返回与提交前各核对一次，`classifyAbort` 按 `timeout.reason.name === 'TimeoutError'` 区分内部超时与外部取消（修复对象与字符串比较）。测试：afterRead 窗口 abort → cancelled 零正文；内部 2 秒 deadline（真实挂起 read 2300ms）→ `timeout`；外部 abort → `cancelled`。
+5. **R5 MEDIUM 缓冲预算读后计费**：`readMaterial` IO 前按剩余预算约束本次 maxBytes（`min(256KiB, 剩余)`，同时是文件大小上限）；剩余额度为零时零读取直接 limit_exceeded；失败/取消按 `consumedBytes` 结算实际已读量；返回行段小不降低缓冲计费。测试：同 turn 四次各取一行读 256KiB 文件，真实 FileHandle.read 字节计数 ≤ 512KiB（修复前实测 1MiB），状态序列 [available,available,limit_exceeded,limit_exceeded]。
+6. **R6 MEDIUM 重复加载重复注入正文**：`SessionObservation` 增加 `turnEmittedSkills`（本 turn 已输出集合，与跨 turn 历史加载状态分离）；同 turn 同名首次输出冻结正文并计 128KiB 预算，重复返回 `{loaded, repeated:true, body:''}`；新 turn `noteSessionTurn` 清空输出集合并重置预算，可重新输出并重新计费；调用上限 4 次不变。`agent.ts` 工具 execute 对 repeated 返回「本轮已经加载过」无正文提示（模型消息中正文只出现一份）。单元测试断言真实 body 字节（首次=完整、重复=0、新 turn 重新完整）；E2E 同 turn 重复加载断言受控提示且不含冻结正文。
+7. **R7 MEDIUM active 取最早登记项**：`activeView()` 改为按真实开播状态选择——`show.isOnAir && show.currentSession` 对应的已登记快照，否则 null；按 id 的绑定存储不变（恢复/核对继续用）。修正的错误期待：restore/sessions 单测中「恢复/创建即活动」改为「onair 前 null、显式开播后=当前 id、endLive+finish（90s 道别宽限原生收束）后 null」；E2E 增加开播前 active=null 断言；SC002 探针 hostB 的「重开即 active」期待改为「冷重开 active=null → 显式 onair → active=本会话且 cwd 一致」。phase1 失败创建无活动绑定、phase3 onair 后活动快照等既有断言按新语义核对通过。
+8. **R8 MEDIUM 空来源 valid**：`discoverSource` 容器分支在候选为零时返回 `not_found`（空容器/仅 references/scripts/子目录缺 SKILL.md）。测试：空目录与仅含无 SKILL.md 子目录的容器保存 400 + not_found 且原 settings 字节不变；合法重复 canonical 来源（本体+symlink alias）保存 200 且 health 全 valid（去重不误报）。
+9. **N1 LOW**：已核实生产零调用后删除 `readRegularFileNoFollowSync`/`SyncSecureReadResult`（测试迁移到真实 `readDiscoveredSkill`）与 `requestedSessionIds`/`forgetRequestedSession`（创建串号判定实际由 native 返回 id 比较承担）；现有类型检查与相关回归全绿，未扩大重构。
+
+**验证命令与结果（隔离副本，最终代码，全部 exit 0）**：
+
+```text
+pnpm run check                                          # tsc 通过
+pnpm run build                                          # 四 bundle；lib/index.js 零 dsh-tools/dsh-llm
+vitest run --coverage --coverage.reportsDirectory=coverage/feat-006-build --exclude test/macosTts.test.ts
+                                                        # 87 文件，602 通过 / 8 跳过；macosTts 2 项真实 OS 语音按独立 Validate 现行边界 exclude，如实列未跑
+node test/coverage-diff.mjs fd48d0a5d9a18a3759428c3286f28480630eeb9a packages/dsh-livestream/coverage/feat-006-build/coverage-final.json
+                                                        # 行 1946/2214（87.90%）、分支 961/1241（77.44%）；阈值 80%/70%
+e2e run --config e2e-session-context.config.ts --workers 1 --retries 0   # 4/4
+e2e run --config e2e.config.ts / e2e-douyin / e2e-query                    # 6/6、12/12、10/10
+test/live-query/run.mjs（offline）                         # exit 0；2 场景 failureCode=null，counts model:4/mcp:1/geocode:1/current:1
+node --import ./register.mjs sc002-validate-rerun.mjs phase{1..5}
+                                                        # 五阶段全 0 failures：24、12、18、19、25 项检查（合计 98）
+node --import ./register.mjs host-journey-a.mjs hostA    # 20/20（含 '/' 静态入口 401/认证 SPA）
+node --import ./register.mjs host-journey-b.mjs hostB    # 25/25（R7 修正：冷重开 active=null → onair → active=本会话）
+```
+
+SC002/宿主旅程探针复用 `/private/tmp/dsh-unified-validate-20261112/sc002/` 定义，运行于自有 `/private/tmp/feat006-r4/sc002/`（路径重定向、旧日志不覆盖），hostB 增加 R7 修正断言；hostA 为 hostA-only 场景（宿主 A 保存+创建+冻结+持久化），hostB 为重启重开旅程。新增与 R2/R6/R7 直接相关的真实组件动作/原生工具输出/owner 状态验证（consoleStartGuard 双层、E2E 重复加载提示与开播前 active=null、hostB R7 断言）；R1/R3/R4/R5/R8 有真实 IO/文件替换/组件点击证据。
+
+**usage**：根 README `LIVE-SESSION-CONTEXT` 与 examples 指南第 5/6 条更新 R2（invalid 禁用开始）、R6（同轮同名只注入一次）、R7（活动会话跟随开播状态、下播无活动）、R8（空来源不能保存）的实际行为；无个人路径/secret。
+
+**资源收尾**：探针/测试/esbuild 进程全部退出；本机 node 监听仅剩任务外既有服务（poki daemon 等）；共享 3080/3081/7390/8757 零触碰；失败证据与清单保留于 `/private/tmp/feat006-r4/`。
+
+**移交状态**：`stage: build`，`status: awaiting_acceptance`。requested_transitions 见 canonical；完整宿主重启（90s 道别宽限的真实等待）、真实舞台/观众播放、正式独立 Validate/Review 仍归主 Agent 阶段；模型 1M 容量未验证。
+
+### 2026-11-12 四轮接收核对：R4/R5 结算与 turn 归属仍待补齐
+
+主 Agent 核对 312 项清单 `30dff6977796849a61400f07ac4c356ecfa922c0238308b38480e8cba830e0a5`：目标与副本逐项一致，实际日志支持 87 文件 602 通过/8 跳过、差异 87.90%/77.44%、五阶段 98 项与宿主 A20/B25。此核对不重跑诊断实验；工作树保留现有实现与证据，T001 不接受 done 请求，继续 in_progress。
+
+剩余源码定位：`readMaterial()` 在 `readBoundedFile()` 返回后先检查 `timeout.aborted` 并提前返回，之后才结算 `result.consumedBytes` 或成功字节；因此实际已读后取消仍免计费，违反 R5。另 `noteSessionTurn()` 原地清零同一个 SessionObservation 的读取计数，在途读取闭包仍持有该对象，旧 turn 完成会把字节记入新 turn；未满足现行实施约束中的原 turn 结算与 busy 归属。应先对捕获的原 turn 预算结算真实消费，再决定是否发布正文；跨 turn 不得共享被原地重置的预算对象，也不得提前解除会话级在途保护。
+
+R4 的分类还仅按组合 reason.name 判断，需保持本地 deadline 身份与外部取消来源的区分，避免外部 abort 携带 TimeoutError 名称时冒作本地 2 秒超时。请同一实现者覆盖“已读后取消仍消耗额度”“旧 turn 在途期间切到新 turn，旧结算不污染新 turn 且 busy 不提前释放”及取消来源边界；沿用完整 brief、原失败历史与主 Agent 诊断额度已用事实，不新建任务或改变验收范围。
+
+### 2026-11-12 五轮局部修正实现与验证（同执行者，R4/R5 残余三项处置完成，awaiting_acceptance）
+
+执行环境同前（T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`；executedModel 元数据同前）。HEAD `4f973514` 不变；本轮仅改 `src/dsh/sessionContext.ts`（预算模型与结算顺序）与 `test/sessionContextSessions.test.ts`（三个新测试）。隔离副本 `/private/tmp/feat006-r4/repo` 收尾 312 项清单与目标一致；五轮日志独立 `-r5` 后缀，四轮证据保留。
+
+**failing-first**：三个新测试先在四轮代码副本上跑红（结算顺序缺陷：取消已读不计费；in-place 清零：跨 turn 污染；classify：外部 TimeoutError 名误判），红因逐条核对后修正转绿。
+
+**1. 结算先于分类（R4/R5 残余）**：`readMaterial` 在 `readBoundedFile` 返回后立即把真实已读字节（成功=`bytes.byteLength`、失败/取消=`consumedBytes`）结算进**进入时捕获的原 turn 预算对象**，之后才做 `timeout.aborted` 分类与失败映射——「已读且返回 consumedBytes 的取消/超时路径」不再漏计费。新测试：同 turn 第一次 read 正常返回完整缓冲后立即取消（真实 FileHandle.read 计数）→ cancelled 零正文且 260000 字节入账；第二次完整读 available；第三次在发出任何读取前 limit_exceeded（零新增读取字节）；全程实际读取 ≤512KiB（未结算实现会读到 ~780000 字节而在此失败）。
+
+**2. 分离会话级在途保护与各 turn 预算（R4/R5 残余）**：`SessionObservation` 重构为 `{turn, turns: Map<number, TurnBudget>, skills, inflight}`——`TurnBudget`（skill 调用/字节/输出集合、read 尝试/缓冲/输出）按 native turn 号键控惰性创建；`noteSessionTurn` 只推进 turn 号，**不再原地清零**；在途 IO 闭包捕获的旧 turn 预算对象继续归属旧 turn，结算不污染新 turn（有界保留当前与近两个 turn）；busy 由会话级 `inflight` 单独保护，切 turn 不提前释放。barrier 测试：T1 read 挂起在真实 `FileHandle.read` 内 → `noteSessionTurn(2)` → T2 新读 busy → 放行 T1（available，结算进 T1）→ T2 自身完整预算下两次 256KiB 全读 available、第三次 limit_exceeded（若 T1 结算污染 T2，第二次即失败）；实际读取字节 3×~260000 且 T2 两次证明无污染。
+
+**3. classifyAbort 按 deadline 信号来源（不只 reason.name）**：`readMaterial` 单独持有 `deadlineSignal = AbortSignal.timeout(2s)`，组合信号为 `AbortSignal.any([deadlineSignal, input.signal])`；分类只认 `deadlineSignal.aborted` → timeout，否则 cancelled——外部 abort 携带 `TimeoutError` 名的 DOMException 不再误判为内部超时。既有内部 2 秒挂起测试仍判 `timeout`；新增外部 TimeoutError 名中止 → `cancelled` 断言。
+
+**验证（隔离副本，最终代码，全部 exit 0）**：check；build（四 bundle、宿主 bundle 零 dsh-tools/dsh-llm）；vitest+coverage（`--exclude test/macosTts.test.ts`，2 项真实 OS 语音未跑如实列明）87 文件 604 通过/8 跳过；coverage-diff fd48d0a 行 1950/2218（87.92%）、分支 967/1245（77.67%）≥80/70；E2E 四套 4/4、6/6、12/12、10/10；offline-query exit 0（2 场景 failureCode=null）；SC002 五阶段 24/12/18/19/25 全 0 failures + hostA 20/20 + hostB 25/25（R7 断言保持）。
+
+**资源收尾**：进程全部退出；共享端口零触碰；证据保留于 `/private/tmp/feat006-r4/`（五轮 `-r5` 后缀）。**移交状态**：`stage: build`，`status: awaiting_acceptance`；requested_transitions 同前（set-task-status done，仅请求）。
+
+### 2026-11-12 主 Agent 接受 R1～R8 与 R4/R5 补充修正
+
+主 Agent 核对五轮 312 项清单 `5657992dca271894f8a0b8c99c1746d84220ef3010470697c34ede701387751d`，交回目标和副本均逐项一致；实际日志支持 604 项相关测试、四套 E2E、五阶段 98 项及宿主 A20/B25。资料/Skill 共用整链读取校验、损坏配置开始守卫、保存 canonical 来源、同 turn 去重正文、真实活动归属与空来源拒绝符合已接受的修正合同；R4/R5 已先结算捕获的原 turn 预算，会话级 busy 独立保留。
+
+主 Agent 直接处理一处相邻的小修正：外部取消已先触发，而在途 IO 等到本地 deadline 也到期才收束时，不能用 deadline 当前 aborted 状态覆盖首因。新增真实 read barrier 回归，旧五轮实现实测 `timeout` 而预期 `cancelled`（单例 exit 1），再改为比较组合 signal.reason 与本地 deadline.reason 身份；局部六文件 96 项通过、typecheck exit 0。该小修未派新实现者，不是重新开展主 Agent 根因诊断。
+
+最终隔离目录 `/private/tmp/feat006-primary-acceptance-20261112/repo` 的 build exit 0；完整相关 Vitest+coverage exit 0：87 文件 605 通过/8 跳过，仍排除两项真实 macOS TTS；累计 coverage-diff 基线 fd48d0a exit 0，行 1951/2219（87.92%）、分支 971/1249（77.74%）。实际日志分别为同级 `focused-regression.log`、`check.log`、`build.log`、`full-coverage.log`、`coverage-diff.log`。最终业务相对五轮交回只有取消首因的局部判断与该回归用例不同，其余源码/测试/配置保持一致；普通 E2E/宿主场景未受此条件细化影响，保留对应五轮证据，新的正式独立 Validate 仍需在最终候选执行。
+
+主 Agent 接受原实现者 `set-task-status FEAT-006/T001 done` 的规范请求，下一步由 CLI 记录、提交并推送当前修正，再进入新的统一独立 Validate 和 Sol 复审。原有失败史、已用主 Agent 诊断额度及当前授权不变；本节不声明正式验证/评审/发布通过。

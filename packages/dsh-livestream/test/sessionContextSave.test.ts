@@ -276,6 +276,49 @@ describe('session context save flow', () => {
     await post('settings', { sessionContext: { expectedRevision: persisted, config: config() } });
   });
 
+  // ── 正式评审 R8：启用的空 Skill 来源不是成功的空 Skill ──
+
+  it('rejects an enabled empty skill container as not_found instead of saving a valid empty skill', async () => {
+    const { mkdir: makeDir } = await import('node:fs/promises');
+    await makeDir(join(dir, 'empty-container'), { recursive: true });
+    const revision = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    const before = await readFile(settingsFile, 'utf8');
+    const result = await post('settings', { sessionContext: { expectedRevision: revision, config: config({ skillSources: [{ path: join(dir, 'empty-container'), enabled: true }] }) } });
+    expect(result.status, 'empty container must not save as valid').toBe(400);
+    expect(JSON.stringify(result.body)).toContain('not_found');
+    expect(await readFile(settingsFile, 'utf8')).toBe(before);
+  });
+
+  it('rejects an enabled container whose subdirectories lack SKILL.md', async () => {
+    const { mkdir: makeDir, writeFile: writeFileFs } = await import('node:fs/promises');
+    await makeDir(join(dir, 'refs-only-container', 'references'), { recursive: true });
+    await makeDir(join(dir, 'refs-only-container', 'scripts'), { recursive: true });
+    await writeFileFs(join(dir, 'refs-only-container', 'references', 'a.md'), '参考资料不是声明。\n');
+    const revision = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    const result = await post('settings', { sessionContext: { expectedRevision: revision, config: config({ skillSources: [{ path: join(dir, 'refs-only-container'), enabled: true }] }) } });
+    expect(result.status).toBe(400);
+    expect(JSON.stringify(result.body)).toContain('not_found');
+  });
+
+  it('keeps the legitimate duplicate canonical skill source saving successfully (dedup, no false empty)', async () => {
+    const { mkdir: makeDir, symlink: symlinkPath } = await import('node:fs/promises');
+    await makeDir(join(dir, 'dup-source'), { recursive: true });
+    await writeFile(join(dir, 'dup-source', 'SKILL.md'), '---\nname: dup-skill\ndescription: 合法重复来源。\n---\ndup 正文。\n');
+    try {
+      await symlinkPath(join(dir, 'dup-source'), join(dir, 'dup-alias'));
+    } catch {
+      return;
+    }
+    const revision = JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision;
+    const result = await post('settings', { sessionContext: { expectedRevision: revision, config: config({ skillSources: [
+      { path: join(dir, 'dup-source'), enabled: true },
+      { path: join(dir, 'dup-alias'), enabled: true },
+    ] }) } });
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+    const health = result.body.sessionContext.health.entries.filter((entry: { kind: string }) => entry.kind === 'skill');
+    expect(health.every((entry: { status: string }) => entry.status === 'valid')).toBe(true);
+  });
+
   // ── 评审修正（HIGH）：SKILL.md 是符号链接的来源必须整体拒绝，不读取目标 ──
 
   it('rejects a container source whose nested SKILL.md is a symlink without reading the target', async () => {

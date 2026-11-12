@@ -3,17 +3,17 @@
  *
  * 只服务本 Feature 的两类授权范围：Skill 来源（目录/文件）和资料根。不是通用文件系统框架。
  *
- * 读取协议（工程上下文「目录、Skill 与实际读取验证」第 5 条）：
+ * 读取协议（工程上下文「目录、Skill 与实际读取验证」第 5 条；正式评审 R1/R4 后统一为同一实现）：
  * 1. 先做词法 containment（拒绝绝对路径、`..` 段、NUL/控制符、URI 形式）；
- * 2. 再校验保存根身份和目标 realpath 的分隔符边界；
- * 3. 逐段 lstat 拒绝后续 symlink（即使链接仍在根内）；
- * 4. 用只读 open + O_NOFOLLOW 打开终端普通文件，fd.fstat 与已验证目标 dev/ino 比对，匹配后才读取；
- * 5. 打开前后和缓冲读取结束后复核根/祖先/规范目标身份与范围；发现重定向、替换立即丢弃缓冲。
+ * 2. 逐段 lstat 建立「根 + 全部祖先段 + 末端」的 dev/ino 身份（拒绝任何 symlink 与特殊文件）；
+ * 3. realpath 边界核对：目标必须在当前授权根内；
+ * 4. 打开前重走整条路径核对身份未变，再用只读 open + O_NOFOLLOW 打开终端普通文件并比对 fd 身份；
+ * 5. 读取（每次 read 前后核对取消信号）后重走整条路径核对身份与实际边界未变；任何晚到/取消的缓冲
+ *    丢弃，任何一步失败都零正文返回。资料与 Skill 读取共享同一实现，不维护两套不等价检查。
  */
 
 import { createHash } from 'node:crypto';
 import { open, lstat, realpath, access, constants as fsConstants, type FileHandle } from 'node:fs/promises';
-import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 
 export interface DirectoryBinding {
@@ -99,36 +99,34 @@ function withinRoot(rootPath: string, targetPath: string): boolean {
   return targetPath.startsWith(rootPath.endsWith(sep) ? rootPath : rootPath + sep);
 }
 
-export interface BoundedReadRequest {
-  /** 授权范围（已验证的目录绑定） */
-  root: DirectoryBinding;
-  /** 根内的相对路径（模型或发现提交） */
-  relativePath: string;
-  /** 最多读取的原始字节数 */
-  maxBytes: number;
-  /** 调用方取消 */
-  signal?: AbortSignal;
-  /** 读完后复核范围的间隔函数；测试可注入延迟 */
-  beforeRead?: () => Promise<void> | void;
-  afterRead?: () => Promise<void> | void;
+interface SegmentIdentity {
+  path: string;
+  dev: number;
+  ino: number;
 }
 
-export type BoundedReadResult =
-  | { ok: true; bytes: Uint8Array; sha256: string; target: string }
+type WalkOutcome =
+  | { ok: true; segments: SegmentIdentity[]; terminal: SegmentIdentity }
   | { ok: false; failure: PathFailure };
 
 /**
- * 受限读取一个普通文件：词法校验 → 逐段 lstat（拒绝 symlink 与特殊文件）→ realpath 边界 →
- * 根身份重查 → O_NOFOLLOW 打开 → fd 身份比对 → 读取 → 读后复核。任何一步失败都零正文返回。
+ * 逐段 lstat 建立「根 + 全部祖先段 + 末端」的身份（symlink 与特殊文件即拒绝，末端必须是普通文件）。
+ * 与限制无关、与已安装限制状态无关，供打开前/读后两次核对整条路径使用。
  */
-export async function readBoundedFile(request: BoundedReadRequest): Promise<BoundedReadResult> {
-  const lexical = checkRelativePath(request.relativePath);
-  if (lexical) return { ok: false, failure: lexical };
-  // 逐段 lstat：拒绝任何一段是 symlink 或特殊文件；最后一段必须是普通文件
-  const segments = request.relativePath.split('/');
-  let walked = request.root.path;
-  for (const [index, segment] of segments.entries()) {
-    walked = walked.endsWith(sep) ? walked + segment : `${walked}/${segment}`;
+async function walkIdentifiedPath(rootPath: string, rootIdentity: { dev: number; ino: number }, relativePath: string): Promise<WalkOutcome> {
+  let rootStats;
+  try {
+    rootStats = await lstat(rootPath);
+  } catch (error) {
+    return { ok: false, failure: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not_found' : 'io_error' };
+  }
+  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) return { ok: false, failure: 'identity_mismatch' };
+  if (rootStats.dev !== rootIdentity.dev || rootStats.ino !== rootIdentity.ino) return { ok: false, failure: 'identity_mismatch' };
+  const segments: SegmentIdentity[] = [{ path: rootPath, dev: rootStats.dev, ino: rootStats.ino }];
+  const parts = relativePath.split('/').filter((part) => part.length > 0);
+  let walked = rootPath;
+  for (const [index, part] of parts.entries()) {
+    walked = walked.endsWith(sep) ? walked + part : `${walked}/${part}`;
     let stats;
     try {
       stats = await lstat(walked);
@@ -136,18 +134,82 @@ export async function readBoundedFile(request: BoundedReadRequest): Promise<Boun
       return { ok: false, failure: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not_found' : 'io_error' };
     }
     if (stats.isSymbolicLink()) return { ok: false, failure: 'symlink' };
-    const isLast = index === segments.length - 1;
-    if (isLast ? !stats.isFile() : !stats.isDirectory()) return { ok: false, failure: 'unsupported_file' };
+    const isTerminal = index === parts.length - 1;
+    if (isTerminal) {
+      if (!stats.isFile()) return { ok: false, failure: 'unsupported_file' };
+      return { ok: true, segments, terminal: { path: walked, dev: stats.dev, ino: stats.ino } };
+    }
+    if (!stats.isDirectory()) return { ok: false, failure: 'unsupported_file' };
+    segments.push({ path: walked, dev: stats.dev, ino: stats.ino });
   }
-  let target: string;
+  return { ok: false, failure: 'invalid_path' };
+}
+
+function identitiesUnchanged(before: WalkOutcome & { ok: true }, after: WalkOutcome & { ok: true }): boolean {
+  if (before.segments.length !== after.segments.length) return false;
+  for (const [index, segment] of before.segments.entries()) {
+    const current = after.segments[index];
+    if (!current || current.dev !== segment.dev || current.ino !== segment.ino) return false;
+  }
+  return after.terminal.dev === before.terminal.dev && after.terminal.ino === before.terminal.ino;
+}
+
+export interface BoundedReadRequest {
+  /** 授权范围（已验证的目录绑定） */
+  root: DirectoryBinding;
+  /** 根内的相对路径（模型或发现提交） */
+  relativePath: string;
+  /** 最多读取的原始字节数（也是文件大小上限） */
+  maxBytes: number;
+  /** 调用方取消 */
+  signal?: AbortSignal;
+  /** 读完复核范围的间隔函数；测试可注入受控替换/取消 */
+  beforeRead?: () => Promise<void> | void;
+  afterRead?: () => Promise<void> | void;
+}
+
+export type BoundedReadResult =
+  | { ok: true; bytes: Uint8Array; sha256: string; target: string }
+  | { ok: false; failure: PathFailure; /** 已消耗的真实读取字节（失败/取消也要结算，零正文） */ consumedBytes?: number };
+
+export interface DiscoveryReadHooks {
+  beforeRead?: () => Promise<void> | void;
+  afterRead?: () => Promise<void> | void;
+}
+
+/**
+ * 两条读取路径（资料 readBoundedFile / Skill 发现 readDiscoveredSkill）共享的唯一实现：
+ * 词法校验由调用方负责；这里建立整条路径身份 → realpath 边界 → beforeRead 钩子 → 重走核对 →
+ * O_NOFOLLOW 打开 + fd 身份比对 → 逐段有界读取（每次 read 前后核对取消）→ afterRead 钩子 →
+ * 取消核对 → 读后重走整条路径核对身份与实际边界。任何一步失败都零正文返回；
+ * 读取已开始的失败/取消在结果上携带实际消耗字节，供调用方按已读量结算预算。
+ */
+async function readViaIdentifiedPath(
+  rootPath: string,
+  rootIdentity: { dev: number; ino: number },
+  relativePath: string,
+  maxBytes: number,
+  options: { signal?: AbortSignal; beforeRead?: () => Promise<void> | void; afterRead?: () => Promise<void> | void } = {},
+): Promise<{ ok: true; bytes: Uint8Array; sha256: string; target: string } | { ok: false; failure: PathFailure; consumedBytes?: number }> {
+  const identity = { dev: rootIdentity.dev, ino: rootIdentity.ino };
+  const before = await walkIdentifiedPath(rootPath, identity, relativePath);
+  if (!before.ok) return before;
+  // 边界两侧都用 canonical 路径：root 的祖先可能含 symlink（如 macOS /var），逐段 walk 已保证
+  // rootPath→终端 之间无 symlink，这里解析 root 本体的规范形态后核对目标边界
+  let canonicalRoot: string;
   try {
-    target = await realpath(walked);
+    canonicalRoot = await realpath(rootPath);
   } catch {
     return { ok: false, failure: 'not_found' };
   }
-  // realpath 等价于 walked（逐段已是真目录/文件），但仍按边界检查：目标必须在当前授权根内
-  if (!withinRoot(request.root.path, target)) return { ok: false, failure: 'escape' };
-  if (await verifyDirectory(request.root)) return { ok: false, failure: 'identity_mismatch' };
+  // realpath 边界：逐段已无 symlink，realpath 等价于 walked，仍显式核对目标在当前授权根内
+  let target: string;
+  try {
+    target = await realpath(before.terminal.path);
+  } catch {
+    return { ok: false, failure: 'not_found' };
+  }
+  if (!withinRoot(canonicalRoot, target)) return { ok: false, failure: 'escape' };
   let finalStats;
   try {
     finalStats = await lstat(target);
@@ -155,47 +217,90 @@ export async function readBoundedFile(request: BoundedReadRequest): Promise<Boun
     return { ok: false, failure: 'not_found' };
   }
   if (!finalStats.isFile()) return { ok: false, failure: 'unsupported_file' };
-  if (finalStats.size > request.maxBytes) return { ok: false, failure: 'limit_exceeded' };
-  await request.beforeRead?.();
-  if (request.signal?.aborted) return { ok: false, failure: 'cancelled' };
+  if (finalStats.size > maxBytes) return { ok: false, failure: 'limit_exceeded' };
+  await options.beforeRead?.();
+  if (options.signal?.aborted) return { ok: false, failure: 'cancelled' };
+  // 打开前重走整条路径：受控替换窗口内的身份变化即拒绝（R1）
+  const reopened = await walkIdentifiedPath(rootPath, identity, relativePath);
+  if (!reopened.ok) return reopened;
+  if (!identitiesUnchanged(before, reopened)) return { ok: false, failure: 'identity_mismatch' };
   let handle: FileHandle | null = null;
+  let consumed = 0;
   try {
-    handle = await open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW, 0);
+    handle = await open(reopened.terminal.path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW, 0);
     const fdStats = await handle.stat();
-    // fd 身份比对：打开前后目标被替换（inode 变化）即拒绝，不读取任何字节
-    if (fdStats.dev !== finalStats.dev || fdStats.ino !== finalStats.ino) return { ok: false, failure: 'identity_mismatch' };
-    if (await verifyDirectory(request.root)) return { ok: false, failure: 'identity_mismatch' };
-    const size = Math.min(fdStats.size, request.maxBytes);
+    // fd 身份比对：打开时目标被替换（inode 变化）即拒绝，不读取任何字节
+    if (fdStats.dev !== reopened.terminal.dev || fdStats.ino !== reopened.terminal.ino) return { ok: false, failure: 'identity_mismatch' };
+    if (!fdStats.isFile()) return { ok: false, failure: 'unsupported_file' };
+    if (fdStats.size > maxBytes) return { ok: false, failure: 'limit_exceeded' };
+    const size = Math.min(fdStats.size, maxBytes);
     const buffer = Buffer.alloc(size);
     let readTotal = 0;
     while (readTotal < size) {
-      if (request.signal?.aborted) return { ok: false, failure: 'cancelled' };
+      if (options.signal?.aborted) return { ok: false, failure: 'cancelled', consumedBytes: consumed };
       const { bytesRead } = await handle.read(buffer, readTotal, size - readTotal, readTotal);
       if (bytesRead === 0) break;
       readTotal += bytesRead;
+      consumed += bytesRead;
+      // 最后一次 read 返回时也可能已取消：缓冲就地丢弃，不进入提交路径（R4）
+      if (options.signal?.aborted) return { ok: false, failure: 'cancelled', consumedBytes: consumed };
     }
-    await request.afterRead?.();
-    // 读后复核：根被替换/目标身份变化则丢弃缓冲
-    if (await verifyDirectory(request.root)) return { ok: false, failure: 'identity_mismatch' };
-    let afterStats;
+    await options.afterRead?.();
+    if (options.signal?.aborted) return { ok: false, failure: 'cancelled', consumedBytes: consumed };
+    // 读后复核：重走整条路径核对身份（R1）与实际边界（R1），变化/越界即丢弃缓冲
+    const after = await walkIdentifiedPath(rootPath, identity, relativePath);
+    if (!after.ok) return { ok: false, failure: after.failure, consumedBytes: consumed };
+    if (!identitiesUnchanged(reopened, after)) return { ok: false, failure: 'identity_mismatch', consumedBytes: consumed };
+    let targetAfter: string;
     try {
-      afterStats = await lstat(target);
+      targetAfter = await realpath(after.terminal.path);
     } catch {
-      return { ok: false, failure: 'identity_mismatch' };
+      return { ok: false, failure: 'identity_mismatch', consumedBytes: consumed };
     }
-    if (afterStats.dev !== finalStats.dev || afterStats.ino !== finalStats.ino) return { ok: false, failure: 'identity_mismatch' };
+    if (!withinRoot(canonicalRoot, targetAfter)) return { ok: false, failure: 'escape', consumedBytes: consumed };
+    if (options.signal?.aborted) return { ok: false, failure: 'cancelled', consumedBytes: consumed };
     const data = new Uint8Array(buffer.subarray(0, readTotal));
-    return { ok: true, bytes: data, sha256: createHash('sha256').update(data).digest('hex'), target };
+    return { ok: true, bytes: data, sha256: createHash('sha256').update(data).digest('hex'), target: after.terminal.path };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (request.signal?.aborted) return { ok: false, failure: 'cancelled' };
-    if (code === 'ENOENT') return { ok: false, failure: 'not_found' };
-    if (code === 'ELOOP') return { ok: false, failure: 'symlink' };
-    if (code === 'EACCES') return { ok: false, failure: 'unreadable' };
-    return { ok: false, failure: 'io_error' };
+    if (options.signal?.aborted) return { ok: false, failure: 'cancelled', consumedBytes: consumed };
+    if (code === 'ENOENT') return { ok: false, failure: 'not_found', consumedBytes: consumed };
+    if (code === 'ELOOP') return { ok: false, failure: 'symlink', consumedBytes: consumed };
+    if (code === 'EACCES') return { ok: false, failure: 'unreadable', consumedBytes: consumed };
+    return { ok: false, failure: 'io_error', consumedBytes: consumed };
   } finally {
     await handle?.close().catch(() => {});
   }
+}
+
+/**
+ * 受限读取资料根内的一个普通文件（模型工具的资料读取通道）。
+ * 读取协议见文件头；任何一步失败都零正文返回，失败/取消携带实际消耗字节。
+ */
+export async function readBoundedFile(request: BoundedReadRequest): Promise<BoundedReadResult> {
+  const lexical = checkRelativePath(request.relativePath);
+  if (lexical) return { ok: false, failure: lexical };
+  return readViaIdentifiedPath(request.root.path, request.root, request.relativePath, request.maxBytes, {
+    signal: request.signal,
+    beforeRead: request.beforeRead,
+    afterRead: request.afterRead,
+  });
+}
+
+/**
+ * 发现阶段的候选读取（Skill 来源）：以「发现时 lstat 过的可信根」为锚，走与资料读取完全相同的
+ * 身份/边界/取消纪律。beforeRead/afterRead 供测试在「发现到读取」之间注入受控替换。
+ */
+export async function readDiscoveredSkill(
+  rootPath: string,
+  rootIdentity: { dev: number; ino: number },
+  relativePath: string,
+  maxBytes: number,
+  hooks: DiscoveryReadHooks = {},
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; failure: PathFailure }> {
+  const result = await readViaIdentifiedPath(rootPath, rootIdentity, relativePath, maxBytes, hooks);
+  if (result.ok) return { ok: true, bytes: result.bytes };
+  return { ok: false, failure: result.failure };
 }
 
 /** 普通文件绑定（Skill 来源是单个 .md 时的父目录 + 文件身份） */
@@ -216,163 +321,9 @@ export async function statFileIdentity(path: string): Promise<FileIdentity | Pat
   return { dev: stats.dev, ino: stats.ino, size: stats.size };
 }
 
-/**
- * 发现阶段的候选读取（Skill 来源）：以「发现时 lstat 过的可信根」为锚，逐段核对根/各中间目录/末端文件的
- * 身份（中间目录被换成 symlink 即拒绝——末端 O_NOFOLLOW 不保护路径段），O_NOFOLLOW 打开 + fd 身份比对，
- * 有界读取，读后复核整条路径身份未变。beforeRead/afterRead 供测试在「发现到读取」之间注入受控替换。
- */
-export interface DiscoveryReadHooks {
-  beforeRead?: () => Promise<void> | void;
-  afterRead?: () => Promise<void> | void;
-}
-
-export type DiscoveredSkillReadResult =
-  | { ok: true; bytes: Uint8Array }
-  | { ok: false; failure: PathFailure };
-
-function walkSegments(rootPath: string, rootIdentity: { dev: number; ino: number }, relativePath: string):
-  { ok: true; segments: Array<{ path: string; dev: number; ino: number }>; terminal: { path: string; dev: number; ino: number } }
-  | { ok: false; failure: PathFailure } {
-  let rootStats;
-  try {
-    rootStats = lstatSync(rootPath, { throwIfNoEntry: false });
-  } catch {
-    return { ok: false, failure: 'io_error' };
-  }
-  if (!rootStats) return { ok: false, failure: 'not_found' };
-  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) return { ok: false, failure: 'identity_mismatch' };
-  if (rootStats.dev !== rootIdentity.dev || rootStats.ino !== rootIdentity.ino) return { ok: false, failure: 'identity_mismatch' };
-  const segments: Array<{ path: string; dev: number; ino: number }> = [{ path: rootPath, dev: rootStats.dev, ino: rootStats.ino }];
-  const parts = relativePath.split('/').filter((part) => part.length > 0);
-  let walked = rootPath;
-  for (const [index, part] of parts.entries()) {
-    walked = walked.endsWith(sep) ? walked + part : `${walked}/${part}`;
-    let stats;
-    try {
-      stats = lstatSync(walked, { throwIfNoEntry: false });
-    } catch {
-      return { ok: false, failure: 'io_error' };
-    }
-    if (!stats) return { ok: false, failure: 'not_found' };
-    if (stats.isSymbolicLink()) return { ok: false, failure: 'symlink' };
-    const isTerminal = index === parts.length - 1;
-    if (isTerminal) {
-      if (!stats.isFile()) return { ok: false, failure: 'unsupported_file' };
-      return {
-        ok: true,
-        segments,
-        terminal: { path: walked, dev: stats.dev, ino: stats.ino },
-      };
-    }
-    if (!stats.isDirectory()) return { ok: false, failure: 'unsupported_file' };
-    segments.push({ path: walked, dev: stats.dev, ino: stats.ino });
-  }
-  return { ok: false, failure: 'invalid_path' };
-}
-
-export async function readDiscoveredSkill(
-  rootPath: string,
-  rootIdentity: { dev: number; ino: number },
-  relativePath: string,
-  maxBytes: number,
-  hooks: DiscoveryReadHooks = {},
-): Promise<DiscoveredSkillReadResult> {
-  const walked = walkSegments(rootPath, rootIdentity, relativePath);
-  if (!walked.ok) return walked;
-  await hooks.beforeRead?.();
-  const rewalked = walkSegments(rootPath, rootIdentity, relativePath);
-  if (!rewalked.ok) return rewalked;
-  // 打开前再走查一次：受控替换窗口内目录/文件身份变化即拒绝
-  for (const [index, segment] of rewalked.segments.entries()) {
-    const before = walked.segments[index];
-    if (!before || before.dev !== segment.dev || before.ino !== segment.ino) return { ok: false, failure: 'identity_mismatch' };
-  }
-  const terminal = rewalked.terminal;
-  let fd: number | null = null;
-  try {
-    fd = openSync(terminal.path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    try {
-      const opened = fstatSync(fd);
-      if (!opened.isFile()) return { ok: false, failure: 'unsupported_file' };
-      if (opened.dev !== terminal.dev || opened.ino !== terminal.ino) return { ok: false, failure: 'identity_mismatch' };
-      if (opened.size > maxBytes) return { ok: false, failure: 'limit_exceeded' };
-      const buffer = Buffer.alloc(opened.size);
-      let total = 0;
-      while (total < opened.size) {
-        const read = readSync(fd, buffer, total, opened.size - total, total);
-        if (read === 0) break;
-        total += read;
-      }
-      if (total > maxBytes) return { ok: false, failure: 'limit_exceeded' };
-      await hooks.afterRead?.();
-      // 读后复核整条路径身份（根/各段/末端）未变；替换即丢弃缓冲
-      const finalWalk = walkSegments(rootPath, rootIdentity, relativePath);
-      if (!finalWalk.ok) return { ok: false, failure: finalWalk.failure };
-      for (const [index, segment] of finalWalk.segments.entries()) {
-        const before = rewalked.segments[index];
-        if (!before || before.dev !== segment.dev || before.ino !== segment.ino) return { ok: false, failure: 'identity_mismatch' };
-      }
-      if (finalWalk.terminal.dev !== terminal.dev || finalWalk.terminal.ino !== terminal.ino) return { ok: false, failure: 'identity_mismatch' };
-      return { ok: true, bytes: new Uint8Array(buffer.subarray(0, total)) };
-    } finally {
-      closeSync(fd);
-      fd = null;
-    }
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ELOOP') return { ok: false, failure: 'symlink' };
-    if (code === 'ENOENT') return { ok: false, failure: 'not_found' };
-    if (code === 'EACCES') return { ok: false, failure: 'unreadable' };
-    return { ok: false, failure: 'io_error' };
-  }
-}
-
 /** 判断路径（已 canonical）是否落在某个绑定目录内 */
 export function isInsideDirectory(binding: DirectoryBinding, canonicalPath: string): boolean {
   return withinRoot(binding.path, canonicalPath);
-}
-
-export type SyncSecureReadResult =
-  | { ok: true; bytes: Uint8Array }
-  | { ok: false; failure: PathFailure };
-
-/**
- * 发现阶段的同步安全读取（Skill 候选 Markdown 等已 lstat 过的普通文件）：
- * O_NOFOLLOW 打开（检查与打开之间被换成 symlink 即 ELOOP 拒绝）→ fd 身份与检查时的 dev/ino 比对 →
- * 有界读取 → 读后复核路径身份未变。任何一步失败都零正文返回，不跟随「发现到读取」之间的替换。
- */
-export function readRegularFileNoFollowSync(path: string, maxBytes: number, observed: { dev: number; ino: number }): SyncSecureReadResult {
-  let fd: number | null = null;
-  try {
-    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    try {
-      const opened = fstatSync(fd);
-      if (!opened.isFile()) return { ok: false, failure: 'unsupported_file' };
-      if (opened.dev !== observed.dev || opened.ino !== observed.ino) return { ok: false, failure: 'identity_mismatch' };
-      if (opened.size > maxBytes) return { ok: false, failure: 'limit_exceeded' };
-      const buffer = Buffer.alloc(opened.size);
-      let total = 0;
-      while (total < opened.size) {
-        const read = readSync(fd, buffer, total, opened.size - total, total);
-        if (read === 0) break;
-        total += read;
-      }
-      if (total > maxBytes) return { ok: false, failure: 'limit_exceeded' };
-      // 读后复核：路径条目在读取期间被替换（inode 变化或变成 symlink）则丢弃缓冲
-      const after = lstatSync(path, { throwIfNoEntry: false });
-      if (!after || after.dev !== observed.dev || after.ino !== observed.ino) return { ok: false, failure: 'identity_mismatch' };
-      return { ok: true, bytes: new Uint8Array(buffer.subarray(0, total)) };
-    } finally {
-      closeSync(fd);
-      fd = null;
-    }
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ELOOP') return { ok: false, failure: 'symlink' };
-    if (code === 'ENOENT') return { ok: false, failure: 'not_found' };
-    if (code === 'EACCES') return { ok: false, failure: 'unreadable' };
-    return { ok: false, failure: 'io_error' };
-  }
 }
 
 /** 规范化候选路径（保存时发现用）：realpath 失败原样抛出 */

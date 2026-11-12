@@ -40,6 +40,8 @@ test('saves session context from the console, creates a managed native session, 
 
   // 新直播会话（管理路径）：先创建会话，再进入开播
   await screen.getByRole('button', '关闭', { exact: true }).tap();
+  // 正式评审 R7：开播前不显示活动会话（准备快照不误报为已开播）
+  expect((await fixture(app.baseUrl)).sessionContext.active).toBeNull();
   await screen.getByRole('button', '开始彩排').tap();
   await expect.poll(async () => (await fixture(app.baseUrl)).onAir).toBe(true);
   const state = await fixture(app.baseUrl);
@@ -107,7 +109,10 @@ test('saves session context from the console, creates a managed native session, 
   }) })).json();
   expect(saveB.status).toBe(200);
   const oldLoad = await invoke(app.baseUrl, sessionId, 'load_livestream_skill', { name: 'papermorph' });
-  expect(oldLoad.text).toContain('papermorph 的冻结正文');
+  // 正式评审 R6：同 turn 重复加载不再重复注入正文，返回受控提示；A 的冻结正文以持久快照为准（上方已核对）
+  expect(oldLoad.ok).toBe(true);
+  expect(oldLoad.text).toContain('本轮已经加载过');
+  expect(oldLoad.text).not.toContain('papermorph 的冻结正文');
   await screen.getByRole('button', '设置', { exact: true }).tap();
   await screen.getByRole('button', '关闭', { exact: true }).tap();
   await screen.getByRole('button', '下播（先让她道别）').tap();
