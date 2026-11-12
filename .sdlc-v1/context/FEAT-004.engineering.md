@@ -139,6 +139,10 @@ SSE 断线/连接替换时，客户端立即撤销尚未开始的 owned live 内
 
 测试边界：包test/readOnlyQuery、weather/cache、受影响queryHarness/queryPreset/API/console、test/live-query/**、test/e2e-query/**、vitest.config.ts及必要query E2E配置/launcher。文档边界：根README、examples/macos-yovoice/README及.env.example。主Agent维护本上下文和state，worker不得修改state/index/branch、提交推送或改upstream。阶段结果报告实际命令/版本/工作树/缺口，请求状态仅按brief allow-list；Build证据不代替独立Validate。
 
+#### Ship 执行与额度接续（2026-11-12）
+
+发布目标与已批准候选d70fcf9保持不变：交付准备执行者只在owned目录构建/打包、对新解包产物smoke并给出可回滚安装步骤；主Sol负责实际本地lib安装和安装路径的隔离宿主加载验收，保持共享服务停止。执行者优先GLM；当实际五小时额度耗尽时，按根AGENTS既有授权以只读路由探针核实后的Codex Terra/xhigh接替同一完整单元。失败历史、必要检查与外部预算0均不重置；原执行者停写/终态和进程互斥核实后才交接。该执行器变化不改产品、源码、配置、发布目标或独立验证/评审义务，既有d70fcf9证据适用性不变。
+
 ## 实现记录（实际）
 
 - **同轮失效与资料边界补正**：同一原生 agent/session/turn 的查询 lease 首次创建后冻结；后续 pre-step 不因 epoch 或 signal 更换而覆盖失效归属，新 turn 才可接纳查询。地点和日期从同一可信参与者的当前输入或该参与者的有界澄清一起校验，不跨人拼接；无关观众输入不否定独立完整问题，未解决未来时间不降为当前。中文公开问题用 Node `Intl.Segmenter` 做有界主体匹配，只识别关联、不承诺通用语义核验；同一地点、规范化时刻和事实的天气观测去重，真正冲突仍 limited。
@@ -465,3 +469,9 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 
 核对本轮源码范围、正式review原始R12 adapter/shared-budget JSON、业务候选到当前HEAD无业务差异及工作树事实，接受approved请求。R12迟到创建的失败阶段native计数为0、跨来源共享总截止与扫描后绑定迟到均拒绝，健康最终超时状态唯一，恢复另计；不以恢复后的计数冒称失败阶段执行。独立Validate/Review都绑定d70fcf9519069ac5ede0ef04629dd000cc25eb6e，主Agent据此批准并进入Ship。
 统一Ship继续与FEAT-006同一候选；尚未记录release，目标为既有本地安装及Harness加载，不将Git推送替代实际交付。
+
+### 2026-11-12 Ship 准备 GLM 额度耗尽与 Terra 交接
+
+原GLM准备任务未进入打包，原始activity仅有读取soul/user与加载ship技能；最后provider错误为429/1308「已达到5小时使用上限，2026-11-12 19:01:53重置」。属于明确额度耗尽，按既有授权直接准备兜底，不把普通测试失败/网络异常当换模型理由。已task_cancel原任务（返回failed），thread实为failed/activeRunId=null/pendingRequestCount=0；目标Git干净、无所属artifact写入/测试进程，未触碰安装目录/lib。
+
+只读Terra探针成功：工具返回provider=codex、model=gpt-6.1-terra、reasoningEffort=xhigh，executedModel字段未返回保持未验证；两条git命令exit0，HEAD37d0416、实际分支codex/macos-yovoice、无修改。探针把brief中“branch/clean”简写误读为分支名，主Agent以原始命令输出核对分支与干净状态均符合，不将该文字误判视为环境冲突。替换执行者只接续原完整Ship准备/必要smoke，不自写state/Git、不操作共享目标。正式批准/验证仍绑定d70fcf9，记录不冒称发布已完成。

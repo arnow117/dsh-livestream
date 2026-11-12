@@ -332,6 +332,10 @@ npm_config_manage_package_manager_versions=false pnpm exec e2e run --config e2e-
 
 只准备安装包和 schema 兼容说明；实际替换/重载共享插件由主 Agent 在后续 Ship 授权内协调，本 Plan/Build 验证不操作共享服务。现有构建会清空 lib，必须只在副本执行。回滚使用先前已评审业务版本和其构建产物，保留新 settings 字段/快照文件，不删除 owner 资料；旧版本不理解新能力时不能声称目录隔离或继续运行管理会话，应显式停止使用该会话并人工重建。是否恢复旧 B 站自动续播须在发布/回滚步骤核对，不能借回滚自动开播。产品观察只引用 REQ-010 的“首次保存、首次新会话、一次失败恢复”安排。
 
+#### Ship 执行与额度接续（2026-11-12）
+
+发布目标与已批准候选d70fcf9保持不变：交付准备执行者只在owned目录构建/打包、对新解包产物smoke并给出可回滚安装步骤；主Sol负责实际本地lib安装和安装路径的隔离宿主加载验收，保持共享服务停止。执行者优先GLM；当实际五小时额度耗尽时，按根AGENTS既有授权以只读路由探针核实后的Codex Terra/xhigh接替同一完整单元。失败历史、必要检查与外部预算0均不重置；原执行者停写/终态和进程互斥核实后才交接。该执行器变化不改产品、源码、配置、发布目标或独立验证/评审义务，既有d70fcf9证据适用性不变。
+
 ## 实现记录（实际）
 
 - **状态**：尚未执行。仅新建本工程上下文候选；未运行任何 lifecycle 命令、测试、构建、依赖安装或 Git 写操作。
@@ -1124,3 +1128,9 @@ requested_transitions:
 
 核对本轮源码范围、正式review原始R12 adapter/shared-budget JSON、业务候选到当前HEAD无业务差异及工作树事实，接受approved请求。R12迟到创建的失败阶段native计数为0、跨来源共享总截止与扫描后绑定迟到均拒绝，健康最终超时状态唯一，恢复另计；不以恢复后的计数冒称失败阶段执行。独立Validate/Review都绑定d70fcf9519069ac5ede0ef04629dd000cc25eb6e，主Agent据此批准并进入Ship。
 N2核实为非阻塞owner诊断展示问题：全部Skill来源关闭后重查会省略disabled行，未扩大权限或读取关闭来源。保留现有已审候选，不在Ship修改业务代码；纳入后续有界UI修正，重访触发为owner关闭来源后的状态展示维护。真实语音/90秒/CLI顶层/舞台观众/live及1M容量边界继续保留。当前目标按project.md既有本地安装与Harness加载执行，不能用仅推送源码冒称发布；共享运行环境的可用状态/回滚与本次交付smoke须先核对。
+
+### 2026-11-12 Ship 准备 GLM 额度耗尽与 Terra 交接
+
+原GLM准备任务未进入打包，原始activity仅有读取soul/user与加载ship技能；最后provider错误为429/1308「已达到5小时使用上限，2026-11-12 19:01:53重置」。属于明确额度耗尽，按既有授权直接准备兜底，不把普通测试失败/网络异常当换模型理由。已task_cancel原任务（返回failed），thread实为failed/activeRunId=null/pendingRequestCount=0；目标Git干净、无所属artifact写入/测试进程，未触碰安装目录/lib。
+
+只读Terra探针成功：工具返回provider=codex、model=gpt-6.1-terra、reasoningEffort=xhigh，executedModel字段未返回保持未验证；两条git命令exit0，HEAD37d0416、实际分支codex/macos-yovoice、无修改。探针把brief中“branch/clean”简写误读为分支名，主Agent以原始命令输出核对分支与干净状态均符合，不将该文字误判视为环境冲突。替换执行者只接续原完整Ship准备/必要smoke，不自写state/Git、不操作共享目标。正式批准/验证仍绑定d70fcf9，记录不冒称发布已完成。
