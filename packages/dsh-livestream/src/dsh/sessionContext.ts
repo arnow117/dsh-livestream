@@ -167,8 +167,18 @@ function sha256(data: Uint8Array): string {
   return createHash('sha256').update(data).digest('hex');
 }
 
-/** 单个启用来源的有界发现：显式 .md 文件、含 SKILL.md 的目录，或容器目录（直接 .md + 一级子目录） */
-async function discoverSource(entry: SessionContextEntry, canonicalRoot: string, index: number, discovered: DiscoveredSkill[], seenPaths: Set<string>, hooks: DiscoveryReadHooks): Promise<DiscoveryFailure> {
+export type SourceAtomicDiscovery =
+  | { ok: true; skills: DiscoveredSkill[] }
+  | { ok: false; code: 'limit_exceeded' | 'not_found' | 'unreadable' | 'invalid' | 'conflict'; field: string; detail: string };
+
+/**
+ * 单个启用来源的原子有界发现（正式复审 R10/R11）：显式 .md 文件、含 SKILL.md 的目录，或容器目录
+ * （直接 .md + 一级子目录）。结果只写入本来源的局部集合——失败时全局声明/路径/名称/总量不被部分
+ * 修改，成功才由调用方经统一合并纳入。canonicalRoot 必须是调用方固定的 canonical 来源根。
+ */
+async function discoverSourceAtomic(entry: SessionContextEntry, canonicalRoot: string, index: number, hooks: DiscoveryReadHooks): Promise<SourceAtomicDiscovery> {
+  const discovered: DiscoveredSkill[] = [];
+  const seenPaths = new Set<string>();
   let stats;
   try {
     stats = lstatSync(canonicalRoot);
@@ -239,9 +249,6 @@ async function discoverSource(entry: SessionContextEntry, canonicalRoot: string,
     }
   }
   for (const candidate of candidates) {
-    if (discovered.length >= SKILL_LIMITS.maxSkills) {
-      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `唯一 Skill 超过 ${SKILL_LIMITS.maxSkills} 份` };
-    }
     if (seenPaths.has(candidate.file)) continue;
     // 读取防护（评审 HIGH + 二轮中间目录替换）：末端 O_NOFOLLOW 不保护中间路径段——
     // 以发现时的来源根为锚逐段核对根/各目录段/末端文件身份；「发现到读取」之间目录被换成
@@ -287,6 +294,77 @@ async function discoverSource(entry: SessionContextEntry, canonicalRoot: string,
   return { ok: true, skills: discovered };
 }
 
+// ── 统一合并收集器（正式复审 R10/R11）：按 canonical 来源身份去重、名称到来源映射检冲突、
+//    唯一数量与原始字节（含 frontmatter）预算在合并点原子结算 ──
+
+interface SkillMergeState {
+  merged: DiscoveredSkill[];
+  /** 实际已合并的 canonical 声明文件路径（去重与冲突判定都以它为准） */
+  mergedPaths: Set<string>;
+  nameToSource: Map<string, string>;
+  seenSourceIds: Set<string>;
+  totalRawBytes: number;
+}
+
+function mergeDiscoveredSource(
+  state: SkillMergeState,
+  sourceId: string,
+  sourceIsDir: boolean,
+  sourceField: string,
+  skills: DiscoveredSkill[],
+): { ok: true } | { ok: false; code: 'conflict' | 'limit_exceeded'; field: string; detail: string } {
+  // 同 canonical 来源重复：合法去重，不额外加载/计费，也不受数量边界影响
+  if (state.seenSourceIds.has(sourceId)) return { ok: true };
+  // 六轮接收核对 1：只按「实际已发现的 canonical 声明文件路径」去重——直接含 SKILL.md 的目录来源
+  // 不会发现更深文件，深层显式文件是独立来源，不因目录已合并而被前缀过滤掉
+  const incoming = skills.filter((skill) => !state.mergedPaths.has(skill.sourcePath));
+  for (const skill of incoming) {
+    const existingSource = state.nameToSource.get(skill.name);
+    if (existingSource !== undefined && existingSource !== sourceId) {
+      return { ok: false, code: 'conflict', field: sourceField, detail: `不同来源的 Skill 同名：${skill.name}` };
+    }
+  }
+  const fresh = incoming.filter((skill) => !state.nameToSource.has(skill.name));
+  if (state.merged.length + fresh.length > SKILL_LIMITS.maxSkills) {
+    return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `唯一 Skill 超过 ${SKILL_LIMITS.maxSkills} 份` };
+  }
+  const incomingBytes = incoming.reduce((sum, skill) => sum + skill.raw.byteLength, 0);
+  if (state.totalRawBytes + incomingBytes > SKILL_LIMITS.maxTotalBytes) {
+    return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 原始字节合计超过 ${SKILL_LIMITS.maxTotalBytes}` };
+  }
+  for (const skill of incoming) {
+    state.merged.push(skill);
+    state.mergedPaths.add(skill.sourcePath);
+    state.nameToSource.set(skill.name, sourceId);
+  }
+  state.seenSourceIds.add(sourceId);
+  state.totalRawBytes += incomingBytes;
+  return { ok: true };
+}
+
+/** 最终唯一集合的合并后复核（转换/持久化快照之前）：数量、字节、名称唯一性、正文上限 */
+function validateMergedSkills(skills: DiscoveredSkill[]): { ok: true } | { ok: false; code: 'limit_exceeded'; field: string; detail: string } {
+  if (skills.length > SKILL_LIMITS.maxSkills) {
+    return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `唯一 Skill 超过 ${SKILL_LIMITS.maxSkills} 份` };
+  }
+  let totalRaw = 0;
+  const names = new Set<string>();
+  for (const skill of skills) {
+    if (names.has(skill.name)) {
+      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `唯一 Skill 集合出现重复名称：${skill.name}` };
+    }
+    names.add(skill.name);
+    totalRaw += skill.raw.byteLength;
+    if (skill.raw.byteLength > SKILL_LIMITS.maxFileBytes) {
+      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 文件超过 ${SKILL_LIMITS.maxFileBytes} 字节` };
+    }
+  }
+  if (totalRaw > SKILL_LIMITS.maxTotalBytes) {
+    return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 原始字节合计超过 ${SKILL_LIMITS.maxTotalBytes}` };
+  }
+  return { ok: true };
+}
+
 /** 保存/创建共用的发现入口：预算、去重、同名冲突都在这里收口。allowMissing 供创建时降级（缺失条目跳过并标记问题）；
  * hooks 供测试在「发现到读取」之间注入受控替换（生产代码不传） */
 export async function discoverSkills(config: SessionContextConfig, options: { allowMissing?: boolean; hooks?: DiscoveryReadHooks } = {}): Promise<DiscoveryFailure> {
@@ -295,10 +373,8 @@ export async function discoverSkills(config: SessionContextConfig, options: { al
   if (enabled.length > SKILL_LIMITS.maxSources) {
     return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `启用来源超过 ${SKILL_LIMITS.maxSources} 个` };
   }
-  const discovered: DiscoveredSkill[] = [];
-  const seenPaths = new Set<string>();
+  const mergeState: SkillMergeState = { merged: [], mergedPaths: new Set<string>(), nameToSource: new Map<string, string>(), seenSourceIds: new Set<string>(), totalRawBytes: 0 };
   const seenCanonical = new Map<string, number>();
-  let totalBytes = 0;
   const deadline = Date.now() + SKILL_LIMITS.scanBudgetMs;
   for (const [index, entry] of config.skillSources.entries()) {
     if (!entry.enabled) continue;
@@ -334,24 +410,24 @@ export async function discoverSkills(config: SessionContextConfig, options: { al
       continue;
     }
     seenCanonical.set(canonical, index);
-    const before = discovered.length;
-    const result = await discoverSource(entry, canonical, index, discovered, seenPaths, options.hooks ?? {});
+    // 原子来源发现 + 统一合并：canonical 来源身份去重、名称→来源冲突、数量/字节预算在合并点结算
+    const result = await discoverSourceAtomic(entry, canonical, index, options.hooks ?? {});
     if (!result.ok) {
-      // 创建时来源目录整体缺失按降级处理；解析冲突/预算仍拒绝
+      // 创建时来源目录整体缺失按降级处理；解析冲突/预算/无效格式仍拒绝
       if (options.allowMissing && (result.code === 'not_found' || result.code === 'unreadable')) continue;
       return result;
     }
-    for (const skill of discovered.slice(before)) totalBytes += skill.raw.byteLength;
-    if (totalBytes > SKILL_LIMITS.maxTotalBytes) {
-      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 原始字节合计超过 ${SKILL_LIMITS.maxTotalBytes}` };
-    }
+    const merged = mergeDiscoveredSource(mergeState, canonical, !stats.isFile(), `config.skillSources[${index}].path`, result.skills);
+    if (!merged.ok) return merged;
   }
-  return { ok: true, skills: discovered };
+  const finalCheck = validateMergedSkills(mergeState.merged);
+  if (!finalCheck.ok) return finalCheck;
+  return { ok: true, skills: mergeState.merged };
 }
 
 export type BindingsDiscoveryOutcome =
-  | { ok: true; skills: DiscoveredSkill[]; issues: string[] }
-  | { ok: false; code: 'limit_exceeded' | 'conflict'; field: string; detail: string };
+  | { ok: true; skills: DiscoveredSkill[]; issues: string[]; sourceStatus: Map<number, { status: 'valid' | 'not_found' | 'unreadable' | 'invalid'; detail?: string }> }
+  | { ok: false; code: 'limit_exceeded' | 'conflict' | 'invalid'; field: string; detail: string };
 
 /**
  * 创建时的 Skill 发现（正式评审 R3）：只消费保存记录里的 canonical 文件/目录与对象身份，
@@ -359,43 +435,48 @@ export type BindingsDiscoveryOutcome =
  * 文件经共享的整链身份读取），身份不符或缺失按降级记入 issues（可用条目仍组成会话）；
  * 同名冲突与字节/时间预算超限整体拒绝。发现深度与去重规则与保存时完全一致。
  */
-async function discoverSkillsFromBindings(record: SessionContextRecord): Promise<BindingsDiscoveryOutcome> {
-  const discovered: DiscoveredSkill[] = [];
+async function discoverSkillsFromBindings(record: SessionContextRecord): Promise<
+  | { ok: true; skills: DiscoveredSkill[]; issues: string[]; sourceStatus: Map<number, { status: 'valid' | 'not_found' | 'unreadable' | 'invalid'; detail?: string }> }
+  | { ok: false; code: 'limit_exceeded' | 'conflict' | 'invalid'; field: string; detail: string }
+> {
+  const mergeState: SkillMergeState = { merged: [], mergedPaths: new Set<string>(), nameToSource: new Map<string, string>(), seenSourceIds: new Set<string>(), totalRawBytes: 0 };
   const issues: string[] = [];
-  const seenNames = new Set<string>();
-  const seenPaths = new Set<string>();
-  let totalBytes = 0;
+  const sourceStatus = new Map<number, { status: 'valid' | 'not_found' | 'unreadable' | 'invalid'; detail?: string }>();
   const deadline = Date.now() + SKILL_LIMITS.scanBudgetMs;
   for (const binding of record.bindings.skills) {
     if (Date.now() > deadline) return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: '发现整体超时' };
     const entry = record.config.skillSources[binding.index];
     if (!entry || !entry.enabled) continue;
-    if (discovered.length >= SKILL_LIMITS.maxSkills) {
-      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `唯一 Skill 超过 ${SKILL_LIMITS.maxSkills} 份` };
-    }
+    const sourceId = binding.file ?? binding.path;
+    const sourceField = `config.skillSources[${binding.index}].path`;
     if (binding.file) {
       // 文件型来源：canonical 文件必须仍在身份核对过的父目录内；经共享读取原语取正文
       const parentIdentity = { path: binding.path, dev: binding.dev, ino: binding.ino };
       const parentFailure = await verifyDirectory(parentIdentity);
       if (parentFailure) {
         issues.push(`Skill 来源 ${entry.path} 已失效`);
+        sourceStatus.set(binding.index, { status: 'invalid', detail: '工作目录绑定已失效' });
         continue;
       }
       const relative = binding.file.startsWith(`${binding.path}/`) ? binding.file.slice(binding.path.length + 1) : basename(binding.file);
       const read = await readDiscoveredSkill(binding.path, { dev: binding.dev, ino: binding.ino }, relative, SKILL_LIMITS.maxFileBytes);
       if (!read.ok) {
-        issues.push(`Skill 来源 ${entry.path} 已失效（${read.failure === 'symlink' ? '路径包含符号链接' : read.failure === 'not_found' ? '声明不存在' : '不可读'}）`);
+        // 正式复审 R11：读取预算超限是硬失败（整体拒绝），不得降级为「不可读」；
+        // 缺失/不可读/符号链接/身份变化按绑定失效降级并丢弃该来源整体结果
+        if (read.failure === 'limit_exceeded') {
+          return { ok: false, code: 'limit_exceeded', field: sourceField, detail: `Skill 文件超过 ${SKILL_LIMITS.maxFileBytes} 字节` };
+        }
+        const reason = read.failure === 'symlink' ? '路径包含符号链接' : read.failure === 'not_found' ? '声明不存在' : '不可读';
+        issues.push(`Skill 来源 ${entry.path} 已失效（${reason}）`);
+        sourceStatus.set(binding.index, { status: read.failure === 'not_found' ? 'not_found' : 'invalid', detail: reason });
         continue;
       }
       const parsed = parseSkillMarkdown(read.bytes);
       if (!parsed.ok) {
-        issues.push(`Skill 来源 ${entry.path} 的声明已失效（${parsed.failure}）`);
-        continue;
+        // 无效格式是硬失败：整体拒绝，不留部分候选
+        return { ok: false, code: 'invalid', field: sourceField, detail: `Skill 声明无效（${parsed.failure}）` };
       }
-      if (seenNames.has(parsed.skill.name)) continue;
-      seenNames.add(parsed.skill.name);
-      seenPaths.add(binding.file);
-      discovered.push({
+      const atomic = { ok: true as const, skills: [ {
         name: parsed.skill.name,
         description: parsed.skill.description,
         modelInvocable: parsed.skill.modelInvocable,
@@ -405,40 +486,38 @@ async function discoverSkillsFromBindings(record: SessionContextRecord): Promise
         body: parsed.skill.body,
         sourceHash: sha256(read.bytes),
         contentHash: sha256(new TextEncoder().encode(parsed.skill.body)),
-      });
-      totalBytes += read.bytes.byteLength;
-      if (totalBytes > SKILL_LIMITS.maxTotalBytes) {
-        return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 原始字节合计超过 ${SKILL_LIMITS.maxTotalBytes}` };
-      }
+      } ] };
+      const merged = mergeDiscoveredSource(mergeState, binding.file, false, sourceField, atomic.skills);
+      if (!merged.ok) return merged;
+      sourceStatus.set(binding.index, { status: 'valid' });
       continue;
     }
-    // 目录型来源：身份核对后按与保存时相同的容器规则发现（深度/去重/预算一致）
+    // 目录型来源：身份核对后按与保存时相同的容器规则原子发现
     const canonical = { path: binding.path, dev: binding.dev, ino: binding.ino };
     const identityFailure = await verifyDirectory(canonical);
     if (identityFailure) {
       issues.push(`Skill 来源 ${entry.path} 已失效`);
+      sourceStatus.set(binding.index, { status: 'invalid', detail: '目录绑定已失效' });
       continue;
     }
-    const before = discovered.length;
-    const result = await discoverSource(entry, binding.path, binding.index, discovered, seenPaths, {});
+    const result = await discoverSourceAtomic(entry, binding.path, binding.index, {});
     if (!result.ok) {
-      if (result.code === 'conflict' || result.code === 'limit_exceeded') {
+      if (result.code === 'conflict' || result.code === 'limit_exceeded' || result.code === 'invalid') {
         return { ok: false, code: result.code, field: result.field, detail: result.detail };
       }
-      // 其余（缺失/不可读/身份变化等）按降级记入问题，可用条目仍组成会话
+      // 仅缺失/不可读等既定可降级情形：丢弃该来源整体结果（原子发现未污染全局）
       issues.push(`Skill 来源 ${entry.path} 已失效（${result.detail}）`);
+      sourceStatus.set(binding.index, { status: result.code === 'not_found' ? 'not_found' : 'unreadable', detail: result.detail });
       continue;
     }
-    for (const skill of discovered.slice(before)) {
-      if (seenNames.has(skill.name)) continue;
-      seenNames.add(skill.name);
-      totalBytes += skill.raw.byteLength;
-    }
-    if (totalBytes > SKILL_LIMITS.maxTotalBytes) {
-      return { ok: false, code: 'limit_exceeded', field: 'config.skillSources', detail: `Skill 原始字节合计超过 ${SKILL_LIMITS.maxTotalBytes}` };
-    }
+    const merged = mergeDiscoveredSource(mergeState, binding.path, true, sourceField, result.skills);
+    if (!merged.ok) return merged;
+    sourceStatus.set(binding.index, { status: 'valid' });
   }
-  return { ok: true, skills: discovered, issues };
+  // 转换/持久化快照之前对最终唯一集合复核：数量、原始字节（含 frontmatter）、名称唯一性
+  const finalCheck = validateMergedSkills(mergeState.merged);
+  if (!finalCheck.ok) return finalCheck;
+  return { ok: true, skills: mergeState.merged, issues, sourceStatus };
 }
 
 // ── 保存 ──────────────────────────────────────────────
@@ -502,19 +581,15 @@ export async function validateSaveCandidate(request: SessionContextSaveRequest):
       if (typeof parent === 'string') {
         return { ok: false, status: 400, error: `Skill 来源父目录无效：${dirname(canonical)}`, issue: { code: 'invalid', field: `config.skillSources[${index}].path` } };
       }
-      // 同一规范文件重复提交只保留一份绑定（不增加加载）
-      if (!bindings.skills.some((existing) => existing.file === canonical)) {
-        bindings.skills.push({ index, path: parent.path, dev: parent.dev, ino: parent.ino, file: canonical });
-      }
+      // 六轮接收核对 2：每个启用条目保留自己的 index 绑定（含 canonical 重复）；声明去重在发现合并按实际路径做
+      bindings.skills.push({ index, path: parent.path, dev: parent.dev, ino: parent.ino, file: canonical });
       health.push({ kind: 'skill', index, path: canonical, enabled: true, status: 'valid' });
     } else {
       const bound = await bindDirectory(canonical);
       if (typeof bound === 'string') {
         return { ok: false, status: 400, error: `Skill 来源目录无效：${canonical}`, issue: { code: 'invalid', field: `config.skillSources[${index}].path` } };
       }
-      if (!bindings.skills.some((existing) => !existing.file && existing.path === bound.path)) {
-        bindings.skills.push({ index, path: bound.path, dev: bound.dev, ino: bound.ino });
-      }
+      bindings.skills.push({ index, path: bound.path, dev: bound.dev, ino: bound.ino });
       health.push({ kind: 'skill', index, path: bound.path, enabled: true, status: 'valid' });
     }
   }
@@ -538,11 +613,8 @@ export async function validateSaveCandidate(request: SessionContextSaveRequest):
     if (previous !== undefined && config.readRoots[previous].enabled !== entry.enabled) {
       return { ok: false, status: 400, error: '同一资料根的启停不一致', issue: { code: 'mixed_enabled', field: `config.readRoots[${index}].path` } };
     }
-    if (previous !== undefined) {
-      // 重复同一项不增加加载
-      health.push({ kind: 'root', index, path: binding.path, enabled: true, status: 'valid' });
-      continue;
-    }
+    // 六轮接收核对 2：每个启用条目保留自己的 index 绑定（含 canonical 重复）；
+    // 授权去重在创建时按已核对 canonical 目录做（不产生重复 rootId）
     rootCanonical.set(binding.path, index);
     bindings.roots.push({ index, path: binding.path, dev: binding.dev, ino: binding.ino });
     health.push({ kind: 'root', index, path: binding.path, enabled: true, status: 'valid' });
@@ -589,54 +661,82 @@ export async function refreshHealth(): Promise<SessionContextHealthEntry[]> {
     const failure = cwdBinding ? await verifyDirectory(cwdBinding) : 'not_found';
     entries.push({ kind: 'cwd', index: 0, path: config.cwd, enabled: true, status: failure ? 'invalid' : 'valid', ...(failure ? { detail: '工作目录已失效，需修正或清空后再新建会话' } : {}) });
   }
-  const skills = await discoverSkillsForHealth(config, 'skill');
+  const skills = await discoverSkillsForHealth(current.record, config, 'skill');
   entries.push(...skills);
-  const roots = await discoverSkillsForHealth(config, 'root');
+  const roots = await discoverSkillsForHealth(current.record, config, 'root');
   entries.push(...roots);
   lastHealth = { checkedAt: Date.now(), entries };
   return entries;
 }
 
-/** 健康重查按条目做轻量存在性检查（不重新解析全文；解析只在保存/创建做） */
-async function discoverSkillsForHealth(config: SessionContextConfig, kind: 'skill' | 'root'): Promise<SessionContextHealthEntry[]> {
+/**
+ * 健康重查（正式复审 R8 残余）：Skill 条目按保存的 canonical 绑定执行有界发现/校验，
+ * 只确认真实声明状态（删除声明/空容器/仅 references → not_found；合法重复 canonical → valid），
+ * 不写配置/revision/绑定、不重新跟随 raw alias、不改变活动快照或已加载正文。
+ * 资料根保持目录存在性检查（资料根合同是目录只读授权，无声明概念）。
+ */
+async function discoverSkillsForHealth(record: SessionContextRecord, config: SessionContextConfig, kind: 'skill' | 'root'): Promise<SessionContextHealthEntry[]> {
   const list = kind === 'skill' ? config.skillSources : config.readRoots;
   const entries: SessionContextHealthEntry[] = [];
+  if (kind === 'skill') {
+    const outcome = await discoverSkillsFromBindings(record);
+    if (!outcome.ok) {
+      // 硬失败（冲突/预算/无效格式）：所有启用 Skill 条目如实标记，不误报 valid
+      for (const [index, entry] of config.skillSources.entries()) {
+        if (!entry.enabled) {
+          entries.push({ kind, index, path: entry.path, enabled: false, status: 'disabled' });
+          continue;
+        }
+        entries.push({ kind, index, path: entry.path, enabled: true, status: outcome.code === 'conflict' ? 'conflict' : 'invalid', detail: outcome.detail });
+      }
+      return entries;
+    }
+    for (const [index, entry] of config.skillSources.entries()) {
+      if (!entry.enabled) {
+        entries.push({ kind, index, path: entry.path, enabled: false, status: 'disabled' });
+        continue;
+      }
+      // 六轮接收核对 3：健康按保存绑定的固定 canonical 目标核对，绝不 realpath/bindDirectory
+      // raw entry.path 去找「孪生」或替换授权——raw alias 仅 owner 回显/脱敏
+      const binding = record.bindings.skills.find((item) => item.index === index);
+      if (!binding) {
+        // 历史记录缺失该 index 绑定：无法安全重建原目标，给 resave 指引（创建同样按 issue 呈现）
+        entries.push({ kind, index, path: entry.path, enabled: true, status: 'not_found', detail: '当前保存记录中没有该条目的独立绑定：请重新保存会话设置' });
+        continue;
+      }
+      const status = outcome.sourceStatus.get(index) ?? { status: 'not_found' as const };
+      const canonical = binding.file ?? binding.path;
+      entries.push({
+        kind,
+        index,
+        path: canonical,
+        enabled: true,
+        status: status.status,
+        ...(status.detail ? { detail: status.detail } : {}),
+      });
+    }
+    return entries;
+  }
   for (const [index, entry] of list.entries()) {
     if (!entry.enabled) {
       entries.push({ kind, index, path: entry.path, enabled: false, status: 'disabled' });
       continue;
     }
-    if (kind === 'skill') {
-      // 文件型来源按普通文件检查（R_OK）；目录来源按可遍历目录检查
-      let canonical: string;
-      try {
-        canonical = realpathSync(entry.path);
-      } catch {
-        entries.push({ kind, index, path: entry.path, enabled: true, status: 'not_found', detail: '路径已不存在或已移动' });
-        continue;
-      }
-      const stats = lstatSync(canonical, { throwIfNoEntry: false });
-      const isFile = !!stats?.isFile();
-      const isDir = !!stats?.isDirectory();
-      try {
-        accessSync(canonical, isFile ? constants.R_OK : constants.R_OK | constants.X_OK);
-        entries.push({ kind, index, path: canonical, enabled: true, status: isFile || isDir ? 'valid' : 'invalid' });
-      } catch {
-        entries.push({ kind, index, path: canonical, enabled: true, status: 'unreadable', detail: '路径不可读' });
-      }
+    // 六轮接收核对 3：资料根健康同样按保存绑定核对固定 canonical 目标，不重解 raw alias
+    const savedBinding = record.bindings.roots.find((item) => item.index === index);
+    if (!savedBinding) {
+      entries.push({ kind, index, path: entry.path, enabled: true, status: 'not_found', detail: '当前保存记录中没有该条目的独立绑定：请重新保存会话设置' });
       continue;
     }
-    const binding = await bindDirectory(entry.path);
-    const resolved = typeof binding === 'string' ? null : binding;
-    // 等于用户主目录的资料根保存成功，但健康检查给出可修正警告（范围过大）
-    const homeWarning = resolved && resolved.path === homedir() ? { detail: '资料根是整个用户主目录：建议改为具体资料目录，避免扩大只读范围' } : {};
+    const failure = await verifyDirectory(savedBinding);
+    const homeWarning = !failure && savedBinding.path === homedir() ? { detail: '资料根是整个用户主目录：建议改为具体资料目录，避免扩大只读范围' } : {};
     entries.push({
       kind,
       index,
-      path: resolved ? resolved.path : entry.path,
+      path: savedBinding.path,
       enabled: true,
-      status: binding === 'not_found' ? 'not_found' : binding === 'unreadable' ? 'unreadable' : resolved ? 'valid' : 'invalid',
-      ...(binding === 'not_found' ? { detail: '路径已不存在或已移动' } : binding === 'unreadable' ? { detail: '路径不可读' } : homeWarning),
+      status: failure === 'not_found' ? 'not_found' : failure === 'unreadable' ? 'unreadable' : failure ? 'invalid' : 'valid',
+      ...(failure === 'not_found' ? { detail: '路径已不存在或已移动' } : failure === 'unreadable' ? { detail: '路径不可读' } : failure ? { detail: '目录绑定已失效' } : homeWarning),
     });
   }
   return entries;
@@ -805,16 +905,22 @@ export async function prepareSnapshot(record: SessionContextRecord, sessionId: s
   }
   const rootBindings: SessionContextSnapshot['rootBindings'] = [];
   if (config.enabled) {
-    for (const [slot, binding] of record.bindings.roots.entries()) {
+    // 六轮接收核对 5：逐条绑定保留，但实际授权按已核对的 canonical 目录去重——
+    // 重复条目复用同一 grant，不产生重复 rootId/授权
+    const seenRootGrants = new Map<string, string>();
+    for (const [, binding] of record.bindings.roots.entries()) {
       const entry = config.readRoots[binding.index];
       if (!entry || !entry.enabled) continue;
+      if (seenRootGrants.has(binding.path)) continue;
       const canonical: DirectoryBinding = { path: binding.path, dev: binding.dev, ino: binding.ino };
       const failure = await verifyDirectory(canonical);
       if (failure) {
         issues.push(`资料根 ${entry.path} 已失效`);
         continue;
       }
-      rootBindings.push({ rootId: `root-${slot + 1}`, binding: canonical });
+      const rootId = `root-${seenRootGrants.size + 1}`;
+      seenRootGrants.set(binding.path, rootId);
+      rootBindings.push({ rootId, binding: canonical });
     }
   }
   let skills: SessionSnapshotSkill[] = [];
@@ -823,8 +929,27 @@ export async function prepareSnapshot(record: SessionContextRecord, sessionId: s
     // 不在创建时重新解析（alias 改指更深目录/根外不能改变保存时确定的来源集合）
     const discovered = await discoverSkillsFromBindings(record);
     if (!discovered.ok) return { ok: false, status: 409, error: `Skill 来源在创建时失效：${discovered.detail}` };
+    // 转换/持久化快照之前对最终唯一集合复核（数量/原始字节含 frontmatter/名称唯一/正文上限）
+    const finalCheck = validateMergedSkills(discovered.skills);
+    if (!finalCheck.ok) return { ok: false, status: 409, error: finalCheck.detail };
     skills = discovered.skills.map(toSnapshotSkill);
     issues.push(...discovered.issues);
+    // 六轮接收核对 4：启用条目在保存记录中没有 index 绑定（历史记录形状）→ 受控 resave 指引，
+    // 只保留显式绑定的安全资源，绝不重解 raw alias 或降级为 legacy
+    for (const [index, entry] of config.skillSources.entries()) {
+      if (!entry.enabled) continue;
+      if (!record.bindings.skills.some((binding) => binding.index === index)) {
+        issues.push(`Skill 来源 ${entry.path} 在当前保存记录中没有独立绑定：请重新保存会话设置`);
+      }
+    }
+  }
+  if (config.enabled) {
+    for (const [index, entry] of config.readRoots.entries()) {
+      if (!entry.enabled) continue;
+      if (!record.bindings.roots.some((binding) => binding.index === index)) {
+        issues.push(`资料根 ${entry.path} 在当前保存记录中没有独立绑定：请重新保存会话设置`);
+      }
+    }
   }
   const snapshot: SessionContextSnapshot = {
     schemaVersion: 1,

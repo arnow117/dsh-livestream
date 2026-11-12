@@ -373,6 +373,305 @@ describe('managed session creation', () => {
     await expect(readFile(liveFile, 'utf8')).rejects.toThrow();
   });
 
+  // ── 六轮接收核对：逐条绑定归属与实际声明去重分离 ──
+
+  it('keeps a deeper explicit file inside a direct-SKILL container as an independent source (both orders)', async () => {
+    // 容器 A 直接含 SKILL.md（按规则不发现更深文件）；更深的显式文件作为独立来源绑定
+    await mkdir(join(dir, 'skills', 'deep-container', 'hidden'), { recursive: true });
+    await writeFile(join(dir, 'skills', 'deep-container', 'SKILL.md'), '---\nname: container-skill\ndescription: 容器直接声明。\n---\n容器正文。\n');
+    await writeFile(join(dir, 'skills', 'deep-container', 'hidden', 'inner.md'), '---\nname: hidden-skill\ndescription: 更深显式文件。\n---\n深层正文。\n');
+    const sources = [
+      { path: join(dir, 'skills', 'deep-container'), enabled: true },
+      { path: join(dir, 'skills', 'deep-container', 'hidden', 'inner.md'), enabled: true },
+    ];
+    const saved = await saveSkillConfig(sources);
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(200);
+    const names = created.body.sessionContext.skills.map((skill: { name: string }) => skill.name).sort();
+    expect(names).toEqual(['container-skill', 'hidden-skill']);
+    // 反序：显式文件在前、容器在后，两个独立名称都加载
+    const savedReversed = await saveSkillConfig([sources[1], sources[0]]);
+    expect(savedReversed.status).toBe(200);
+    const createdReversed = await post('sessions', { workspaceId });
+    expect(createdReversed.status).toBe(200);
+    expect(createdReversed.body.sessionContext.skills.map((skill: { name: string }) => skill.name).sort()).toEqual(['container-skill', 'hidden-skill']);
+    await save();
+  });
+
+  it('rejects save and creation when the deeper explicit file takes the container declaration name (both orders, zero native calls)', async () => {
+    await mkdir(join(dir, 'skills', 'deep-container-2', 'hidden'), { recursive: true });
+    await writeFile(join(dir, 'skills', 'deep-container-2', 'SKILL.md'), '---\nname: container-skill\ndescription: 容器直接声明。\n---\n容器正文。\n');
+    await writeFile(join(dir, 'skills', 'deep-container-2', 'hidden', 'inner.md'), '---\nname: hidden-skill\ndescription: 更深显式文件。\n---\n深层正文。\n');
+    const sources = [
+      { path: join(dir, 'skills', 'deep-container-2'), enabled: true },
+      { path: join(dir, 'skills', 'deep-container-2', 'hidden', 'inner.md'), enabled: true },
+    ];
+    // 先保存原名配置（记录里已有 container-skill 与 hidden-skill 两个声明）
+    const savedOriginal = await saveSkillConfig(sources);
+    expect(savedOriginal.status).toBe(200);
+    const before = nativeCreates.length;
+    // 保存后 hidden 文件改名为与容器声明同名：已保存记录的创建路径整体拒绝（409 同名）
+    await writeFile(join(dir, 'skills', 'deep-container-2', 'hidden', 'inner.md'), '---\nname: container-skill\ndescription: 抢名。\n---\n抢名正文。\n');
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(409);
+    expect(JSON.stringify(created.body)).toContain('同名');
+    expect(nativeCreates.length).toBe(before);
+    // 冲突配置的保存也整体拒绝（400 同名）
+    const saved = await saveSkillConfig(sources);
+    expect(saved.status).toBe(400);
+    expect(JSON.stringify(saved.body)).toContain('同名');
+    expect(nativeCreates.length).toBe(before);
+    // 反序（文件在前、容器在后）：恢复原名后保存 200 → 两个独立名称都加载
+    await writeFile(join(dir, 'skills', 'deep-container-2', 'hidden', 'inner.md'), '---\nname: hidden-skill\ndescription: 更深显式文件。\n---\n深层正文。\n');
+    const savedReversedOriginal = await saveSkillConfig([sources[1], sources[0]]);
+    expect(savedReversedOriginal.status, JSON.stringify(savedReversedOriginal.body)).toBe(200);
+    const createdReversedOriginal = await post('sessions', { workspaceId });
+    expect(createdReversedOriginal.status).toBe(200);
+    expect(createdReversedOriginal.body.sessionContext.skills.map((skill: { name: string }) => skill.name).sort()).toEqual(['container-skill', 'hidden-skill']);
+    // 反序改名为同名后：创建 409（相对反序成功创建后的零新增）、冲突配置保存 400
+    await writeFile(join(dir, 'skills', 'deep-container-2', 'hidden', 'inner.md'), '---\nname: container-skill\ndescription: 抢名。\n---\n抢名正文。\n');
+    const createdReversed = await post('sessions', { workspaceId });
+    expect(createdReversed.status).toBe(409);
+    expect(nativeCreates.length).toBe(before + 1);
+    const savedConflictedReversed = await saveSkillConfig([sources[1], sources[0]]);
+    expect(savedConflictedReversed.status).toBe(400);
+    await save();
+  });
+
+  it('retains per-index bindings for duplicate canonical entries and dedupes read-root grants (one rootId per unique dir)', async () => {
+    await writeFile(join(dir, 'materials', 'grant.txt'), '授权内文件。\n');
+    await mkdir(join(dir, 'materials-2'), { recursive: true });
+    await writeFile(join(dir, 'materials-2', 'note.txt'), '第二个授权。\n');
+    const saved = await saveSkillConfig([]);
+    void saved;
+    const revision = sessionContext.stateView().saved?.revision ?? 0;
+    const savedRoots = await post('settings', { sessionContext: { expectedRevision: revision, config: {
+      enabled: true,
+      cwd: join(dir, 'workdir'),
+      skillSources: [],
+      readRoots: [
+        { path: join(dir, 'materials'), enabled: true },
+        { path: join(dir, 'materials'), enabled: true },
+        { path: join(dir, 'materials-2'), enabled: true },
+      ],
+    } } });
+    expect(savedRoots.status, JSON.stringify(savedRoots.body)).toBe(200);
+    // 逐条绑定：重复 canonical 的两个条目各保留一份 index 绑定
+    const persisted = JSON.parse(await readFile(join(dir, 'dsh-livestream', 'settings.json'), 'utf8'));
+    expect(persisted.sessionContext.bindings.roots).toHaveLength(3);
+    expect(persisted.sessionContext.bindings.roots.map((item: { index: number }) => item.index)).toEqual([0, 1, 2]);
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(200);
+    // 快照授权按已核对 canonical 目录去重：两个重复条目 → 一个唯一 grant，rootId 唯一
+    const persistedSnapshot = JSON.parse(await readFile(join(dir, 'dsh-livestream', 'session-context', `${created.body.sessionId}.json`), 'utf8'));
+    expect(persistedSnapshot.rootBindings).toHaveLength(2);
+    expect(persistedSnapshot.rootBindings.map((item: { rootId: string }) => item.rootId)).toEqual(['root-1', 'root-2']);
+    expect(created.body.sessionContext.rootIds).toEqual(['root-1', 'root-2']);
+    const read = await sessionContext.readMaterial(created.body.sessionId, { rootId: 'root-1', path: 'grant.txt' });
+    expect(read.status).toBe('available');
+  });
+
+  it('keeps one definition for a legal overlapping actual skill file (counted once at limits)', async () => {
+    await mkdir(join(dir, 'skills', 'overlap-container'), { recursive: true });
+    await writeFile(join(dir, 'skills', 'overlap-container', 'inner.md'), '---\nname: overlap-skill\ndescription: 容器与文件来源指向同一实际文件。\n---\n重叠正文。\n');
+    const saved = await saveSkillConfig([
+      { path: join(dir, 'skills', 'overlap-container'), enabled: true },
+      { path: join(dir, 'skills', 'overlap-container', 'inner.md'), enabled: true },
+    ]);
+    expect(saved.status).toBe(200);
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(200);
+    expect(created.body.sessionContext.skills).toHaveLength(1);
+    // 同一实际文件只计一次：第 2 次加载为同 turn 重复，第 5 次调用触发次数上限而不是重复注入正文
+    const first = sessionContext.loadSkill(created.body.sessionId, 'overlap-skill');
+    expect(first.status).toBe('loaded');
+    const again = sessionContext.loadSkill(created.body.sessionId, 'overlap-skill');
+    if (again.status === 'loaded') expect(again.body).toBe('');
+    await save();
+  });
+
+  // ── 正式复审 R10：异源同名在创建时是硬冲突（两种来源形状与顺序），同 canonical 重复合法去重 ──
+
+  const saveSkillConfig = async (skillSources: Array<{ path: string; enabled: boolean }>) => {
+    const revision = sessionContext.stateView().saved?.revision ?? 0;
+    return post('settings', { sessionContext: { expectedRevision: revision, config: {
+      enabled: true,
+      cwd: join(dir, 'workdir'),
+      skillSources,
+      readRoots: [{ path: join(dir, 'materials'), enabled: true }],
+    } } });
+  };
+
+  it('rejects creation when a saved file source is renamed into an existing skill name (zero native calls)', async () => {
+    await writeFile(join(dir, 'skills', 'a.md'), '---\nname: first\ndescription: A 来源。\n---\nA 正文。\n');
+    await writeFile(join(dir, 'skills', 'b.md'), '---\nname: second\ndescription: B 来源。\n---\nB 正文。\n');
+    const saved = await saveSkillConfig([
+      { path: join(dir, 'skills', 'a.md'), enabled: true },
+      { path: join(dir, 'skills', 'b.md'), enabled: true },
+    ]);
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const before = nativeCreates.length;
+    // 保存后 b.md 改成与 a.md 同名（inode 不变，绑定仍有效）：创建必须整体拒绝
+    await writeFile(join(dir, 'skills', 'b.md'), '---\nname: first\ndescription: 抢名。\n---\n抢名正文。\n');
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(409);
+    expect(JSON.stringify(created.body)).toContain('同名');
+    expect(nativeCreates.length).toBe(before);
+    // 恢复 b.md 后创建恢复可用（同名冲突消失）
+    await writeFile(join(dir, 'skills', 'b.md'), '---\nname: second\ndescription: B 来源。\n---\nB 正文。\n');
+    const recovered = await post('sessions', { workspaceId });
+    expect(recovered.status).toBe(200);
+    await save();
+  });
+
+  it('rejects dir/file mixed-order cross-source name conflicts at creation (zero native calls)', async () => {
+    // 目录来源（inner/first）在前、文件来源（second）在后
+    await mkdir(join(dir, 'skills', 'mixed-inner'), { recursive: true });
+    await writeFile(join(dir, 'skills', 'mixed-inner', 'SKILL.md'), '---\nname: first\ndescription: 目录来源。\n---\n目录正文。\n');
+    await writeFile(join(dir, 'skills', 'mixed-file.md'), '---\nname: second\ndescription: 文件来源。\n---\n文件正文。\n');
+    const saved = await saveSkillConfig([
+      { path: join(dir, 'skills', 'mixed-inner'), enabled: true },
+      { path: join(dir, 'skills', 'mixed-file.md'), enabled: true },
+    ]);
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const before = nativeCreates.length;
+    await writeFile(join(dir, 'skills', 'mixed-file.md'), '---\nname: first\ndescription: 抢名。\n---\n抢名正文。\n');
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(409);
+    expect(JSON.stringify(created.body)).toContain('同名');
+    expect(nativeCreates.length).toBe(before);
+    // 反向冲突：保存后改目录来源的 SKILL.md 去撞文件来源当前的名字（前一段已把文件改为 first；
+    // 改后配置本身也会被保存拒绝，所以冲突只发生在已保存记录的创建路径）
+    await writeFile(join(dir, 'skills', 'mixed-inner', 'SKILL.md'), '---\nname: first\ndescription: 反向抢名。\n---\n反向正文。\n');
+    const beforeReversed = nativeCreates.length;
+    const createdReversed = await post('sessions', { workspaceId });
+    expect(createdReversed.status).toBe(409);
+    expect(JSON.stringify(createdReversed.body)).toContain('同名');
+    expect(nativeCreates.length).toBe(beforeReversed);
+    await save();
+  });
+
+  // ── 正式复审 R11：发现失败分支保持预算与原子合并（部分声明不得绕过计量）──
+
+  it('rejects creation when a saved single-file source exceeds the 64KiB read budget (zero native calls)', async () => {
+    await writeFile(join(dir, 'skills', 'big-later.md'), '---\nname: big-later\ndescription: 之后超限。\n---\n小正文。\n');
+    const saved = await saveSkillConfig([{ path: join(dir, 'skills', 'big-later.md'), enabled: true }]);
+    expect(saved.status).toBe(200);
+    const before = nativeCreates.length;
+    // 保存后正文增至 64KiB 以上（声明合法，读取预算超限）
+    await writeFile(join(dir, 'skills', 'big-later.md'), `---\nname: big-later\ndescription: 之后超限。\n---\n${'x'.repeat(65536)}\n`);
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(409);
+    expect(JSON.stringify(created.body)).toContain('Skill 文件超过');
+    expect(nativeCreates.length).toBe(before);
+    await save();
+  });
+
+  it('rejects creation atomically when a container has a bad declaration after legal prefixes (zero native calls, no partial snapshot)', async () => {
+    await mkdir(join(dir, 'skills', 'atomic-container'), { recursive: true });
+    await writeFile(join(dir, 'skills', 'atomic-container', 'a.md'), '---\nname: atomic-a\ndescription: 合法前缀。\n---\nA 正文。\n');
+    await writeFile(join(dir, 'skills', 'atomic-container', 'b.md'), '---\nname: atomic-b\ndescription: 之后改坏。\n---\nB 正文。\n');
+    const saved = await saveSkillConfig([{ path: join(dir, 'skills', 'atomic-container'), enabled: true }]);
+    expect(saved.status).toBe(200);
+    const before = nativeCreates.length;
+    await writeFile(join(dir, 'skills', 'atomic-container', 'b.md'), '---\nname: atomic-b\n');
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(409);
+    expect(JSON.stringify(created.body)).toContain('声明无效');
+    expect(nativeCreates.length).toBe(before);
+    await save();
+  });
+
+  it('rejects creation when merged raw bytes exceed the 256KiB total budget (zero native calls)', async () => {
+    const containers: Array<string> = [];
+    for (let index = 0; index < 5; index++) {
+      const container = join(dir, 'skills', `budget-${index}`);
+      await mkdir(container, { recursive: true });
+      containers.push(container);
+      await writeFile(join(container, 'a.md'), `---\nname: budget-${index}-a\ndescription: 小声明。\n---\n小正文。\n`);
+      await writeFile(join(container, 'b.md'), `---\nname: budget-${index}-b\ndescription: 小声明。\n---\n小正文。\n`);
+    }
+    const saved = await saveSkillConfig(containers.map((container) => ({ path: container, enabled: true })));
+    expect(saved.status).toBe(200);
+    const before = nativeCreates.length;
+    // 每个容器的 a.md 改为 ~55KB 合法正文：合并 raw 总量 5×(55×1024) ≈ 281KB > 256KiB
+    for (const [index, container] of containers.entries()) {
+      await writeFile(join(container, 'a.md'), `---\nname: budget-${index}-a\ndescription: 超限。\n---\n${'x'.repeat(55 * 1024)}\n`);
+    }
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(409);
+    expect(JSON.stringify(created.body)).toContain('Skill 原始字节合计超过');
+    expect(nativeCreates.length).toBe(before);
+    await save();
+  });
+
+  it('dedupes a same-canonical source at the 16-skill boundary (16 unique still load)', async () => {
+    const containers: Array<string> = [];
+    for (let index = 0; index < 4; index++) {
+      const container = join(dir, 'skills', `boundary-${index}`);
+      await mkdir(container, { recursive: true });
+      containers.push(container);
+      for (let slot = 0; slot < 4; slot++) {
+        await writeFile(join(container, `s${slot}.md`), `---\nname: boundary-${index}-${slot}\ndescription: 边界来源。\n---\n正文 ${index}-${slot}。\n`);
+      }
+    }
+    const saved = await saveSkillConfig(containers.map((container) => ({ path: container, enabled: true })));
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const created = await post('sessions', { workspaceId });
+    expect(created.status).toBe(200);
+    expect(created.body.sessionContext.skills).toHaveLength(16);
+    // 同 canonical 的重复来源：替换入口为 alias（canonical 不变），保存与创建仍成功且不重复加载
+    const { symlink: symlinkPath } = await import('node:fs/promises');
+    await symlinkPath(containers[0], join(dir, 'skills', 'boundary-alias'));
+    const revision = sessionContext.stateView().saved?.revision ?? 0;
+    const savedAlias = await post('settings', { sessionContext: { expectedRevision: revision, config: {
+      enabled: true,
+      cwd: join(dir, 'workdir'),
+      skillSources: [
+        { path: join(dir, 'skills', 'boundary-alias'), enabled: true },
+        ...containers.slice(1).map((container) => ({ path: container, enabled: true })),
+      ],
+      readRoots: [{ path: join(dir, 'materials'), enabled: true }],
+    } } });
+    expect(savedAlias.status, JSON.stringify(savedAlias.body)).toBe(200);
+    const createdAlias = await post('sessions', { workspaceId });
+    expect(createdAlias.status).toBe(200);
+    expect(createdAlias.body.sessionContext.skills).toHaveLength(16);
+    await save();
+  });
+
+  // ── 六轮接收核对 4：历史记录缺失 index 绑定的条目 → 受控 resave 诊断，不重解 raw alias ──
+
+  it('reports a controlled resave diagnostic for orphan entries without bindings while bound entries stay available', async () => {
+    await save();
+    // 直接构造历史形状：config 两个启用条目，bindings 只保留 index 0（旧记录可能缺失重复条目绑定）
+    const current = JSON.parse(await readFile(join(dir, 'dsh-livestream', 'settings.json'), 'utf8'));
+    const record = current.sessionContext;
+    const orphanEntry = join(dir, 'skills', 'orphan.md');
+    await writeFile(orphanEntry, '---\nname: orphan-skill\ndescription: 无绑定条目。\n---\n孤儿正文。\n');
+    record.config.skillSources = [
+      record.config.skillSources[0],
+      { path: orphanEntry, enabled: true },
+    ];
+    record.bindings.skills = record.bindings.skills.filter((item: { index: number }) => item.index === 0);
+    runtime.updateSettings({ sessionContext: record });
+    const created = await post('sessions', { workspaceId });
+    // 仍是管理会话（不降级 legacy），但孤儿条目以 issue 呈现 resave 指引，且只有已绑定来源进入快照
+    expect(created.status).toBe(200);
+    const names = created.body.sessionContext.skills.map((skill: { name: string }) => skill.name);
+    expect(names).not.toContain('orphan-skill');
+    expect(JSON.stringify(created.body.sessionContext.issues)).toContain('重新保存');
+    expect(JSON.stringify(created.body.sessionContext.issues)).toContain('orphan');
+    // 健康重查同诊断：孤儿条目 not_found + resave 指引，不重解 raw alias
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sessionContext.recheckSessionContext();
+    const entry = sessionContext.stateView().health.entries.find((candidate: any) => candidate.kind === 'skill' && candidate.index === 1);
+    expect(entry?.status).toBe('not_found');
+    expect(entry?.detail ?? '').toContain('重新保存');
+    await save();
+  });
+
   // ── 正式评审 R7：owner active 由实际开播状态 + show.currentSession 选择 ──
 
   it('derives the owner active view from the live state, not the registration order', async () => {

@@ -233,6 +233,10 @@ turn 标识使用真实 native agent/turn，不采纳工具参数或文本中的
 - **所有出口保持同一预算**：单份原始 Markdown 64 KiB、全部 canonical 唯一定义的原始字节 256 KiB、最终最多 16 份、发现整体 5 秒等现有上限不变。文件 read/parse 的 limit_exceeded、来源内/来源间冲突及整体预算超限都整体拒绝，native create 零调用；不能降级为普通 unavailable，也不能漏计失败分支留下的部分定义。合并后在转换/持久化快照之前对最终唯一集合的 raw 字节、名称及数量再次校验；原始字节计量包括 frontmatter，不以 body/hash 代替。同 canonical 的重复在已达 16 份等边界仍允许正常去重。仅缺失、不可读、绑定失效等既定可降级情形可记录 unavailable 并丢弃该来源整体结果；无效格式、冲突及硬预算错误不能静默保留部分候选。
 - **健康状态是真实声明状态**：owner 重查从保存的 canonical 来源及身份执行有界发现/校验，不能只把存在的目录当 valid。删除声明、仅 references/scripts、缺 SKILL.md 应显示 not_found；合法重复来源保持 valid。重查只更新健康诊断，不写配置/revision/绑定，不重新指向原别名，不改变活动快照或已加载正文，不自动创建/开播。创建时后续缺失来源按既定 unavailable 语义反馈并保持范围，不误报 valid。
 
+**逐条绑定与实际资源去重（2026-11-12，第六轮接收补充）**：来源条目的归属绑定与声明/授权资源去重是两件事。新保存记录为每个启用的 Skill 和资料根条目保留已有格式的 index + canonical path/dev/ino（文件型另含 file），即使两个条目指向同一 canonical 目标；现有 schemaVersion=1 和解码器支持该形状，不增加字段或迁移版本。发现合并只按实际已发现的 canonical 声明文件去重，不能把目录路径前缀视为整棵目录已被发现：直接含 SKILL.md 的目录来源不会发现更深的显式文件，后者仍应加入或触发同名异源 conflict。最终资料授权按已核对的 canonical 目录去重，不能因逐条绑定重复生成 rootId/授权。
+
+健康检查按配置 index 查保存绑定并核对该固定目标，不再解析 raw alias；别名改指另一个已绑定来源也不能借用其状态。已有合法记录若因历史去重缺少某个 index 的绑定，无法安全恢复其保存目标，应明确 unavailable/not_found 并提示重新保存，创建时以同一诊断反馈缺失条目，绝不自动跟随 alias 补绑；仍有有效绑定的条目沿用既定可用/失效规则，不降级为 legacy。重查不改变 settings 字节、revision、bindings、活动或冻结正文。回归须覆盖重复单文件/目录/资料根、别名改指其他已绑定目标、旧记录缺绑定，以及目录先/文件先时更深显式 Skill 的独立名称和异源同名。
+
 本轮写入继续原 T001 边界，以 sessionContextPaths/sessionContext 的现有读取与发现模块及相应测试为主；不要建立通用文件系统框架、第二套合并规则或扩大到课程。对应验收包括根之上祖先替换及合法首次规范化、异源同名混合顺序、超限/坏声明失败出口的最终快照及 native 零调用、删声明后的重查与创建。历史失败、诊断已用、外部预算和共享资源边界均保留。
 
 ### 实施计划
@@ -825,3 +829,53 @@ requested_transitions:
 主 Agent 核对当前读取 helper、canonical 来源合并与健康重查调用链，接受独立 Sol 的 FEAT-004 approved、FEAT-006 changes_requested 请求。R9 为本轮共同 helper 对根重新 realpath 定义边界的新回归；R10/R11 为创建时按来源分支合并的冲突及错误出口问题；R8 残余为健康重查仍只检查目录存在。以上均有新的明确因果证据，本次不重复打开无新证据的旧发现，不执行新的主 Agent 诊断实验。
 
 同一实现者按下列当前有效方案补充约束继续修正，保留此前失败历史和唯一主 Agent 诊断额度已用事实。旧候选独立 Validate 的通过只覆盖其实际场景；新的边界需要失败先行及对应零正文/原子合并/原生创建零调用/重查状态证据。FEAT-004 当前批准仍不独立发布，统一组合等待 FEAT-006 最终候选重建验证和复审。
+
+### 2026-11-12 六轮实现与验证（同执行者，R9～R11 + R8 残余逐项处置完成，awaiting_acceptance）
+
+执行环境同前（T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`；executedModel 元数据同前，1M 容量未验证）。起点 HEAD `d24dc4b529538b8150cac1e81ef8bb57e44ca755`（干净树，业务源码等同 `0b38f9d`+主 Agent 小修）；本轮 dirty 仅 5 个文件（sessionContext.ts、sessionContextPaths.ts 与三个 sessionContext 测试），无 Git 写、无 lifecycle mutation、共享服务/在用 lib 零触碰、真实外部调用预算 0。隔离副本 `/private/tmp/feat006-r6/repo`（312 项起始清单与目标一致 `a68e3ecf…b534a`；收尾 `45f5969e…fb384` 目标与副本一致）。Sol 复审探针目录 `/var/folders/…/dsh-sol-rereview-0b38f9d-YFL3r5/` 只读引用，未重做根因实验；四个 failing-first 红状态全部实测（R9 根外正文 available 红、R10 混合同名 200 红、R11 超限仍 200 红、R8 重查 valid 红），红因逐条核对。
+
+**R9 HIGH 固定 canonical 边界**：`readViaIdentifiedPath` 移除读取时 `realpath(rootPath)` 重新定义边界的逻辑，改为调用方传入**绑定/保存时固定的 canonical 根**（`options.canonicalRoot`）：打开前后（`realpath(rootPath) === canonicalRoot` 核对，等价恢复 verifyDirectory 的祖先保护）与读后（rootReal 再核 + targetAfter withinRoot）均对固定边界。`readBoundedFile` 传 `request.root.path`（bindDirectory 时已规范化）；`readDiscoveredSkill` 首参改为 canonicalRoot（discoverSource/discoverSkillsFromBindings 传 canonical 绑定路径）。测试：parent 移出+symlink 换回+root/末端 inode 保持 → identity_mismatch/escape 零正文（修复前返回根外正文 available）；合法首次 canonical 化（alias→bindDirectory→canonical 路径读取）正例保留。discovery-time 测试套件 dir 改为真实 realpath（bind 语义），不以 raw /var 冒充 canonical。
+
+**R10 MEDIUM 异源同名静默去重**：新增统一合并收集器 `mergeDiscoveredSource` + `SkillMergeState`——按 canonical 来源身份（file 绑定=binding.file、目录=binding.path）去重；`nameToSource` 映射检冲突：同名不同 canonical 来源 → 硬 conflict 整体拒绝；同 canonical 重复合法去重（含 16 份边界与路径包含去重：文件已在其目录来源内发现时不重复计）。文件/目录共用同一合并判定，不再按 seenNames 单独去重。测试：file/file 同名改写 → 409 同名 + native 0 + 恢复后可用；dir/file 与 file/dir 两种形状方向 → 409；同 canonical alias 替换入口 → 保存/创建仍成功且 16 份不重复。
+
+**R11 MEDIUM 失败分支绕过预算**：`discoverSourceAtomic` 原子来源发现（结果只写局部集合，失败不污染全局 defs/seenPaths/名称/总量）；文件 read `limit_exceeded` 恢复为硬失败整体拒绝（不再降级「不可读」）；无效格式（parse 失败）创建时整体拒绝；merge 点原子结算唯一数量/总原始字节（含 frontmatter）；`prepareSnapshot` 在转换/持久化快照前对最终唯一集合再校验（`validateMergedSkills`：数量/字节/名称唯一/单文件上限）。保存路径 `discoverSkills` 同一收集器（保存分支原有拒绝语义保持）。测试：单文件超 64KiB → 409 `Skill 文件超过` + native 0；容器前缀合法后 b.md 坏声明 → 409 声明无效 + native 0；五容器 a.md 各 ~55KB 合法 → 409 `Skill 原始字节合计超过 262144` + native 0。
+
+**R8 残余 MEDIUM 重查只查目录存在**：`discoverSkillsForHealth` skill 分支重写——从保存 canonical 绑定执行 `discoverSkillsFromBindings` 有界发现/校验，按 `sourceStatus` 报告真实声明状态（删除 SKILL.md/空/仅 references → not_found；绑定失效 → invalid；合法重复 canonical（无独立绑定的条目按 realpath 比对绑定）→ 同状态 valid）；整体硬失败（冲突/预算）如实标记 conflict/invalid。重查只更新健康诊断，不改 config/revision/bindings/active/frozen body，不跟随 raw alias 重定向（alias 重指向后 realpath 不匹配任何绑定 → not_found）。资料根保持目录存在性检查（合同即目录只读授权）。测试：删声明后 recheck → not_found，settings 字节与 revision 不变、active null、创建路径同诊断（无 Skill）；恢复声明 → valid；合法重复两 entry 全 valid。recheck 限频窗口用真实 1.1s 流逝（该用例本身测真实时钟限频）。
+
+**验证（隔离副本，最终代码，全部 exit 0）**：check；build（四 bundle、宿主 bundle 零 dsh-tools/dsh-llm）；vitest+coverage（`--exclude test/macosTts.test.ts`，2 项真实 OS 语音未跑如实列明）87 文件 **615 通过/8 跳过**；coverage-diff fd48d0a **行 2048/2318（88.43%）、分支 1032/1325（77.89%）** ≥80/70；E2E 四套 **4/4、6/6、12/12、10/10**；offline-query exit 0（2 场景 failureCode=null）；SC002 五阶段 **24/12/18/19/25 全 0 failures** + **hostA 20/20 + hostB 25/25**（R7/R9 断言保持，复用 0b38 validate 定义于自有目录，旧日志不覆盖）。
+
+**资源收尾**：进程全部退出；共享端口零触碰；证据保留于 `/private/tmp/feat006-r6/`。**移交状态**：`stage: build`，`status: awaiting_acceptance`；requested_transitions 同前（set-task-status done，仅请求）。
+
+### 2026-11-12 六轮接收核对：R10 实际声明去重与 R8 逐条绑定残余
+
+主 Agent 核对 HEAD d24dc4b529538b8150cac1e81ef8bb57e44ca755 下的六文件 WIP 与 `/private/tmp/feat006-r6/source-hashes.txt`：312 项在目标及隔离副本均逐字节一致，清单 SHA-256 为 993a17684563b52da5c3dae068a50e59e58937e04855a4ec31aa5c6ce19b1e1f；实际日志含 87 文件、615 通过/8 跳过及四套 E2E 4/6/12/10。此核对不冒称新执行或正式 Validate。
+
+第六轮已补固定 canonical 根、原子来源与硬预算拒绝，有明确验收进展；但当前不接受 done。静态源码因果核对确认两处残余：(1) mergeDiscoveredSource 使用 mergedDirRoots 前缀过滤，将目录来源未实际发现的更深显式文件也静默丢弃，独立名称和同名异源均受影响；(2) validateSaveCandidate 将重复来源的绑定行去重，健康检查对缺失 index 重解 raw alias，文件型又把文件 realpath 与父目录 binding.path 比较，合法重复单文件也会错误 not_found；资料根重查同样重解 raw alias。以上依据实际控制流，无新增主 Agent 诊断实验。
+
+已在当前有效方案中明确逐条绑定与实际资源去重规则，交同一 GLM 实现者集中修正并做必要验证。保留此前全部失败历史、唯一主 Agent 诊断额度已用事实与外部调用预算 0；不重开已无新证据的发现，不修改生命周期状态。
+
+### 2026-11-12 七轮实现与验证（同执行者，逐条绑定/实际声明去重 + R8 绑定健康处置完成，awaiting_acceptance）
+
+执行环境同前（T3 `claudeAgent` / 请求 `glm-5.3-flash[1M]` / `effort=xhigh`；executedModel 元数据同前，1M 容量未验证）。HEAD `d24dc4b` 不变；本轮在六轮 WIP 上继续，dirty 仍为同一组文件（sessionContext.ts、sessionContextPaths.ts、三个 sessionContext 测试、engineering.md 等）。隔离副本沿用 `/private/tmp/feat006-r6/repo`（收尾 312 项清单与目标一致）；验证/日志用 `r7` 后缀与 `/private/tmp/feat006-r7/sc002/`（探针定义复用 0b38 validate，COPY 绑定当前候选 r6 副本构建产物，数据/日志独立，旧证据不覆盖）。
+
+**failing-first（六项红全部实测红因）**：深层显式文件被目录前缀静默丢弃（[container-skill] ≠ 两项）；同名异源保存 200 未拒；逐条绑定被去重（bindings.roots 长度 1 ≠ 3）；孤儿条目 issue 为空；健康重复条目误报 not_found / valid。
+
+**逐项处置**：
+
+1. **实际声明路径去重（R10 残余）**：`mergeDiscoveredSource` 移除 `mergedDirRoots` 前缀过滤——直接含 SKILL.md 的容器不会发现更深文件，深层显式文件是独立来源；去重只按「实际已合并的 canonical 声明文件路径」（mergedPaths）+ seenSourceIds（同 canonical 来源重复）。名称冲突按声明身份（nameToSource ≠ 本来源）整体拒绝。测试：容器（直接 SKILL.md）+ 深层显式文件两种顺序都加载两个独立名称；同名后保存 400/创建 409 + native 0；同实际文件重叠（容器+内层文件绑定）仍一份定义、限额计一次。
+2. **逐条绑定保留（R10/绑定归属）**：`validateSaveCandidate` 对每个启用 Skill 条目无条件保留 index 绑定（文件型含父目录+file；目录型含 canonical 目录）；重复 canonical 资料根条目同样逐条保留 roots 绑定。schemaVersion=1/decodeBindings 原格式支持，无新字段/迁移。
+3. **健康按保存绑定（R8 残余）**：`discoverSkillsForHealth` skill 分支按 `record.bindings.skills.find(index)` 取绑定，状态来自 `discoverSkillsFromBindings` 的 per-index `sourceStatus`（canonical 绑定有界发现）；**绝不 realpath/bindDirectory raw entry.path 找孪生或替换授权**（r6 的 twin/realpath 逻辑删除）。alias 重指向另一个已绑定目标后重查：各条目仍按各自保存绑定 valid、路径为各自固定 canonical（不跟随 alias 新目标）；删除 A 的 SKILL.md 后 A 及其 alias 条目均 not_found，而独立 B 保持 valid。资料根健康同样按保存绑定 verifyDirectory 固定 canonical（不再 bindDirectory raw path）；重复条目各 valid。
+4. **历史孤儿条目（缺 index 绑定）**：健康 → `not_found` + 「当前保存记录中没有该条目的独立绑定：请重新保存会话设置」；创建 → 对应 issue（「请重新保存会话设置」），只把显式绑定的安全资源纳入快照，不重解 raw alias、不降级 legacy；资料根孤儿条目同样处理。测试：构造 config 两启用条目 + bindings 仅 index0 → 创建 200 管理会话、issue 含 orphan 与 resave 指引、快照无 orphan-skill；重查 entry not_found + resave 指引。
+5. **资料授权去重（R8/授权）**：`prepareSnapshot` 按 `seenRootGrants`（canonical path）去重——重复根条目复用同一 grant，不产生重复 rootId；rootId 按唯一授权序号分配。测试：materials×2 + materials-2 → 持久快照 rootBindings 恰 2 个（root-1/root-2）、create 响应 rootIds 同、root-1 读取 available。
+
+**验证（隔离副本，最终代码，全部 exit 0）**：check；build（四 bundle、宿主 bundle 零 dsh-tools/dsh-llm）；vitest+coverage（`--exclude test/macosTts.test.ts`，2 项真实 OS 语音未跑如实列明）87 文件 **622 通过/8 跳过**；coverage-diff fd48d0a **行 2039/2310（88.27%）、分支 1038/1322（78.52%）** ≥80/70；E2E 四套 **4/4、6/6、12/12、10/10**；offline-query exit 0（2 场景 failureCode=null）；SC002 五阶段 **24/12/18/19/25 全 0 failures** + **hostA 20/20 + hostB 25/25**。
+
+**资源收尾**：进程全部退出；共享端口零触碰；证据保留于 `/private/tmp/feat006-r6/`（实现副本）与 `/private/tmp/feat006-r7/sc002/`（探针/日志）。
+
+**移交状态**：`stage: build`，`status: awaiting_acceptance`；requested_transitions 同前（set-task-status done，仅请求）。
+
+### 2026-11-12 主 Agent 接受第六、七轮 Build，准备最终候选
+
+主 Sol 核对最终源码 diff、固定 canonical 边界、原子合并/硬预算、实际声明路径去重、逐条绑定与按绑定重查、历史缺绑定诊断及唯一资料授权。312 项清单与目标/隔离副本逐字节一致（SHA-256 4fd0d7b847a16a26c08c8c0739165a9e9c54625f81a5214d62dd6fc1b8622896），原始 r7 日志确认 check/build、87 文件 622 通过/8 跳过、差异行 2039/2310=88.27%/分支1038/1322=78.52%、四套 E2E 4/6/12/10、offline-query 双 failureCode=null、SC002 五阶段98与跨宿主45项全部通过。git diff --check 通过；任务路径进程检查无残留。未重复执行实现者已在同输入上完成的整套检查；正式独立 Validate 另行实际执行。
+
+T3 终态确认 completed、无活动下级；请求/实际元数据为 claudeAgent、glm-5.3-flash[1M]、effort=xhigh，executedModel=glm-5.3-flash，1M 容量仍未验证。接受 FEAT-006-T001 done 请求，后续仅以最终已提交业务候选重建 FEAT-004/006 的独立 Validate 与 fresh Sol Review。此为 Build 验收，不是正式批准或发布。实现者误追加的重复七轮记录已合并为一份；此后差异仅为工程记录及主 Agent 生命周期更新。既有失败史、主 Agent 诊断额度已用及真实外部预算0不变；macOS真实语音两例、90秒实计时、CLI包装、舞台/观众播放继续如实列为未测边界。

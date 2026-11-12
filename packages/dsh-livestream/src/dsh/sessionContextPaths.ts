@@ -189,20 +189,24 @@ async function readViaIdentifiedPath(
   rootIdentity: { dev: number; ino: number },
   relativePath: string,
   maxBytes: number,
-  options: { signal?: AbortSignal; beforeRead?: () => Promise<void> | void; afterRead?: () => Promise<void> | void } = {},
+  options: { canonicalRoot: string; signal?: AbortSignal; beforeRead?: () => Promise<void> | void; afterRead?: () => Promise<void> | void },
 ): Promise<{ ok: true; bytes: Uint8Array; sha256: string; target: string } | { ok: false; failure: PathFailure; consumedBytes?: number }> {
   const identity = { dev: rootIdentity.dev, ino: rootIdentity.ino };
+  const canonicalRoot = options.canonicalRoot;
   const before = await walkIdentifiedPath(rootPath, identity, relativePath);
   if (!before.ok) return before;
-  // 边界两侧都用 canonical 路径：root 的祖先可能含 symlink（如 macOS /var），逐段 walk 已保证
-  // rootPath→终端 之间无 symlink，这里解析 root 本体的规范形态后核对目标边界
-  let canonicalRoot: string;
+  // 正式复审 R9：授权边界是绑定/保存时固定的 canonical 根（调用方传入），不得以读取时
+  // realpath(rootPath) 的新目标重新授权——root 之上的祖先被移动并以 symlink 换回时，
+  // root/末端 inode 不变但 canonical 目标已偏离，必须按固定边界零正文拒绝。
+  // rootPath 自身（调用方传入的 canonical 串）实时解析结果必须仍等于固定边界。
+  let rootReal: string;
   try {
-    canonicalRoot = await realpath(rootPath);
+    rootReal = await realpath(rootPath);
   } catch {
     return { ok: false, failure: 'not_found' };
   }
-  // realpath 边界：逐段已无 symlink，realpath 等价于 walked，仍显式核对目标在当前授权根内
+  if (rootReal !== canonicalRoot) return { ok: false, failure: 'identity_mismatch' };
+  // realpath 边界：逐段已无 symlink，realpath 等价于 walked，仍显式核对目标在固定授权根内
   let target: string;
   try {
     target = await realpath(before.terminal.path);
@@ -247,10 +251,18 @@ async function readViaIdentifiedPath(
     }
     await options.afterRead?.();
     if (options.signal?.aborted) return { ok: false, failure: 'cancelled', consumedBytes: consumed };
-    // 读后复核：重走整条路径核对身份（R1）与实际边界（R1），变化/越界即丢弃缓冲
+    // 读后复核：重走整条路径核对身份（R1）、固定 canonical 边界未变（R9）与实际边界（R1），
+    // 变化/越界即丢弃缓冲
     const after = await walkIdentifiedPath(rootPath, identity, relativePath);
     if (!after.ok) return { ok: false, failure: after.failure, consumedBytes: consumed };
     if (!identitiesUnchanged(reopened, after)) return { ok: false, failure: 'identity_mismatch', consumedBytes: consumed };
+    let rootRealAfter: string;
+    try {
+      rootRealAfter = await realpath(rootPath);
+    } catch {
+      return { ok: false, failure: 'identity_mismatch', consumedBytes: consumed };
+    }
+    if (rootRealAfter !== canonicalRoot) return { ok: false, failure: 'identity_mismatch', consumedBytes: consumed };
     let targetAfter: string;
     try {
       targetAfter = await realpath(after.terminal.path);
@@ -280,7 +292,9 @@ async function readViaIdentifiedPath(
 export async function readBoundedFile(request: BoundedReadRequest): Promise<BoundedReadResult> {
   const lexical = checkRelativePath(request.relativePath);
   if (lexical) return { ok: false, failure: lexical };
+  // DirectoryBinding.path 是 bindDirectory 时已规范化的固定 canonical 边界（正式复审 R9）
   return readViaIdentifiedPath(request.root.path, request.root, request.relativePath, request.maxBytes, {
+    canonicalRoot: request.root.path,
     signal: request.signal,
     beforeRead: request.beforeRead,
     afterRead: request.afterRead,
@@ -288,17 +302,21 @@ export async function readBoundedFile(request: BoundedReadRequest): Promise<Boun
 }
 
 /**
- * 发现阶段的候选读取（Skill 来源）：以「发现时 lstat 过的可信根」为锚，走与资料读取完全相同的
- * 身份/边界/取消纪律。beforeRead/afterRead 供测试在「发现到读取」之间注入受控替换。
+ * 发现阶段的候选读取（Skill 来源）：rootPath 必须是调用方固定的 canonical 来源根（保存绑定或
+ * 发现时已 realpath），走与资料读取完全相同的固定边界身份/取消纪律。
+ * beforeRead/afterRead 供测试在「发现到读取」之间注入受控替换。
  */
 export async function readDiscoveredSkill(
-  rootPath: string,
+  canonicalRoot: string,
   rootIdentity: { dev: number; ino: number },
   relativePath: string,
   maxBytes: number,
   hooks: DiscoveryReadHooks = {},
 ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; failure: PathFailure }> {
-  const result = await readViaIdentifiedPath(rootPath, rootIdentity, relativePath, maxBytes, hooks);
+  const result = await readViaIdentifiedPath(canonicalRoot, rootIdentity, relativePath, maxBytes, {
+    canonicalRoot,
+    ...hooks,
+  });
   if (result.ok) return { ok: true, bytes: result.bytes };
   return { ok: false, failure: result.failure };
 }

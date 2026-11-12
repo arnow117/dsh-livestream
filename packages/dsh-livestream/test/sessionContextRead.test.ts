@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile, rename } from 'node:fs/promises';
+import type { DirectoryBinding } from '../src/dsh/sessionContextPaths';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -186,6 +187,45 @@ describe('bounded material reading', () => {
     await rename(join(dir, 'root/mid-real'), join(dir, 'root/mid'));
   });
 
+  // ── 正式复审 R9：根之上的祖先被移出并以 symlink 换回（root/末端 inode 保持）必须零正文；
+  //    授权边界是首次绑定时固定的 canonical 根，读取不得以当前 realpath 的新目标重新授权 ──
+
+  it('returns zero content when ancestors above the root are moved outside and symlinked back', async () => {
+    await mkdir(join(dir, 'parent/root'), { recursive: true });
+    await writeFile(join(dir, 'parent/root/doc.txt'), '根内原正文\n');
+    const binding = await bindDirectory(join(dir, 'parent/root'));
+    expect(typeof binding).toBe('object');
+    const okRead = await readBoundedFile({ root: binding as Awaited<ReturnType<typeof bindDirectory>> & { path: string }, relativePath: 'doc.txt', maxBytes: 4096 });
+    expect(okRead.ok).toBe(true);
+    const { rename: renamePath, symlink: symlinkPath, writeFile: rewrite } = await import('node:fs/promises');
+    // 受控替换：parent 移到本任务临时目录内的 parent-moved，原位 symlink 指回，就地改写正文；
+    // root 与末端 inode 都不变（rename 保留），仅 canonical 目标偏离首次绑定值
+    await renamePath(join(dir, 'parent'), join(dir, 'parent-moved'));
+    await symlinkPath(join(dir, 'parent-moved'), join(dir, 'parent'));
+    await rewrite(join(dir, 'parent-moved/root/doc.txt'), '祖先换回后的根外正文\n');
+    const result = await readBoundedFile({ root: binding as Awaited<ReturnType<typeof bindDirectory>> & { path: string }, relativePath: 'doc.txt', maxBytes: 4096 });
+    expect(result.ok, 'ancestor swap above a same-inode root must yield zero content').toBe(false);
+    if (!result.ok) expect(['identity_mismatch', 'escape']).toContain(result.failure);
+    if (result.ok) throw new Error('outside content must never be returned');
+    await rm(join(dir, 'parent'), { recursive: true, force: true });
+    await renamePath(join(dir, 'parent-moved'), join(dir, 'parent'));
+  });
+
+  it('keeps first-bind canonicalization working for a legitimate alias', async () => {
+    await mkdir(join(dir, 'canon-root'), { recursive: true });
+    await writeFile(join(dir, 'canon-root/doc.txt'), '首次规范化的合法正文\n');
+    const { realpath: realpathPath, symlink: symlinkPath } = await import('node:fs/promises');
+    const alias = join(dir, 'alias-root');
+    await symlinkPath(join(dir, 'canon-root'), alias);
+    const binding = await bindDirectory(alias);
+    expect(typeof binding).toBe('object');
+    const canonical = await realpathPath(alias);
+    expect((binding as any).path).toBe(canonical);
+    const result = await readBoundedFile({ root: binding as any, relativePath: 'doc.txt', maxBytes: 4096 });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(new TextDecoder().decode(result.bytes)).toContain('首次规范化');
+  });
+
   // ── 正式评审 R4：最后一次读取之后的取消必须零正文 ──
 
   it('returns zero content when the signal aborts after the final read (post-read re-checks)', async () => {
@@ -211,7 +251,8 @@ describe('discovery-time secure file reading', () => {
   let dir: string;
 
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'dsh-discovery-read-'));
+    const { realpath: realpathPath } = await import('node:fs/promises');
+    dir = await realpathPath(await mkdtemp(join(tmpdir(), 'dsh-discovery-read-')));
     await writeFile(join(dir, 'real-skill.md'), '---\nname: real\ndescription: 真正文。\n---\n真实正文。\n');
     await writeFile(join(dir, 'outside-secret.txt'), '来源外的机密内容\n');
     await symlink(join(dir, 'outside-secret.txt'), join(dir, 'swapped-link.md')).catch(() => {});

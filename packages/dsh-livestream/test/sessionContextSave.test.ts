@@ -139,8 +139,10 @@ describe('session context save flow', () => {
     const dedup = await post('settings', { sessionContext: dedupRequest });
     expect(dedup.status).toBe(200);
     const persisted = JSON.parse(await readFile(settingsFile, 'utf8'));
-    expect(persisted.sessionContext.bindings.roots).toHaveLength(1);
-    expect(persisted.sessionContext.bindings.roots[0].index).toBe(0);
+    // 六轮接收核对 2：逐条绑定保留——重复 canonical 的两个条目各保留一份 index 绑定；
+    // 实际授权去重在创建时按已核对 canonical 目录做
+    expect(persisted.sessionContext.bindings.roots).toHaveLength(2);
+    expect(persisted.sessionContext.bindings.roots.map((item: { index: number }) => item.index)).toEqual([0, 1]);
     // 恢复单一资料根的基线配置
     await post('settings', { sessionContext: { expectedRevision: persisted.sessionContext.revision, config: config() } });
   });
@@ -214,7 +216,131 @@ describe('session context save flow', () => {
     expect(replacement.body.sessionContext.saved.revision).toBe(1);
   });
 
+  // ── 正式复审 R8 残余：owner 重查按真实声明状态报告（不只目录存在）──
+
+  it('reports not_found on recheck after the saved skill declaration is deleted, keeping saved state frozen', async () => {
+    const { mkdir: makeDir, writeFile: writeFileFs, rm: rmPath } = await import('node:fs/promises');
+    await makeDir(join(dir, 'health-container', 'references'), { recursive: true });
+    await writeFileFs(join(dir, 'health-container', 'SKILL.md'), '---\nname: health-skill\ndescription: 健康重查来源。\n---\n健康正文。\n');
+    await writeFileFs(join(dir, 'health-container', 'references', 'note.md'), '参考资料。\n');
+    const saved = await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config({ skillSources: [{ path: join(dir, 'health-container'), enabled: true }] }) } });
+    expect(saved.status).toBe(200);
+    const before = await readFile(settingsFile, 'utf8');
+    const revisionBefore = JSON.parse(before).sessionContext.revision;
+    // 删除声明（保留目录与 references）：重查必须报 not_found，不再把目录存在当 valid
+    await rmPath(join(dir, 'health-container', 'SKILL.md'));
+    await sessionContext.recheckSessionContext();
+    let entry = sessionContext.stateView().health.entries.find((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    expect(entry?.status).toBe('not_found');
+    // 保存记录、revision 与活动快照不被重查改变
+    expect(await readFile(settingsFile, 'utf8')).toBe(before);
+    expect(JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision).toBe(revisionBefore);
+    expect(sessionContext.stateView().active?.sessionId).toBeUndefined();
+    // 创建路径同诊断一致：启用来源没有声明 → 新会话无 Skill（unavailable 语义，不扩权）
+    const created = await post('sessions', {});
+    const loaded = created.body.sessionContext.skills ?? [];
+    expect(loaded.length).toBe(0);
+    // 恢复声明后重查回到 valid（recheck 有真实 1 秒限频窗口，需要真实流逝）
+    await writeFileFs(join(dir, 'health-container', 'SKILL.md'), '---\nname: health-skill\ndescription: 健康重查来源。\n---\n健康正文。\n');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sessionContext.recheckSessionContext();
+    entry = sessionContext.stateView().health.entries.find((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    expect(entry?.status).toBe('valid');
+    await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config() } });
+  });
+
+  // ── 六轮接收核对 2/3：逐条绑定保留 + 健康按保存绑定核对固定 canonical 目标 ──
+
+  it('retains per-index bindings for duplicate entries and health follows the saved binding, not the raw alias', async () => {
+    const { mkdir: makeDir, symlink: symlinkPath, writeFile: writeFileFs, rm: rmPath, readFile: readFileFs } = await import('node:fs/promises');
+    await makeDir(join(dir, 'bind-real-a'), { recursive: true });
+    await makeDir(join(dir, 'bind-real-b'), { recursive: true });
+    await writeFileFs(join(dir, 'bind-real-a', 'SKILL.md'), '---\nname: bind-a\ndescription: A 来源。\n---\nA 正文。\n');
+    await writeFileFs(join(dir, 'bind-real-b', 'SKILL.md'), '---\nname: bind-b\ndescription: B 来源。\n---\nB 正文。\n');
+    try {
+      await symlinkPath(join(dir, 'bind-real-a'), join(dir, 'bind-alias-a'));
+    } catch {
+      return;
+    }
+    // 两个重复条目（本体+alias）+ 一个独立来源；保存后 bindings 逐条保留
+    const saved = await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config({ skillSources: [
+      { path: join(dir, 'bind-real-a'), enabled: true },
+      { path: join(dir, 'bind-alias-a'), enabled: true },
+      { path: join(dir, 'bind-real-b'), enabled: true },
+    ] }) } });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const persisted = JSON.parse(await readFileFs(settingsFile, 'utf8'));
+    expect(persisted.sessionContext.bindings.skills).toHaveLength(3);
+    expect(persisted.sessionContext.bindings.skills.map((item: { index: number }) => item.index)).toEqual([0, 1, 2]);
+    await sessionContext.recheckSessionContext();
+    let skillEntries = sessionContext.stateView().health.entries.filter((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    expect(skillEntries.map((entry: any) => entry.status)).toEqual(['valid', 'valid', 'valid']);
+    const settingsBefore = await readFileFs(settingsFile, 'utf8');
+    // alias 重指向另一个已绑定目标（B）：健康仍按各自保存绑定报告，不跟随 alias 的新目标
+    await rmPath(join(dir, 'bind-alias-a'));
+    await symlinkPath(join(dir, 'bind-real-b'), join(dir, 'bind-alias-a'));
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sessionContext.recheckSessionContext();
+    skillEntries = sessionContext.stateView().health.entries.filter((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    expect(skillEntries.map((entry: any) => entry.status)).toEqual(['valid', 'valid', 'valid']);
+    // 健康路径 = 各自保存绑定的固定 canonical 目标（目录绑定 path；文件绑定 file）
+    expect(skillEntries[0].path).toBe(persisted.sessionContext.bindings.skills[0].path);
+    expect(skillEntries[1].path).toBe(persisted.sessionContext.bindings.skills[1].path);
+    // 删除原始目标的声明：alias 条目不得借用 alias 新目标（B）的 valid——按各自保存绑定报告失效
+    await rmPath(join(dir, 'bind-real-a', 'SKILL.md'));
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sessionContext.recheckSessionContext();
+    skillEntries = sessionContext.stateView().health.entries.filter((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    expect(skillEntries[0].status).toBe('not_found');
+    expect(skillEntries[1].status).toBe('not_found');
+    expect(skillEntries[2].status).toBe('valid');
+    // 重查不改变 settings 字节
+    expect(await readFileFs(settingsFile, 'utf8')).toBe(settingsBefore);
+  });
+
+  it('marks duplicate read-root entries valid and keeps recheck read-only', async () => {
+    const { mkdir: makeDir, readFile: readFileFs, writeFile: writeFileFs } = await import('node:fs/promises');
+    await makeDir(join(dir, 'dup-root'), { recursive: true });
+    await writeFileFs(join(dir, 'dup-root', 'f.txt'), '内容\n');
+    const saved = await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config({ readRoots: [
+      { path: join(dir, 'dup-root'), enabled: true },
+      { path: join(dir, 'dup-root'), enabled: true },
+    ] }) } });
+    expect(saved.status).toBe(200);
+    const persisted = JSON.parse(await readFileFs(settingsFile, 'utf8'));
+    expect(persisted.sessionContext.bindings.roots).toHaveLength(2);
+    await sessionContext.recheckSessionContext();
+    const entries = sessionContext.stateView().health.entries.filter((candidate: any) => candidate.kind === 'root' && candidate.enabled);
+    expect(entries.map((entry: any) => entry.status)).toEqual(['valid', 'valid']);
+    expect(entries.map((entry: any) => entry.path)).toEqual([persisted.sessionContext.bindings.roots[0].path, persisted.sessionContext.bindings.roots[1].path]);
+    await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config() } });
+  });
+
+  it('keeps legal duplicate canonical sources valid across recheck', async () => {
+    const { mkdir: makeDir, symlink: symlinkPath, writeFile: writeFileFs } = await import('node:fs/promises');
+    await makeDir(join(dir, 'dup-health'), { recursive: true });
+    await writeFileFs(join(dir, 'dup-health', 'SKILL.md'), '---\nname: dup-health\ndescription: 合法重复。\n---\n正文。\n');
+    try {
+      await symlinkPath(join(dir, 'dup-health'), join(dir, 'dup-health-alias'));
+    } catch {
+      return;
+    }
+    const saved = await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config({ skillSources: [
+      { path: join(dir, 'dup-health'), enabled: true },
+      { path: join(dir, 'dup-health-alias'), enabled: true },
+    ] }) } });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sessionContext.recheckSessionContext();
+    const entries = sessionContext.stateView().health.entries.filter((candidate: any) => candidate.kind === 'skill' && candidate.enabled);
+    expect(entries.length).toBe(2);
+    expect(entries.every((entry: any) => entry.status === 'valid')).toBe(true);
+    await post('settings', { sessionContext: { expectedRevision: JSON.parse(await readFile(settingsFile, 'utf8')).sessionContext.revision, config: config() } });
+  });
+
   it('rate-limits owner rechecks without saving or creating sessions', async () => {
+    // 前面的用例刚做过重查：真实 1 秒限频窗口需要真实流逝（本用例本身就在测真实时钟限频）
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const first = await post('session-context/recheck', {});
     expect(first.status).toBe(200);
     const second = await post('session-context/recheck', {});
