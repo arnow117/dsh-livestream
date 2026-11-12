@@ -584,3 +584,45 @@ node --import ./register.mjs sc002-correction-r2.mjs phase{1..5}
 本次相关套件实际为 86 文件、587 通过/8 跳过：排除的 `test/macosTts.test.ts` 两项会调用真实 macOS 语音合成与 ffprobe，并非缺失修正测试；该模块未受本修正影响，排除符合本轮真实 TTS 预算为零的边界。对本次相关改动的独立验证可接受，但不能宣称本轮执行了这两项真实语音集成测试。安装发行栈跨真实进程重启及静态入口证据予以接受，未组合的 `dsh web` CLI 顶层包装、实际音频/观众播放继续保留为明确范围限制。
 
 执行者已对同一结果补充规范的 `requested_transitions`，分别请求 FEAT-004、FEAT-006 在同一候选上通过验证；此格式补充未重跑、未改文件或改变结论。主 Agent 接受相应请求，下一步以 CLI 记录并进入新的独立 Sol 正式 Review；本节不预判评审或发布结论。
+
+### 正式Sol Review（2026-11-12，建议 changes_requested，待主 Agent 验收）
+
+本次为新的独立正式 Review，由当前执行者串行完成 qa、security、architect、server-dev、client-dev 和局部设置 UI 的 design 视角。已读取指定 sdlc-review、role-routing/角色卡、TypeScript 及适用的证据/usage 协议；未派生 Agent、Workflow 或线程。T3 `t3_thread_configure` 实际返回 `modelSelection.instanceId=codex`、`model=gpt-6.1-sol`、`options=[{id:reasoningEffort,value:xhigh}]`；配置已核实，独立 `executedModel` 字段未提供，标为未验证。
+
+**范围与入口条件**：候选 `2b107efc1672b2d51aa8984ba45d5b88dd5484b3`，当前 HEAD `fd8f4b28b4da3d59c33802e3e7fbc3b93e6859f8`，branch `codex/macos-yovoice`；固定累计基线 `fd48d0a5d9a18a3759428c3286f28480630eeb9a`。核对累计生产 diff，并优先审查旧正式评审主体 `7e72c8c`/验证 `04746f6` 之后实际 delta、旧发现的处置及受影响调用链。实际执行 `git rev-parse`、两基线 `git diff --stat/--name-only`、`git diff 7e72c8c..2b107efc`、候选到 HEAD 的限定业务 `git diff --quiet`、业务 `git status --porcelain --untracked-files=all`、`git diff --check`；业务无差异，后者 exit 0。state 为 validated/pass 且绑定候选、review pending。除两个工程上下文的本节外无候选写入，不实现、不改测试/产品/state、不 Git 写操作。
+
+**已覆盖的正常与失败链路**：owner connection admission → shared schema/保存/revision → 创建捕获 → 来源发现/目录绑定/快照持久化 → native preset-scoped 串行 agent/created → 首个 toolset → 每步 loader 组合复核 → 两窄工具 → onair 只核对 ready；另检查冷 resume、真实 ENOENT 与损坏/非普通快照的区别、正文 contentHash、cwd 长度预算、刷新失败保留旧限制/永久锁定/取消、A/B preset 释放隔离、保存不改变已绑定会话，以及查询和公共输出的共享接线。
+
+已只读核对实际安装 `packages/dsh-livestream/node_modules/@deepseek-ai/`：dsh-tools `lib/index.js:433-507` 将原 definition 对象保存在 registration，继承视图按 global→远祖→近 scope 合并；dsh-scope `lib/index.js:162-179` 的 chainLayers 为远到近；dsh-agent 的 announce 串行等待 agent/created，dsh-agent-loop `lib/index.js:668-711` 在 pre-step 前解析 toolset、reject 后不继续模型。当前 `agent.ts:97-173` 对内部 layers 的检查和 definition 身份比较符合该安装组合；首次失败抛出使原生回滚、刷新失败不解除旧限制并持续拒绝。private 声明只是已记录的固定版本兼容依赖，不单独构成安全发现；宿主升级仍须复核，未临时解除限制。旧 Skill 发现替换修复在新 `readDiscoveredSkill` 路径上成立；下列 R1 是仍使用另一 helper 的资料读取新实例，不重复打开同一个旧发现。
+
+**独立证据引用与最小检查边界**：已读取统一独立 Validate/接纳正文、`/private/tmp/dsh-unified-validate-20261112/logs/{typecheck,build,vitest-coverage,e2e-all,live-query-offline}.log`，以及 `sc002/phase1..5.log`、最终 `hostA.log`/`hostB.log`、相应宿主脚本。已有套件和发行组合证据真实覆盖其记录场景，但没有覆盖以下新定位的交错/累计预算/损坏配置入口；不以测试总数抵扣。未机械重跑套件。针对明确疑点执行四段成功的 `node --input-type=module` heredoc 最小检查，使用安装的 esbuild 仅把候选模块打包到自有 `/private/tmp/dsh-sol-review-20261112-Kq3TAI/`，真实 fs 操作仅在该目录。context 模块的 runtime 边界替换为临时 dataDir、空 settings 和无副作用 log；没有导入生产 runtime、启动服务或调用外网。取消/预算探针只在自有进程中包装 fs FileHandle.read，记录实际 bytesRead 或在最后一次 read 完成时 abort；finally 恢复。损坏配置的 UI 检查逐字提取当前 goLive 回调，API/native 效果替换成调用记录器，属于静态入口加最小执行证据，不冒称完整浏览器/宿主复现。首次 ESM probe 因 yaml 打包后的 dynamic require(process) 失败，尚未执行业务探针；改为 CJS 临时 bundle 后取得下列结果，该失败不是候选业务故障。
+
+**必须修复发现（本 Feature 累计引入；不将它们称为 2b107efc 新引入，也不把已验证的旧修复重新判错）**：
+
+1. **R1 / HIGH — 资料中间目录替换仍可返回授权根外正文。** `packages/dsh-livestream/src/dsh/sessionContextPaths.ts:163`，关联 `:167-188` 和 `sessionContext.ts:1180`。逐段 lstat/realpath 仅在打开前做一次；fd 身份和读后末端 lstat 没有复核祖先或实际 canonical 边界。受控触发：检查 root/sub/file 后将 sub rename 到根外，在原 sub 建立指向它的 symlink，再就地改写同一 file inode。O_NOFOLLOW 只作用末端；fd、root、末端 inode 均匹配，探针实际 `accepted=true, returnedOutsideContent=true`。违反 CFG-04 和本方案目录/读取第 5 条。建议资料路径也采用整条祖先身份及实际边界的打开前后/读后复核，并保留 fd 检查；可复用本次已安装的 `readDiscoveredSkill` 的路径身份机制而非再写一套不等价检查。验证需分别覆盖中间段换成根内/根外 symlink、保留末端 inode 的移动/改写，均零正文；现有只换根/末端的测试不足。相关实例检索限于两条读取 helper 与其调用方：Skill 新 helper 有整链复核，资料仍走旧 helper，未扩大为全仓清理。
+
+2. **R2 / HIGH — 损坏的保存记录在控制台被当成 legacy，绕过管理创建。** `packages/dsh-livestream/src/console/console.tsx:620`，关联 `:747`、`sessionContext.ts:571`。未知版本或损坏 bindings 返回 `{saved:null,invalid:...}`；开始按钮仍启用，goLive 仅以 saved 非 null 选择管理路径。实际提取的回调在该状态记录 `calls=[legacy,onair]`，未调用 managed 创建。于是无效配置没有阻止新会话，而是用默认 workspace、无快照的旧路径，早绑定也会按真实缺失快照走 legacy；不能假称已恢复 owner 所选授权。违反 CFG-02 和“损坏记录保留 invalid，阻止用于新会话，owner 显式修正/关闭后恢复”的设计。建议显式区分 legacy/saved/invalid，并在实际开始动作再次拒绝 invalid，不依赖只禁按钮。验证用未知 schemaVersion、当前加严 bindings 解码失败分别点击开始，确认 native create、preset select、broadcast/onair 全部零调用，修正后管理路径可恢复。
+
+3. **R3 / MEDIUM — 新快照重新解析原始 Skill 别名，能改变保存时确定的来源。** `packages/dsh-livestream/src/dsh/sessionContext.ts:725`，关联 `:727-752`。保存绑定 canonical 根，但创建先对 config 中的原始 path 做 discoverSkills，随后只按旧根 prefix 过滤。受控实测：alias 原指向有直接 SKILL.md 的 source（只应装 selected）；保存后把 alias 改指 source/hidden，旧 source 的 dev/ino 不变。新快照从 `[selected]` 变为 `[unselected]`；它加载了原来“直接 SKILL.md 不扩展兄弟”的规则排除的 hidden/SKILL.md。alias 指向根外时也会先发生未授权发现/读取，之后才过滤。违反 CFG-03 与“根级 symlink 只绑定规范目标，后续不追随别名重新指向”的设计。建议从已保存 bindings 的 canonical 文件/目录重查和发现，原始路径仅用于 owner 回显/脱敏。验证需覆盖目录与单文件 alias 重新指向、指向原根更深子目录及根外，确认不读取新目标、来源和发现深度不变；不是要求继续信任已替换的根 inode。
+
+4. **R4 / MEDIUM — 最后一次读取期间取消后仍提交正文，超时分类也不准确。** `packages/dsh-livestream/src/dsh/sessionContextPaths.ts:177`，关联 `:188`、`sessionContext.ts:1186-1198`/`:1226`。循环只在 read 前检查 signal；最后 read 完成后、路径复核和 readMaterial 发布前没有检查。实际 FileHandle.read 在返回最后缓冲时 abort，工具服务结果仍为 `status=available,content=line`；另 afterRead 触发 abort 的 helper 仍 `ok=true`。违反“timeout/cancelled 零正文、晚到缓冲不回传”。建议在每次 read 返回、所有异步复核后及工具结果提交前核对组合 signal，并保持真实在途 IO 收束前 busy；`timeout.reason === 'TimeoutError'` 比较的是对象和字符串，应用实际 TimeoutError 的 name/本地 deadline 信号区分 timeout 与 cancelled。验证至少覆盖最后 read、读后复核两个受控取消时点与内部 2 秒超时，结果零正文且分类正确；不把原生上层可能丢弃结果当作该读取契约已满足。
+
+5. **R5 / MEDIUM — 资料实际缓冲预算只在读完后计费，超额调用仍继续读取。** `packages/dsh-livestream/src/dsh/sessionContext.ts:1180`、`:1198-1200`。达到 512 KiB 后的第三、第四次调用仍先完整读取，再返回 limit_exceeded。自有实际 FileHandle.read 计数：同一 turn 四次读取 256 KiB 文件、每次仅返回第一行，状态 `[available,available,limit_exceeded,limit_exceeded]`，累计真实 `bytesRead=1048576`，是 524288 预算的两倍。违反方案“尝试/字节预算先保留再执行，按实际读取缓冲而非返回片段计费”。建议在 IO 前限制/预留剩余预算，失败/取消时也按实际已读量结算；输出行段预算保持独立。验证断言到达预算后零新增 read 字节，并覆盖失败和取消已消耗缓冲，不只断言状态码。
+
+6. **R6 / MEDIUM — Skill 重复加载仍反复输出完整正文，却只按唯一名称计一次字节。** `packages/dsh-livestream/src/dsh/sessionContext.ts:1110-1119`，关联 `agent.ts:261`。实际同一 turn 连续四次加载 40 KiB body 全部 loaded，返回正文字节 163840，超过 131072；Agent 每次都将 result.body 拼进 output，未实现“不重复注入”。observed.skills 还跨 turn 保留，下一 turn 会继续跳过此前已加载正文的字节计费。违反 Skill loader 的每 turn 128 KiB 及同名不重复注入契约。建议分离会话历史加载状态与本 turn 已注入集合；同名重复返回不带正文的受控结果，或对每次实际返回正文完整计费，跨 turn 正确重置计量。验证须核对真实 output.render/模型消息中的字节和重复正文，不能只核对调用次数或 hash。
+
+7. **R7 / MEDIUM — owner 的“活动会话”固定取最早登记项。** `packages/dsh-livestream/src/dsh/sessionContext.ts:626-635`，关联 `sessionContextSessions.ts:129`、`index.ts:124`。activeSnapshotSessionId 直接取 Map 第一个 key，与 show.currentSession 无关联；创建/恢复即登记，未入场会话也被显示为活动。探针顺序登记 A、B 后 state.active 始终是 A；实际第二次开始 B 而 A Agent 仍存在时同样展示 A 的 revision/cwd/加载状态，下播不释放 Agent 时也不会显示无活动会话。违反 CFG-01/02 和方案“active 从 show.currentSession 派生，预备快照不得误报”。建议保留按 id 的绑定存储，但 owner active 视图由当前直播 id 选择，无当前直播返回 null。验证 A 活动时保存 B/仅准备 C 仍显示 A、真正切换 B 显示 B、下播显示无；不以“最后登记”替代真实活动归属。
+
+8. **R8 / MEDIUM — 启用的空 Skill 容器保存成功并显示 valid。** `packages/dsh-livestream/src/dsh/sessionContext.ts:237`/`:283`，关联 `:385-423`。未发现任何候选时直接返回成功，保存层只看 ok。真实空目录探针 `accepted=true,health=[{kind:skill,status:valid}]`；包含无 SKILL.md 的子目录同一路径。违反 CFG-01/03、SCN-03 和方案“空容器/缺 SKILL.md 为 not_found，不是成功空 Skill”。建议每个启用来源在有界发现后区分“无声明”和“重复的已有声明”，空来源保存拒绝、健康状态准确，创建时失效按既定 unavailable 语义处理。验证空目录、仅 references/scripts、子目录缺 SKILL.md 和合法重复来源，确认不误报/不破坏去重。
+
+**N1 / LOW，非阻塞的可避免工程债**：`sessionContextPaths.ts:344` 的旧 readRegularFileNoFollowSync 已无生产调用，仅 `test/sessionContextRead.test.ts:170` 起测试它；它与实际新 Skill helper 重复且缺祖先语义。另 `sessionContextSessions.ts:51`/`:82` 的 requestedSessionIds 仅 add/delete、不读，forgetRequestedSession 无调用，注释声称的重复/串号判定实际由 native 返回 id 比较承担。相关 `rg` 已限于 src/test 核实，无需替代即可删去无生产用途的旧 helper/测试和该集合，保留对实际 readDiscoveredSkill 与创建结果检查的测试。行为保持依据是生产零调用/集合零读取；删除后跑现有类型检查及相应真实 helper/创建回归即可。这是建议，不以删行或风格阻塞验收；未发现其他有证据支持、需要扩大范围的重复实现/工程债。
+
+**usage 与限制**：根 README 的 LIVE-SESSION-CONTEXT/LIVE-SKILL-LOAD/LIVE-MATERIAL-READ → REQ-010 场景 → owner/shared schema 与 Mac 指南 → 既有控制台/原生创建/真实文件证据链可追踪。指南的 symlink 零正文、配置失效不回退和活动状态承诺受 R1/R2/R3/R7/R8 影响，现有正常旅程不能抵扣这些失败路径。UI 沿用原 Drawer/表单/文字状态；本次未启动浏览器，视觉结论仅静态核对并引用独立 E2E 的桌面/375px 旅程；键盘可达性仅做静态检查，未取得本轮独立键盘操作证据，不称完整 Impeccable critique。TTS macosTts 两例未执行；真实外部调用、共享服务/在用 lib、用户 Skill/资料写入均为零。hostA.log/hostB.log 是最终证据，早期失败史及旧 hostA.final.log 均保留。未组合 dsh web CLI 顶层包装、实际舞台/正式观众播放不在当前验收层次；模型 1M 容量和单独 executedModel 继续未验证。
+
+评审执行完整，建议 FEAT-006 `changes_requested`，R1～R8 交主 Agent 批量接收，N1 为可选建议。没有修改实现、重置既有失败历史或消耗新的主 Agent 诊断额度；本评审不启动修补链。`project_candidates=[]`。仅请求 `record-review --feature-id FEAT-006 --decision changes_requested --by sdlc-review-sol-20261112`，未执行状态写入、提交、推送或发布。
+
+### 2026-11-12 主 Agent 接受正式 Review：R1～R8 返修
+
+主 Agent 核对当前源码、CFG-01～05、读取与 Skill 每 turn 预算、状态归属及独立评审的受控探针记录，接受 FEAT-004 approved、FEAT-006 changes_requested 的规范状态请求。R1～R8 均为当前 Feature 累计契约的确定缺口；本次不是以测试数量否定既有证据，也不把新实例称为三轮修正新引入。N1 为有依据的可选清理，不作为单独交付或阻塞项。
+
+同一实现者继续完整修正段，保留原失败历史及已经使用的主 Agent 唯一诊断额度。现有独立证据只覆盖其已执行场景，新交错与预算分支需要失败先行和对应实际输出/IO 断言；之后在新的最终业务提交上重新独立验证和评审。FEAT-004 的批准对当前候选有效，但合并 Ship 仍等待 FEAT-006，不据此发布未完成组合。主 Agent 不运行新的诊断实验。

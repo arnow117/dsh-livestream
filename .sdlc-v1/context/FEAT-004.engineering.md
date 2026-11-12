@@ -333,3 +333,17 @@ FEAT-006 的业务提交使本 Feature 在 2d3ac8b 的验证按 CLI 规则失效
 | 舞台/观众播放、真实服务全链路 | 不在本轮范围 | tts:0/合成 0；运行期观察项保持，不以外推当通过 |
 
 **收尾与状态请求**：进程零残留、共享端口零请求、副本产物保留于 `/private/tmp/dsh-unified-validate-20261112/`；共享 checkout 收尾仅新增两条允许的工程记录。canonical `stage:validate`，`status:awaiting_acceptance`；`allowed_transitions`＝请求 `record-validation --feature-id FEAT-004 --result pass --test-command "node test/live-query/run.mjs" --commit 2b107efc1672b2d51aa8984ba45d5b88dd5484b3`（完整命令列表见 FEAT-006.engineering.md 同日记录与本节）。`context_updates.project_candidates`＝[]。未执行任何 lifecycle mutation。
+
+### 正式Sol Review（2026-11-12，建议 approved，待主 Agent 验收）
+
+本次为新的独立正式 Review。T3 `t3_thread_configure` 返回 `modelSelection.instanceId=codex`、`model=gpt-6.1-sol`、`options=[{id:reasoningEffort,value:xhigh}]`；该配置元数据已核实，单独的 `executedModel` 字段未返回，不推断其他执行元数据。评审者自行串行完成 qa、security、architect、server-dev、client-dev 及本次 UI 相关 design 视角，未创建下级执行者。
+
+候选为 `2b107efc1672b2d51aa8984ba45d5b88dd5484b3`，评审开始及记录前 HEAD 均为 `fd8f4b28b4da3d59c33802e3e7fbc3b93e6859f8`，分支 `codex/macos-yovoice`。`git rev-parse 67d4df4` 解析为 `67d4df44e3c119b5a799029913cdef6c29c73aeb`；按此基线检查累计生产变化，并优先核对上次正式评审业务版本 `e20f22da85b31572f2cc186e77f24ddc3bda1cb0` 之后的共享接线。实际 `git diff --quiet 2b107efc..HEAD -- . ':(exclude).sdlc-v1/**'` exit 0，业务 `git status --porcelain --untracked-files=all -- . ':(exclude).sdlc-v1/**'` 为空；两 Feature 的 state 均为 validated/pass，绑定本候选，review pending。仅本次 Review 文字写入工程上下文，不写 state。
+
+**契约与调用链覆盖**：从 owner 开关/凭据 admission、宿主归属输入及逐字参数校验，经 `queryTurns`、固定 MCP 或天气 source/cache，追到工具结果、原生 assistant 观察、`show.say`/mic 队列、Stage 连接能力和撤销。核对了参与者地点/日期关联、观测与预报时间、受限来源、15 秒/单并发/取消、同一原生 turn 失效不可重新授权、断订阅后新 owner turn、下播及旧连接回调；FEAT-006 的早绑定/限制安装没有改写这些查询规则。实际 `git diff e20f22da..2b107efc --` 查询归属、凭据、三个查询/天气 body 文件、shared DTO、原生查询测试及 preset patch 均为空；`agent.ts` 共享变化按上述调用链审查，不以零差异代替交互检查。宿主 index 保持经 runtime 回调核对绑定，无静态 agent/dsh-tools/dsh-llm 依赖；`build.mjs` 仍共同构建 index/agent chunks，检查独立验证副本 `lib/index.js` 未命中上述外部依赖。
+
+**证据与适用范围**：已读本文件和 FEAT-006 同日统一独立 Validate/主 Agent 接纳记录，以及 `/private/tmp/dsh-unified-validate-20261112/logs/{typecheck,build,vitest-coverage,e2e-all,live-query-offline}.log` 和 `sc002/{phase1,phase2,phase3,phase4,phase5,hostA,hostB}.log`。已有单元/类型/构建、两基线覆盖和 E2E 证据按原记录引用，不复制结果表或机械重跑。guide 的 `LIVE-QUERY-WEATHER`/`LIVE-QUERY-SEARCH`/`LIVE-QUERY-CONTROL` 与 Mac 指南对应已确认 story、owner 配置/环境参数、原生离线输入及 E2E；旧真实来源/GLM 样本只覆盖未变协议，模型遵循仍非确定。TTS 两个 macosTts 集成用例本轮未执行；实际舞台/正式观众播放及 dsh web CLI 顶层包装仍未验证，不外推为 live 通过。宿主最终证据采用 hostA.log 20 项与 hostB.log 23 项；保留中间失败和旧 hostA.final.log 的历史归属。
+
+**发现与结论**：本 Feature 未发现新的必须修复项，建议 `approved`。FEAT-006 新定位的资料/配置问题统一列在该工程上下文的本次 Review，不当作查询功能的新增缺陷，也不据此重复旧查询断言。既有 AWC 204 专测和来源 URL 去重的有据延期决定继续保留，未发现要求重新打开的回归证据。本次 diff 未发现有证据支持的查询重复实现或可避免工程债；只读注册内部结构依赖按 FEAT-006 的固定版本兼容边界保留，不能仅因 private/any 判为漏洞。没有稳定工程入口变化，`project_candidates=[]`。
+
+仅请求主 Agent 验收后执行 `record-review --feature-id FEAT-004 --decision approved --by sdlc-review-sol-20261112`；本评审未执行该操作，未提交、推送、部署或宣称整个目标完成。

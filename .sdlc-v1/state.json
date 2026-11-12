@@ -114,11 +114,11 @@
       },
       "requirement_id": "REQ-006",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-12T02:07:28Z",
+        "by": "sdlc-review-sol-20261112",
+        "decision": "approved"
       },
-      "status": "validated",
+      "status": "reviewed",
       "tasks": {
         "FEAT-004-T001": {
           "depends_on": [],
@@ -128,7 +128,7 @@
           "updated_at": "2026-11-10T18:16:04Z"
         }
       },
-      "updated_at": "2026-11-12T01:41:31Z",
+      "updated_at": "2026-11-12T02:07:28Z",
       "validation": {
         "at": "2026-11-12T01:41:31Z",
         "command": "node test/live-query/run.mjs",
@@ -148,11 +148,11 @@
       },
       "requirement_id": "REQ-010",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-12T02:07:28Z",
+        "by": "sdlc-review-sol-20261112",
+        "decision": "changes_requested"
       },
-      "status": "validated",
+      "status": "in_progress",
       "tasks": {
         "FEAT-006-T001": {
           "depends_on": [],
@@ -162,7 +162,7 @@
           "updated_at": "2026-11-11T16:26:03Z"
         }
       },
-      "updated_at": "2026-11-12T01:41:31Z",
+      "updated_at": "2026-11-12T02:07:28Z",
       "validation": {
         "at": "2026-11-12T01:41:31Z",
         "command": "pnpm exec e2e run --config e2e-session-context.config.ts --workers 1 --retries 0",
@@ -286,7 +286,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-006.product.md",
       "status": "validated",
       "title": "直播 Agent 天气查询与公开资料搜索",
-      "updated_at": "2026-11-12T01:41:31Z"
+      "updated_at": "2026-11-12T02:07:28Z"
     },
     "REQ-007": {
       "created_at": "2026-11-10T08:22:08Z",
@@ -344,9 +344,9 @@
       "id": "REQ-010",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-010.product.md",
-      "status": "validated",
+      "status": "in_delivery",
       "title": "直播会话的工作目录与 Skill 设置",
-      "updated_at": "2026-11-12T01:41:31Z"
+      "updated_at": "2026-11-12T02:07:28Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
