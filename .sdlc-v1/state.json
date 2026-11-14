@@ -205,23 +205,42 @@
       }
     },
     "FEAT-008": {
-      "acceptance": {},
+      "acceptance": {
+        "review": {
+          "algorithm": "sha256",
+          "at": "2026-11-14T18:44:29.969967+00:00",
+          "documents": {
+            ".sdlc-v1/context/FEAT-008.engineering.md": "c5091223cc07090ee1cc6dea5536236e955166d7eec1192ed9170f8cdfa80e00",
+            ".sdlc-v1/context/REQ-011.product.md": "e165e21a81c2bc9b90269db251b70c2f5ed8fc9cb1c84ff4b0b1a46a3f783f1a"
+          },
+          "normalization": "context-v1"
+        },
+        "validation": {
+          "algorithm": "sha256",
+          "at": "2026-11-14T19:18:03Z",
+          "documents": {
+            ".sdlc-v1/context/FEAT-008.engineering.md": "c5091223cc07090ee1cc6dea5536236e955166d7eec1192ed9170f8cdfa80e00",
+            ".sdlc-v1/context/REQ-011.product.md": "e165e21a81c2bc9b90269db251b70c2f5ed8fc9cb1c84ff4b0b1a46a3f783f1a"
+          },
+          "normalization": "context-v1"
+        }
+      },
       "branch": "codex/macos-yovoice",
       "created_at": "2026-11-13T05:04:05Z",
       "engineering_context_ref": ".sdlc-v1/context/FEAT-008.engineering.md",
       "id": "FEAT-008",
       "release": {
-        "at": null,
-        "commit": null,
-        "status": "pending"
+        "at": "2026-11-14T19:11:26.726037+00:00",
+        "commit": "77d1badaf8b4656d6fd64197da7bd35b164530c2",
+        "status": "released"
       },
       "requirement_id": "REQ-011",
       "review": {
-        "at": null,
-        "by": null,
-        "decision": "pending"
+        "at": "2026-11-14T18:44:29.969967+00:00",
+        "by": "independent-codex-sol-review-96",
+        "decision": "approved"
       },
-      "status": "in_progress",
+      "status": "released",
       "tasks": {
         "FEAT-008-T001": {
           "depends_on": [],
@@ -240,12 +259,12 @@
           "updated_at": "2026-11-14T17:16:29Z"
         }
       },
-      "updated_at": "2026-11-14T17:16:29Z",
+      "updated_at": "2026-11-14T19:11:26.726037+00:00",
       "validation": {
-        "at": null,
-        "command": null,
-        "commit": null,
-        "result": "pending"
+        "at": "2026-11-14T19:18:03Z",
+        "command": "env DSH_PUBLIC_CHAT_COVERAGE_SOURCE=1 DSH_PUBLIC_CHAT_PRESET_FILE=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/preset-input.yml DSH_HELPER_FIXTURE_BINARY=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/fixture-helper DSH_HELPER_FIXTURE_SOURCE=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/fixture-helper-source DSH_PUBLIC_CHAT_BUILT_ROOT=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/host-02 DSH_PUBLIC_CHAT_BUILT_RUNTIME=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/host-02/chunks/chunk-QXUGVCBH.js DSH_PUBLIC_CHAT_BUILT_SENDER=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/host-02/chunks/trustedSender-TTVX6AWN.js 'DSH_PUBLIC_CHAT_BROWSER_BINARY=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' DSH_PUBLIC_CHAT_RAW_EXPORT=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-validate-832e14e-69/output/raw DSH_PUBLIC_CHAT_SENDER_BUNDLE=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/sender-source-02.mjs DSH_PUBLIC_CHAT_SENDER_MANIFEST=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/sender-source-02.manifest.json DSH_PUBLIC_CHAT_SENDER_MANIFEST_SHA256=0e6a4dee5bb403e3262e56324bbd5b92fad65d1ffe817483847ef6fa43e767c3 node test/publicChat/run-source-coverage.mjs /Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/coverage-scope-02.json /Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/coverage-04/coverage-final.json /Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/coverage-receipt-04.json -- ./node_modules/.bin/vitest run --config test/publicChat/vitest.public-chat.config.ts --maxWorkers 1 --no-file-parallelism --retry 0 --no-cache --coverage --coverage.reportsDirectory /Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output/coverage-04 --coverage.reporter text --coverage.reporter json",
+        "commit": "77d1badaf8b4656d6fd64197da7bd35b164530c2",
+        "result": "pass"
       }
     },
     "FEAT-009": {
@@ -465,9 +484,9 @@
       "id": "REQ-011",
       "priority": "P1",
       "product_context_ref": ".sdlc-v1/context/REQ-011.product.md",
-      "status": "in_delivery",
+      "status": "released",
       "title": "抖音公屏文字回复、进场欢迎与礼物感谢",
-      "updated_at": "2026-11-14T17:16:29Z"
+      "updated_at": "2026-11-14T19:11:26.726037+00:00"
     },
     "REQ-012": {
       "acceptance": {

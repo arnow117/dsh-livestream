@@ -790,3 +790,152 @@ root完成当前输入的独立于旧产物的集成验收，接受T002离线软
 两项执行偏差照实保留：初次Web未收集测试（临时runner链接到了不含Web engine的依赖目录），精确改为原已安装的可用目录后只补跑四个Web旅程，未安装或改断言，失败日志和首次pipeline-result原文归档。Go初始实际telemetry为local，root先前仅传同名环境变量并未实现off；Go构建/全量/race已在local模式运行，随后实际go telemetry off及go env确认off。Go本机help说明local只记录本地、不上传；不以补设off追认此前符合要求，也不为抹记录重跑已过产品检查。新独立Validate必须在首个Go作业前实际设off并核环境。旧94兼容及private-read证据仅按同输入范围复用：dsh/index本轮只改公屏分项失效接线，真实settings→Host→Controller回归已覆盖，未改旧平台/课程/资料实现；不把fixture当完整共享Harness/Robot身份或真实平台证明。
 
 本次为root直接小修后的必要Build匹配，未替代fresh独立Validate或未完成累计Review；T002置done后固定业务commit/push，仍须各阶段独立接受再部署。源码、raw导出、helper、清单、实际argv/cwd/脱敏env、UTC/整数退出码、截图及资源证据均在W/main-final-matching-86。真实账号/房间/平台发送/另一观众/gift仍NOT_RUN/DEFERRED，用户已安排与直播间联合验收；Goal不以离线通过或后续软件发布冒称完整完成。
+
+
+## 独立 Validate — 77d1badaf8b4656d6fd64197da7bd35b164530c2（2026-11-14 UTC，执行者 87）
+
+**汇总 INCONCLUSIVE，stage=validate、status=incomplete，请 root 记录 `record-validation --feature-id FEAT-008 --result fail`。** 本轮离线软件断言均通过，但执行约束有缺证及偏差，不能请求整体 pass。`fail` 表示本轮未满足全部验证条件，不表示已定位实现缺陷；未执行 state、Git、Review、Ship 或 Goal 变更。R=`/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87`；所有测试命令的完整实际 argv、cwd、隔离 env、UTC 起止、整数 exit、进程组和原日志由 `R/output/*.command.json` 与对应 `.log` 保留，逐项 SHA-256 索引见 `R/audit.json` 的 `commands`。被测分支 `codex/macos-yovoice`，开始/结束 HEAD 与 origin 跟踪 ref 为上述 commit；首次 preflight 17:26:04 UTC、硬截止 18:11:04 UTC。起始五项 authority 与 `R/baseline.json` 一致，549 项业务跟踪文件前后哈希一致；最终业务工作树干净，root 自有 checkpoint 更新按派工允许，见 `R/audit.json`。只读 projection 的 T001/T002 done，validation/review/release pending；`verify-acceptance` 四项均 missing，不补造 match。宿主声明 codex / gpt-6.1-terra / xhigh；独立 `executedModel` 元数据未提供，**NOT_VERIFIED**，无 probe 或切换。
+
+### Correctness / OpenAPI / 构建
+
+| 本轮检查与范围 | 结果和证据 |
+|---|---|
+| 现行 Go 源生产/批准 DI helper 构建；全模块、race | 构建均 exit 0；65 个顶层测试含全部 subcase、0 skip，生产语句 83.5%；所选 race 27 个顶层、0 skip；各 exit 0。首个 Go 产品作业之前实际 `go telemetry off` 且 `go env` 确认 off 和私有 telemetry 目录；GOENV/GOTOOLCHAIN/GOWORK/GOPROXY/GOSUMDB 限制见 command JSON。helper 生产源 27 文件、fixture 28 文件及 binary 哈希均匹配；fixture 与生产 `main.go` 仅一处固定目标 DI 替换，额外为既有 `fixture_targets.go`。|
+| 标准 `node build.mjs`、source/built sender、noEmit | 本轮均 exit 0；独立 host 输出 54 成员 hash/mode 与匹配构建一致，source map 定位 runtime/sender chunk；source/built manifest 各自校验 33 个来源和实际 bundle，fixed-D commit `3a79c57d85c59289db3b77211b3ec01fae47d42c`、export manifest `832cbc54ed74bbe3b4467ee39aafbd3000ac9d089529ef7b8ae35cb3a400ccb1`。buildDigest 使用各实际 manifest SHA，不是合成值。见 `R/audit.json`、`R/output/*manifest*.json`。|
+| 完整公屏 Node suite 与变更覆盖 | 修正依赖链接后的独立运行 exit 0，49 文件 267 项、0 skip；`coverage-diff-04` exit 0，52 项 V8 / 144 分类，base `6eb5e3b17a295e7af27a000e98ee1ee1ee679fe6`，原共享快照与排除类别不缩；逐项 current/baseline 哈希核对 0 差异，行 6506/7816=83.24%，分支 3080/3996=77.08%。实际 `run-source-coverage.mjs` 同次完成全套测试及 coverage；V8 数据不冒领浏览器或其他未映射进程。|
+| 原组合 / 安全边界 | `actualHelperComposition` exit 0，固定 patched RawSession、CDP/WS、decode/Long、原 callback、Controller→HTTP→Runtime→实际批准 DI Go helper→自有 TLS 组合运行；验证一次应用写入、同 source 不重发、unknown 原 ID 与持久恢复。维护认证的 `maintenanceObserver` 是独立直接 observer 注入分支，不能称为该分支走完整 raw 链。模拟 managed-agent 的本地模型替身出现 5 次 fixture 请求，真实模型调用为 0。|
+| 资产和共享兼容 | 新运行 8 文件 94 兼容项、资产拒绝/保留、输出 symlink、私有读取和私有构建均 exit 0；具体原日志 `R/output/compatibility.log`、`registration-*.log`、`private-*.log`。私有读使用 artifact **目录** `W/feat009-read-increment-40/delivery/registration-profile-v1-cff638ff461fab35`，manifest SHA `cff638ff461fab35b082e93d62c28c768472688d03888b69864700f89abb8fcb`；native 实际仅复制及 hash/mode 检查，SHA `154145d18732e0a1823d91be611dcff55bdda36ac46c1fce7c3354748d9e94c4`、57996370 bytes、0500，绝未执行。`lib` 12 与 `lib.previous-92a3019` 8 成员与既有保护基线一致。|
+
+### 故事与 Task 完成条件映射（软件 fixture 范围）
+
+| 产品故事 / Task 条件 | 本轮证据与边界 |
+|---|---|
+| 1 | COVERED：settings 两视口 CLI、`hostSettingsSdk`，默认关闭、保存与失败保留草稿、零外发。|
+| 2–3 | COVERED：built integration、`identityQualification`、`senderEntry`、`senderClientGuard` 与 Go grant/race；固定目标、拒绝、一次派发；真实身份及观众可见另列 NOT_RUN。|
+| 4–5 | COVERED：`eventRefAgentTool`、`agentTurns`、`rawProofWelcome`、`automaticEventsCoverage` 与原 raw/TLS 组合；原事件、去重和增量；真实 gift NOT_RUN。|
+| 6 | COVERED：真实设置→Host→Controller 的 `channelPermissionSettings` 依次关闭/重开 reply、welcome、thanks，旧队列不晚发、其他渠道与手动保持；`automaticEventsCoverage` 检查禁用期间旧来源、去重与有界保守失效；另有撤权/连接变化。|
+| 7–8 | COVERED：`correctionComposition`、`frozenJournal`、`operationsReconciliation`、actual helper/TLS、Go recovery/race；原请求 ID、未知、仅有证据的恢复、持久化、不重发及写入至多一次。|
+| 9 | COVERED：`textPolicy`、`senderEntry` 与 Go server/TLS；原文首尾控制字符、4096 UTF-16 输入上限、协议相对 URL/模板、Unicode 分隔符及 ASCII 大小写回归；不宣称识别任意语义隐私。IPv6 实际 listener→返回 origin→client qualification 由 `senderEntry` 覆盖。|
+| 10 | COVERED（软件/视觉范围）：四个提交的 tester-army/e2e CLI 旅程各 1/1、0 skip，strict/read-only、workers 1/retries 0；全量原 ID、焦点、scrollLeft、几何与 unknown/reconciled 确定性断言保留；6 张 PNG 实际 1440×900 或 375×812，已逐张查看，可见长引用换行且无水平裁切，正常纵向滚动；未声明真实辅助技术试用。|
+| T001/T002 | 上述独立 sender/helper/TLS、固定 raw、owner Drawer/Agent/事件与标准 host 组合，以及构建/覆盖/负路径/兼容逐项对应当前完成条件；不将原 Build 或旧 Validate/Review 代替本轮执行。README `#LIVE-PUBLIC-CHAT` → `examples/douyin/README.md#公屏文字发送`，实际使用固定导出、标准 builder 和任务 fixture，未使用真实业务参数。|
+
+### 执行偏差、资源和未运行
+
+- 初次 Node 覆盖运行 `coverage-final-03` exit 1：49 文件收集、264 通过/3 失败，均因 R 根的 `node_modules` 误指向缺少 `playwright-core` 的 P 依赖；该问题由实际模块查找确认。仅修正 R 根链接到既有 R82 依赖，Web runner 一直链接 P/node_modules；保留首轮原日志后，完整 suite/coverage 独立重跑为 `coverage-final-04`，不改测试或断言。旧 root86 的 Go telemetry 与 Web 链接偏差、Review80 四项、root85 初始错误正向样例及其修正均保留原记录；同 segment 失败历史及主诊断未用不重置。
+- 本执行者的准备脚本曾写入 `/tmp/feat008_setup87.py`，随后删除；这是超出仅写 R 的边界，不能追认为合规。首次只读 preflight 和准备脚本使用宿主 shell 环境，而非从首次操作即 env-i；实际产品测试由 `run-check.py` 的完整替换环境执行。初次只读哈希脚本对 null baselineFile 处理错误（TypeError，exit 1），随后在 R 记明并正确核对；两次只读 CLI 路径误用均 exit 2，后来用正确绝对路径及已记录 help 重核。上述初始短命准备/只读命令没有完整 UTC 起止及独立原日志 hash，工具会话输出仍保留，不能伪造原记录。
+- 收尾核对时自有 regular 文件约 173341905 bytes；未对运行全过程连续采样峰值，因此 **512 MiB 全程上限证据不足**。任务记录的 494 个 PID 和 119 个端口在 `R/audit.json` 收尾检查时无存活/监听；其中直接 spawn 的 helper、分离 Chrome 有可取得 PGID 及 exit，不能声称穷尽未被观察到的短命后代或补造历史 PGID；没有停止共享服务。此缺证与写域/环境偏差使本轮整体 INCONCLUSIVE，请 root 决定如何处置或重新安排受控验证。
+- 真实账号/Cookie、Keychain、平台 DNS/API/发送、另一观众、真实 gift、开播、外部模型、TTS、Robot、资料 native 和发布均 NOT_RUN / DEFERRED；本轮零真实业务调用，loopback fixture 身份不是共享 Harness/Robot 真实身份。此前独立验证和 M 只用于选择命令/对照匹配，非本轮通过依据。
+
+### 主 Sol 对 Validate87 执行偏差的处置（2026-11-15，91）
+
+87 原始整体 INCONCLUSIVE 及其 requested fail 保留；root 已经 CLI 登记 fail，原命令/exit0 输出在 `W/main-validate-disposition-90/record-validation-fail.json`，本次没有直接把该请求改成 pass。root 在 `W/main-validate-acceptance-91/evidence-audit.json` 逐项核定 549 个业务跟踪输入与 87 前后清单完全一致、32 份命令元数据和原日志 SHA 匹配、当前 source/built sender、两种 helper、54 项 host hash/mode 及原安装输出匹配。87 的首轮 Node exit1 是已定位的依赖链接失败，修正后完整覆盖运行 exit0；不删除首轮记录。六张原 PNG 的尺寸、横向换行与可见焦点已实际查看，完整引用、键盘、无横向裁切及 committed/原 unknown 保留的行为另由原正式 CLI 断言证明，不把截图中的局部画面扩成完整行为证据。
+
+新增的收尾方法定位：87 审计脚本把 119 个端口一次传给 `lsof` 并仅保存 stdout/exit，不能证明全部端口已核清；本机同形只读调用实际报 `network address limit (100) exceeded`，原错误输出保存在 `W/main-validate-acceptance-91/recorded-resource-readback.json`。root 随后分 50/50/19 三批，只读检查原记录的 119 端口，均 exit1、stdout/stderr 为空（无监听）；原 494 个 PID 当前也不存在，见 `recorded-port-readback-batched.json`。这是当前已记录集合的收尾补证，不是历史资源穷尽证明，不重跑测试、不停止服务。
+
+512 MiB 是 root 为 87 自设的执行限制，未连续记录历史峰值不能补写成满足；越界 `/tmp` 准备文件已删除、初始环境和短命命令日志不足也仍是实际执行偏差。root 对这一次既有证据作有限处置：保留上述不合规/未知事实，不追认历史执行完全合规；不要求重跑已通过的软件检查来补造历史峰值。此处置只允许独立执行者重新核定 87 的实际离线软件检查及现有收尾证据是否足以通过软件 Validate，不改变产品、Task、覆盖分母/阈值、业务安全要求或真实验收条件，不授予新测试/写域/资源额度。若仍有必要软件证据缺失，继续 fail 并指出精确缺口。独立重新归因和 canonical 转换请求尚待；当前 lifecycle 仍 fail，Review/Ship 不得提前开始。同 segment 原失败与唯一主诊断未用保持。
+
+### 独立 Validate 证据重新归因（92，2026-11-14 UTC）
+
+**当前约定的离线软件范围：INCONCLUSIVE，待 root 接收；不改变 87 的 INCONCLUSIVE 和已登记的 fail。** 本次仅只读归因既有独立执行，不启动测试或服务。固定 commit `77d1badaf8b4656d6fd64197da7bd35b164530c2`；开始及 18:00:35 UTC 核对 HEAD、origin 跟踪 ref 相同，业务工作树干净，仅既有 checkpoint、engineering、state 三项 SDLC 修改；本次写前四项 authority SHA-256 与 `W/feat008-validate-evidence-disposition-92/baseline.json` 相同。T001/T002 为 done，实际 lifecycle validation 仍 fail，review/release pending。91 的 `evidence-audit.json` 核对原前后 549 项输入与 32 份命令/日志 hash、sender/helper/host 与安装输出；本次核原命令、日志、覆盖 receipt、对应提交测试及断言，未以 Build 结果替代独立 Validate。当前方案中原表的历史 `NOT_RUN` 为规划时状态，适用结果以本节与 87 原始证据为准。
+
+87 原对应映射见上节“故事与 Task 完成条件映射”：故事 1–3、8、10 对应真实 SDK fixture/Drawer、两视口 settings 与 built integration；4–5 对应事件引用、回合、raw proof、去重与 gift 增量；6 对应真实 settings→Host→Controller 三渠道关闭/重开及撤权；7–8 对应原操作 unknown、实际 helper/TLS、journal 与重启采用；9 对应文本、模板、Node/Go 拒绝。`actualHelperComposition.case.ts` 的实际 raw/HTTP/helper/TLS、一次写入、原 ID/hold/恢复断言在 `coverage-final-04.log` 中通过；其 `maintenanceObserver` 是直接注入的独立分支，不称该分支经过完整 raw 链。四次正式 CLI 原命令/退出码与时间分别在 `V/output/e2e-{settings,integration}-{desktop,narrow}-03.command.json`，每次 1/1、0 skip，strict/read-only、workers=1、retries=0；提交的测试断言完整绑定、焦点、几何、`scrollLeft`、PNG 尺寸、unknown 和重启采用，87/91 查看六图，本次复看 desktop reconciled 与 narrow unknown。真实辅助技术使用不在该证据中。V=`/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87`。
+
+`V/output/coverage-final-04.command.json` 与 `.log` 是 49 文件 267 Node 全通过、0 skip 的同次完整独立 suite/coverage；`coverage-diff-04` 52 个 V8 项改动行 6506/7816=83.24%、分支 3080/3996=77.08%，满足原 80%/70%，receipt 的 scope/report 哈希本次核对一致；144 分类中另有 52 非 V8、40 其他 Feature，不将其计入 V8 通过。`go-coverage` 65 顶层、0 skip、83.5% 生产语句，`go-race` 27 顶层、0 skip；各原命令 exit 0。`noemit`、标准 host、source/built sender 及实际 helper 构建、加载前 manifest/固定 raw、`compatibility` 94 项、`private-read`、`registration-build-assets` 与 `registration-output-symlink` 原日志均有对应成功结果；profile 使用原 artifact 目录，registration native 仅复制与 hash/mode 核对，未执行。初次 `coverage-final-03` 的 3 个缺 `playwright-core` 失败保留；仅纠正既有依赖链接后 04 完整通过，不将其描述为未发生。
+
+**必要证据缺口：** 当前有效方案“可复现helper源码与构建”和“验证与资源”要求最终二进制的工具链及依赖信息、`go version -m` 输出。87 的 32 项原命令没有该命令；其生产 helper SHA-256 为 `18e3e3eb42904c328a4f4b4465384210d737a0b6cc90864602d0fba3dce3a136`。独立 69 的 `output/go-version-binary.json/.log` 确实 exit 0，但被查二进制 SHA-256 为 `d51c6b6a29efa37fb8deaa84a4fae347caf078d1ce6b42adebc1d896ed4ce76f`，不能转称当前二进制的实际输出；87 的 `production-helper-02.manifest.json` 含源与 binary 哈希但无相应二进制构建信息。本次不启动 Go，不补造该输出；仅此具体缺口阻止声明离线软件整体 PASS，并非发现实现缺陷。69 的 `go-modules.json/.log` exit 0、仅本模块，69 fixture 与当前 `go.mod` 哈希一致；69 的 `prepare-raw` / `raw-typecheck` exit 0、原固定导出由 87 使用，属于相同输入用途的独立历史证据，但不能替代最终二进制的该项检查。
+
+91 `root-disposition.json` 仅处置 root 自设执行限制，不修改任何产品/Task、安全或质量阈值。除上述二进制构建信息缺口，未发现准备/环境偏差与通过日志之间造成其他必要软件条件缺失或冲突的具体证据；不据此追认 512 MiB 全过程峰值、越界 `/tmp` 文件或初始命令/环境记录合规。87 一次 119 端口 lsof 无 stderr 记录，不能证明原全量检查；91 `recorded-resource-readback.json` 的同形命令显示超过 100 地址限制，`recorded-port-readback-batched.json` 的 50/50/19 批与原 119 端口集合一致，各 exit 1 且 stdout/stderr 空；记录的 494 PID 的 ps exit 1、输出为空。只证明 91 读回时所记录集合，没有证明历史全部短命后代或 PGID，也没有停止共享服务。
+
+真实账号/材料、平台 API/TLS 接受与发送、另一观众、真实 gift、发布及真实辅助技术使用仍 NOT_RUN/DEFERRED；离线 fixture 结果不推导真实身份或观众可见。新 canonical 请求只允许 root 在验收后执行 `record-validation`；未运行 lifecycle mutation、Review 或 Ship。模型：宿主披露 `codex / gpt-6.1-terra / xhigh`；独立 `executedModel` 元数据 **NOT_VERIFIED**，未探针或切换。详细实际只读命令、时间、历史限制与准确代表命令引用见 `W/feat008-validate-evidence-disposition-92/result.json`。
+
+### 独立 Validate 静态构建信息补验（93，2026-11-14 UTC）
+
+**结果 INCONCLUSIVE，status=incomplete；请求 root 仅登记 `record-validation --feature-id FEAT-008 --result fail`。** 92 指出的两份当前 helper 二进制构建元数据缺口已补齐；本轮自身首次只读操作未从启动即使用 task-owned 环境，91 对 87 的有限处置未覆盖此新偏差，不能由本执行者自行追认或豁免。既有 validation fail 持续有效，未执行 lifecycle mutation；root 核实证据与处置偏差后决定后续，未登记且独立 Review 批准前不发布。详细结果、准确 canonical 参数与环境见 `/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-helper-buildinfo-validate-93/result.json`。
+
+- 本轮 18:08:40 UTC 开始，固定 HEAD 与 upstream 均为 `77d1badaf8b4656d6fd64197da7bd35b164530c2`；写入本节前仅既有 checkpoint、engineering、state 三项 SDLC 修改，业务树干净，T001/T002 done、validation fail、review/release pending。此前失败历史与唯一主诊断未用不重置。
+- `/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-helper-buildinfo-validate-93/commands.json` 记录四次实际 Go argv、cwd、脱敏替换环境、UTC 起止、整数 exit、日志及哈希：`/opt/homebrew/bin/go telemetry off`、`go env GOTELEMETRY GOTELEMETRYDIR GOVERSION GOTOOLCHAIN`、对两份原二进制分别 `go version -m`，均 exit 0。实测 telemetry `off` 且目录在 R 的 HOME 下，本机工具 `go1.27.3` / `local`；未运行 helper 或 registration-native，未构建、重跑 suite、访问网络或真实材料。
+- 生产 binary 的检查前后 SHA-256 均为 `18e3e3eb42904c328a4f4b4465384210d737a0b6cc90864602d0fba3dce3a136`，fixture 均为 `91687ebfe886edea1239157c501563ce826234d6f6808eccd33f7bbbc6621973`，各与 87 manifest 一致。两份静态输出均为 Go `1.27.3`、主模块 `dsh-public-chat-http-helper (devel)`，无第三方 `dep` 行，`gc` / `-trimpath=true` / `darwin/arm64` / `CGO_ENABLED=1`；无嵌入 `vcs` 字段，不能将固定 HEAD 伪称二进制内嵌 commit。原输出及哈希见 `/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-helper-buildinfo-validate-93/production-buildinfo.stdout.log`、`fixture-buildinfo.stdout.log` 和 `commands.json`。
+- `/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-helper-buildinfo-validate-93/source-check.json` 实际核对生产 manifest 27 项、fixture manifest 28 项源文件哈希均匹配；91 已核 87 前后 549 项业务输入与当前一致。源码快照一致性与二进制内部 VCS 身份分别记载。当前 `go.mod` 为 Go 1.27.3、无外部 require；NOTICE 标明四个仓内 MIT 派生算法和 Go 标准库，既有 69 同 `go.mod` 的独立模块图只有主模块，与有效方案相符。二进制模块行本身不是完整许可清单。
+- 复用 87/92 的同输入实际证据：267 Node（49 文件），52 V8 原范围行 83.24% / 分支 77.08%，Go 65 项与 83.5% / race 27 项、0 skip，94 项兼容，host/sender/manifest/helper/TLS/raw、私有读取和资产拒绝保留，四个 strict/read-only 双视口 CLI 故事/Task 映射；原实际命令、时间、失败及成功日志分别见 `/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-independent-validate-77d1bad-87/output`、`/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-validate-evidence-disposition-92/result.json` 和 `/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/main-validate-acceptance-91/evidence-audit.json`。raw 的 `maintenanceObserver` 仍为直接注入独立分支，不冒称完整 raw 链。
+- 本轮偏差：首次启动读取 `soul.md`/`user.md`、相关文件与只读 git/rg/python 检查，以及启动 Go 的 Python 父进程继承宿主环境；四个 Go 子进程在首次 Go 调用之前已使用完整 task-local 替换环境，实际 telemetry 已先关闭。初始只读命令未逐项采集准确起止及独立日志；无意读取或输出凭据，也未发起网络操作，但不能声称从首次操作符合隔离要求。此偏差不同于已处置的 87 历史偏差，需 root 判断，不虚构证据或重新运行。
+- 91 原有限处置保持：历史 512 MiB 峰值未知，越界 `/tmp` 准备文件已删及原初始日志不足仍披露；119 端口分 50/50/19、494 PID 的当前读回仅覆盖记录集合，不证明历史全部后代。真实房间/账号/材料、平台 DNS/API/TLS 接受与发送、观众/gift、开播、模型/TTS/Robot、真实辅助技术及发布均 NOT_RUN/DEFERRED。宿主声明配置 `codex / gpt-6.1-terra / xhigh`，独立 `executedModel` 未提供，**NOT_VERIFIED**；未探针或切换。
+
+### 主 Sol 接受静态构建信息及执行偏差处置（94，2026-11-15）
+
+root 接受 93 补齐的实际静态检查：四次 Go 命令均 exit0，实际 telemetry off、task-local 完整替换环境；两份当前 binary 的查前后摘要及四组 stdout/stderr 摘要已由 root 实读核对，与 87 manifest 一致，Go 1.27.3、仅主模块，无第三方 dep 或内嵌 VCS 字段。`W/main-helper-evidence-disposition-94/metadata-acceptance.json` 保存本次核对；未重跑 Go、helper 或产品测试。93 原 INCONCLUSIVE/canonical fail 原文保留，root 已按其原请求登记 fail，CLI exit0 见同目录 `record-validation-fail-93.json`，没有将 fail 请求擅改成 pass。
+
+对 93 首批只读 cat/rg/git/python 与父解释器未先切换任务环境、未逐项另存时间/日志的偏差，root 作本次明确处置：承认未满足该轮自设首操作环境要求，不追认为合规；在实际 Go 子进程均独立使用完整替换环境、二进制/源码摘要及原日志可核定的事实下，该准备偏差不再作为当前离线软件验证的阻塞项。此结论不声称初始宿主 shell 完全无副作用，不放宽产品、安全、版本匹配、质量阈值、真实条件或需要启动资源的验证隔离要求。原 87 的执行偏差继续按 91 处置原样披露。不得为追造初始 shell 环境或过去的峰值再次重跑已通过的软件检查。
+
+后续仅对这组已完成独立证据作最终 canonical 归因：普通已授权文件只读、Git 状态和哈希读取可使用宿主现有环境，不把其逐条单独日志或 task-owned HOME 设为新增产品验收条件；不启动 Go/helper/测试/浏览器/服务，不读取凭据或真实资料。若查到具体影响软件充分性的新冲突，仍返回必要缺口；否则保留执行偏差作为限制，依法请求软件 Validate 结果。当前状态仍 fail，独立 Review 与发布尚未开始；同 segment 历史及唯一主诊断未用保持。
+
+
+### 独立离线软件验证最终归因（95，2026-11-14T18:18:18.164510+00:00）
+
+**PASS，stage=validate、status=awaiting_acceptance，仅限 REQ-011/FEAT-008 当前约定的离线软件 fixture 范围。** 请求 root 对固定提交 `77d1badaf8b4656d6fd64197da7bd35b164530c2` 执行 canonical `record-validation --feature-id FEAT-008 --result pass`；代表命令逐字取自 87 原结果，见 `W/feat008-final-software-validation-attribution-95/result.json`，本轮未重跑。此结果待主线程验收，当前 state 仍为 fail；不宣称 Review、发布、真实验收或 Goal 完成。
+
+本次只读核定：branch `codex/macos-yovoice`，HEAD 和 origin 跟踪引用均为上述提交，业务工作树干净；仅既有 checkpoint、工程上下文、state 三项 SDLC 修改，写前四项 authority 与 95 baseline 相同。T001/T002 done，review/release pending。87 前后 549 项业务输入一致且本次与当前逐项匹配；87 的 32 组原命令元数据/日志、93 四组原 stdout/stderr 摘要及两份当前 binary 摘要本次核对无误。91 同版 sender/helper/54 host/安装输出与六图核验、92 对原断言及故事 1–10/Task 的映射继续适用：当前产品和方案基线未变，本次只追加归因。独立 87 的原命令、时间、环境、exit 和日志见 `W/feat008-independent-validate-77d1bad-87/{result.json,audit.json,output/}`，92 的细化证据见 `W/feat008-validate-evidence-disposition-92/result.json`，不以 Build 冒充独立验证。
+
+87 的 267 Node/49 文件、Go 65 顶层及 83.5% 语句覆盖/race 27、94 兼容、noEmit、标准 host、source/built sender、manifest、实际 helper/TLS/raw、正确 profile 私有读取与资产拒绝保留、1440/375 settings 和 integration 四旅程均有原 exit 0 证据；四旅程各 1/1、无 skip。52 个 V8 项的改动行 6506/7816=83.24%、分支 3080/3996=77.08%，满足原 80%/70%，52 非 V8/40 其他 Feature 按 92 分别归因。coverage-03 因三个缺失 playwright-core 失败保留，纠正依赖链接后完整 04 通过。`maintenanceObserver` 是直接注入的独立分支，不冒称完整 raw 链。
+
+92 唯一必要缺口由 93 实际补齐：四次 Go 命令 exit 0、实际 telemetry off 且子进程使用 task-local 完整替换环境；原生产/fixture helper 的查前后摘要分别为 `18e3e3eb42904c328a4f4b4465384210d737a0b6cc90864602d0fba3dce3a136` / `91687ebfe886edea1239157c501563ce826234d6f6808eccd33f7bbbc6621973`。两者 `go version -m` 为 Go 1.27.3、主模块 `dsh-public-chat-http-helper`、无第三方 dep 或嵌入 VCS，不能声称二进制内嵌 commit；生产 27/fixture 28 项源码、go.mod 和 NOTICE 核对及同 go.mod 的独立 69 模块图见 `W/feat008-helper-buildinfo-validate-93/{commands.json,source-check.json}` 与 92，root 实读结果见 `W/main-helper-evidence-disposition-94/metadata-acceptance.json`。
+
+91 对 87 的有限处置保留历史 512 MiB 峰值未知、越界 `/tmp` 准备文件已删除、初始环境与日志不足；94 明确承认 93 初始只读操作和父解释器未满足该轮自设首操作隔离要求，未追认合规，基于实际 Go 子进程隔离及可核元数据不再作为此离线软件阻塞。87/93 原 INCONCLUSIVE 与已登记 fail 不改写。原 119 端口 lsof 超本机 100 上限；91 分 50/50/19 检查当前记录集合无监听、494 原 PID 不存在，不能证明历史进程或端口穷尽。上述处置不改变产品、质量、安全或真实验收要求。
+
+必要软件阻塞：未发现。真实身份/房间/账号与资料、平台 API/TLS 接受和发送、另一观众、真实 gift、模型/TTS/Robot、资料 native、真实辅助技术和发布仍 NOT_RUN/DEFERRED；fixture 不证明平台受理或观众可见。宿主声明 `codex / gpt-6.1-terra / xhigh`，独立 `executedModel` 元数据 NOT_VERIFIED，未探针或换模型。本轮未启动产品、Go、helper、测试、浏览器、服务或网络，未读取凭据或真实配置，未修改 state 或执行 lifecycle mutation。
+
+
+## Review — 77d1badaf8b4656d6fd64197da7bd35b164530c2（fresh 独立完整评审，96）
+
+**结论：请求 approved，status=awaiting_acceptance。** 本轮完整必要范围已检查，未发现未处理的必须修复项；批准请求只对应固定 validation commit `77d1badaf8b4656d6fd64197da7bd35b164530c2`，由 root 保留最终验收及执行 `record-review`。本节是本轮唯一评审正文，canonical 结果索引为 `W/feat008-independent-review-77d1bad-96/result.json`；不推进 Task、Validate、Ship、Goal 或其他 Feature。
+
+执行配置由当前宿主 runtime 明确披露为 `codex / gpt-6.1-sol / reasoningEffort=xhigh`，职责为独立 review；独立执行元数据 `executedModel=NOT_VERIFIED`。未探针、切换模型、创建子代理或下派。本轮仅静态阅读、Git/摘要/只读 validation 指纹查询及原 PNG 查看，没有执行测试、构建、Go、helper、native、浏览器、服务、网络、真实材料或模型/TTS。
+
+### 输入、完整范围与调用上下文
+
+评审前及写本节前均实际核定 branch=`codex/macos-yovoice`、HEAD 为固定 commit，业务工作树为空，validation commit 到 HEAD 的业务 diff 为空；只有原有 checkpoint、本文与 state 三个 SDLC 未提交路径。写前四项 authority 与 `R/baseline.json` 一致，`S/scope.json` 的 180 项源码摘要全部匹配；实际 `verify-acceptance --feature-id FEAT-008 --point validation` 返回 match。该 match 是**追加本节之前**的观察，未声称追加后的指纹仍匹配；root 按上下文语义适用性处理后续登记。
+
+依据适用 AGENTS/soul/user、sdlc-review、stage-agent-protocol、receiving-feedback、project surface、REQ-011、当前有效方案及 T001/T002 完成条件，串行检查 QA、architect、security、client-dev、server-dev、design 和 TypeScript/Go 视角。未把早期规划中的未完成措辞覆盖后续已明确接受的冻结 HTTP、标准 transport、资产打包及历史采用修订。
+
+完整读取 `S/cumulative-public.patch` 的全部 28,507 行（173 路径），以及 `S/shared-public` 全部七份补丁的 586 行，按各自原 pre-publication snapshot 区分共享文件已有的其他 Feature 改动；再读完 `S/since-review80.patch` 全部 878 行（19 路径，包含新增 channelPermissionSettings）。所有工具截断部分均用更小区间或相应完整源码片段补读，没有以 stat、路径计数或未报告区域代替通过。范围与摘要绑定见 `R/read-check.json`；没有剩余未读的本轮相关累计 hunk。保留共享 27/私有读取 48 路径仅按接口、权限和打包依赖查看，不评审或接管资料/课程队列及其他 writer。
+
+除新增模块完整源码和真实测试断言外，补核 SDK `0.2.2-rc.1` 的 `HostConnectionService.createSharedFetchHandler/registerFetchRoute`，以及 settings/public-chat 路由、Host 生命周期、Source→Hub 聚合前事件、Attention/Topic→Agent 身份与 pre-step、persona、Console Drawer/API/CSS 调用上下文。固定 raw 副本中 CDP socket/decoder 回调及 beforeNavigate 安装顺序只读核对；未进入 D/Q WIP。
+
+### 各角色实质结论
+
+- **产品与权限**：四项设置默认关闭；保存仅更新现有 settings，关闭分项同步废弃其队列代，主关闭/换目标使本地资格失效，不由保存调用 sender 网络。维护、资格、显式授权及实际发送分开。实际 SDK 在业务 handler 前拒绝非 owner；普通参数、Agent 与观众不能选择部署 URL、账号/UID/房间或授予授权。匿名输入、B 站、舞台/TTS、登记/资料和 Robot 原职责没有被公屏接线扩权。
+- **加载与认证**：部署、固定源码导出、build support、manifest、bundle、helper 源及二进制先核身份再执行；缺失、别名、错摘要和新增闭包成员失败前不发布可用资产。helper 从只读 FD 冻结材料，同一材料做固定 profile/query 身份请求及 chat；本地 accountRecordId 不冒充主体。受控维护先同步失效原资格，即使同值/失败或 A→B→A 也不复活；raw 浏览器 Cookie 不成为实际发送认证材料。严格 scope 子集与平台真实材料可用性仍是已披露限制。
+- **并发、Write 与取消**：原授权、capture、消息和恢复均保留稳定 ID/hash/nonce 与完整绑定；每个 await 后检查当前版本，实际应用 Write 标记在调用之前，每次连续 Write 和撤权共用同步锁。已开始 Write、零字节异常、超时或迟到响应不能证明从未执行；活 worker/清理未 joined 继续占用单在途。无重定向、连接复用、后台刷新、Set-Cookie 吸收、挑战重放或隐式改用 UI 发送路径。
+- **unknown 与持久恢复**：原 unknown 不被备注、未看到、空表、新进程或新 grant 结算。恢复核对完整原引用、事实 head、原 worker joined 与 helper 收据；直接正面观察另记，冲突/间接观察不足以释放。历史 ACK/receipt 与本 boot 的采用集合分离；write/rename/fsync/close 完成后才发布采用许可，重启先 hold，旧 request/sourceKey 永不重发。schema4、损坏/旧 schema、容量、链接/别名、写失败保持原证据或不可用，不静默重置为空表。
+- **事件与文本**：进程内原事件关联与受控 sender raw 证明分别校验，原 rawId/type、两个房间、live/input/raw session 代次和平台时间必须匹配；授权前事件、旧帧、模拟输入不能后升级。礼物按原正增量合并，欢迎节流，不推断金额。原文及最终模板均做控制字符、URL/附件/联系方式语法拒绝，原文 digest 不因 trim 被改写；仍不声称识别全部语义隐私。
+- **客户端与设计**：沿用 dl-* Drawer；检查完整面板、恢复表单、标签、pending/失败、旧目标迟到响应、按钮禁用、aria-live 消息与焦点样式。直接查看原 1440/375 unknown、375 reconciled、双视口 long-unknown 及原 owner 窄屏 PNG；长绑定可换行，原表单和焦点在抽屉宽度内，未见遮挡或水平裁切证据。结合已读几何/键盘断言，支持当前离线 UI 条件；真实辅助技术未使用。Impeccable SKILL 可用且已读，仅借用其一致性、状态反馈、可达性和响应式维度，未调用 launcher/engine/Hook、完整 critique 或另做设计。
+- **复用、许可与交付**：对照既有 safety/speakable 和当前公开文本策略，前者清洗/截断的语义不能替代公开输出整条拒绝；Go/Node 独立边界校验有实际职责。旧 browser/controller 兼容实现不能经当前 FrozenSenderRuntime 服务入口变为生产备用。固定 raw 与提取纯算法的来源/NOTICE、Go BSD notice、无外部 require 的 go.mod、标准 host 构建闭包、profile 私有读取和 registration 被动资产保持相应边界。本次 diff 未发现有证据支持的重复实现或可避免工程债；不以行数、单调用者或单实现接口要求删除。
+
+### Review80 四项发现的当前处置
+
+以下均为原 MEDIUM/P2、本次引入的问题；本轮对修订后的源码、受影响调用链与断言重新判断，当前均无待修复项，`disposition=preserves`，不改写 Review80 原记录：
+
+- **R80-01，原文首尾控制字符**：当前 `packages/dsh-livestream/src/publicChat/textPolicy.ts:46–58` 在排队前校验原始 raw 的控制字符、编码及 4096 传输上限；`httpHelper/server.go:17–40` 保持对应最终拒绝域。原触发会造成 helper 登记前拒绝而原槽 unknown，违反产品场景7/9；该因果路径现于本地入队前终止。已读 `textPolicy.case.ts`、`senderEntry.case.ts` 及 Go 文本用例，覆盖 LF/CR/TAB/FEFF、Unicode 空白/大小写、非法输入无 journal/dispatch、后续安全发送。建议：无需进一步修复，保留这些跨边界回归。
+- **R80-02，IPv6 origin**：当前 `senderService.ts:108–110` 根据实际 address.family/address 返回带括号 IPv6 origin；`trustedSender` 继续使用该实际 origin。原触发为合法 ::1 部署被连接成 IPv4，违反固定实例/监听合同。`senderEntry.case.ts:79` 起的实际 IPv6 listener→client→资格/授权断言已读，87 对应 suite 日志通过，且零 helper send。建议：无需进一步修复。
+- **R80-03，协议相对 URL**：当前 `textPolicy.ts:19,54,72` 与 Go `server.go:18` 一致拒绝 `//` 后接非空白且非斜线的链接语法；模板变量与最终产物复用同规则。原触发会公开显式链接，违反产品场景9。直接文本、昵称/礼物名、IPv6 URL、合法分隔斜线与 Go 最终零 chat 断言均已读，并有当前版本完整 suite 通过证据。建议：无需扩成任意语义识别，保留当前回归。
+- **R80-04，分项关闭后的排队晚发**：当前 `publicChatHost.ts:92–102`、`dsh/index.ts:566–568` 递增对应渠道权限代；`frozenController.ts:682–683,725–742` 捕获入队代并在节流 await 后、实际派发前比较。原触发为关闭/重开仍发旧 reply/welcome/thanks，违反分项许可与场景5/6。实际 settings→Host→Controller 断言分别覆盖三渠道、关闭再开启、其它渠道和 manual 保持、原 unknown 不被清除，另有真实 Agent 工具入队取消及 automatic 分项缓存回归；87 日志包含新 channelPermissionSettings 通过。建议：无需进一步修复；这不承诺撤回已开始的 Write。
+
+### 验证证据适用性与保留边界
+
+本轮核对的是 95 已由 root 接受且实际 CLI 登记 PASS 的离线软件验证，未运行另一轮 Validate。`W/feat008-final-software-validation-attribution-95/root-record-validation-pass.json` 为 exit0、同固定 commit；原执行在 `W/feat008-independent-validate-77d1bad-87`。实读原命令的 argv/cwd/时间/exit，以及当前 suite、Go/race、兼容、构建/资产、四次正式 E2E 的相关原日志和断言：267 Node/49 文件、Go 65/83.5% 与 race27、兼容94、noEmit/host/source/built sender、四旅程各1/1；并核对前后549项 source 快照相同。52 V8 项原分母改动行 6506/7816=83.24%、分支3080/3996=77.08% 达原80/70，非V8及其他 Feature 按原映射独立归因，数字不代替行为结论。private-read 使用固定 profile 子 artifact，native 仅被动构建资产；原日志中的 Node process fixture 不是执行 registration native。
+
+真实 raw/CDP/decoder→HTTP→实际 helper/TLS 主链与 `maintenanceObserver` 直接注入分支分别判断，没有把后者冒充完整来源链。93 `commands.json` 及两份原 `go version -m` stdout 显示 Go1.27.3、仅主模块且无内嵌 VCS；前后 binary hash 与87 manifest匹配，不能说 binary 内嵌固定 commit。同 go.mod 模块图、prepare-raw/typecheck 的同输入复用按92记录，不机械重跑。
+
+原 coverage-03 的依赖失败、87 的历史512 MiB峰值未知、越界/tmp准备和初始环境/日志偏差、119端口单次lsof限制，以及93首批只读准备偏差均保留，分别适用91/94的明确有限处置；未追认历史执行合规，未补造峰值、历史全部后代/端口或PGID。91分批50/50/19和494 PID只覆盖当时记录集合。未发现这些事实另外造成当前必要软件条件缺失的具体证据；不重开已被明确处置的流程争议。
+
+真实发送账号/材料、房间、平台 API/标准 TLS 接受、另一观众、真实 gift、真实辅助技术及本机发布仍 **NOT_RUN/DEFERRED**。用户已选择后续随直播间联合验收，此决定只覆盖延期方式，不把 fixture 成功视为观众可见或 REQ-011 Goal 完成。资料/课程队列不续派。当前没有新增必须修复项或必要累计范围缺口；root 只接收本次 `record-review --feature-id FEAT-008 --decision approved` 请求。同 segment 原失败历史及唯一主诊断未用保持。
+
+
+## Release — 77d1bad 本机交付（97）
+
+已批准的固定实现 `77d1badaf8b4656d6fd64197da7bd35b164530c2` 于 2026-11-14T19:04:58Z 起由 root 安装并启动既定 Harness：独立 95 validation PASS、96 review approved 的登记证据分别见 `W/feat008-final-software-validation-attribution-95`、`W/feat008-independent-review-77d1bad-96`。安装前状态 reviewed，双 acceptance 指纹 match，业务工作树干净；87 标准产物的 54 文件、目录权限与 native 被动资产摘要均匹配，安装前 12 文件目录原样移至 `W/feat008-local-ship-97/preinstall-lib`，其 manifest 和保护的旧 `lib.previous-92a3019` 观察均在该目录的证据文件中。旧目录仅是安装前副本，不声称为已验证 last-good；两个 rename 不是 crash-atomic。
+
+root 的实际命令、时间、exit、启动入口、PID/PGID 和监听见 `W/feat008-local-ship-97/{root-apply-execution.json,root-action-receipt.json}`。发布后实际安装内容和 profile 链接匹配；fresh 后端 PID 47618 / PGID 47618 监听 `127.0.0.1:3080`。正常浏览器令牌交换 303、clean root 200、owner 公屏 GET 200，未认证 root 和公屏 GET 均 401；实际 boot graph 广告的 19 个有序客户端响应完整 6,278,198 字节与已安装文件组合逐字节相等。1440 真实 owner UI 经侧栏“直播”打开设置与公屏：四项关闭，服务不可用、资格未核查且未授权；按钮禁用。浏览器侧阻止了非 GET/HEAD、登记资料和非同源请求，故不将本次 UI 观察推广到被阻止的功能；未点击业务写操作。证据见 `W/feat008-local-ship-97/{target-inspection.json,client-byte-comparison.json,ui-smoke.json,final-health.json}`。短时 health 正常，不代表真实流量稳定或全系统零外联。
+
+回滚未执行；root 保留服务和明确的回滚命令 `python3 W/feat008-local-ship-97/root-install-start.py --rollback`（执行时将 W 展开为该目录绝对路径）。本次浏览器及其临时 profile 已关闭清理；为使后续 owner 能从当前进程的正常入口登录，root 创建的 `W/feat008-local-ship-97/private/startup.raw.log` 暂留于 0700 目录且文件 0600，含敏感启动材料，不在结果展示；服务仍持有日志文件。产品观察计划见 [REQ-011.product.md](REQ-011.product.md#发布后观察计划)，真实账号、房间、平台受理/发送、另一观众与 gift 等均延后直播联合验收。建议最迟 2026-11-15T19:10:00Z 由 root 复查本机进程、私有日志保留需要和用户反馈；本次没有建立持续观测或安排自动任务。
+
+主 Sol 最终接受本机软件交付：`W/main-local-release-acceptance-98/acceptance-audit.json` 核当前 54 项安装 hash/文件及目录权限、19 个客户端源 hash、原完整 HTTP 字节比较、相同 fresh PID/PGID/监听和入口；另经正常 303 Cookie 流程实际只读核公屏返回 `ok=true`、publicChat 对象、available=false、无 grant，未认证为 401。UI smoke 的保存按钮因草稿未变化禁用，符合当前组件；其请求限制只支持已经记录的只读界面观察，不冒称其它交互通过。保留私有启动日志的权限/用途已核，不在 Git/对话中保存认证值；未执行回滚或发送。97 只追加发布证据，没有改变产品、有效方案或实现，原独立 Validate/Review 仍适用；root 先显式重绑这两个接受点，再按 97 的原 canonical 参数登记本机 release。这里的 released 是当前本机软件交付状态，发送服务尚未装配、发送仍关闭；真实账号/房间装配与资格、有限发送和另一观众等联合验收仍未完成，活动 Goal 不标 complete。其它需求继续排队。
