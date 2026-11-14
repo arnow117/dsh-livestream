@@ -39,9 +39,10 @@ import { connectObs, showGameSources } from '../body/obs';
 import type { OwnerPace } from '../core/attention/attention';
 import { assertBiliCurrent, beginBiliOperation, inBiliOperation } from '../shared/biliOperations';
 import { parseDouyinRoomId } from '../shared/liveTarget';
-import type { LivePlatform } from '../core/live';
+import type { LiveEvent, LivePlatform } from '../core/live';
 import { mergeQuerySettings, type QuerySettings } from '../shared/readOnlyQuery';
 import { defaultTtsSettings, mergeTtsSettings, type TtsSettings } from '../shared/ttsSettings';
+import { parsePublicChatSettings, type PublicChatSettings } from '../publicChat/settings';
 
 export interface Settings {
   livePlatform: LivePlatform;
@@ -53,6 +54,7 @@ export interface Settings {
   voice: string;
   tts: TtsSettings;
   readOnlyQueries: QuerySettings;
+  publicChat: PublicChatSettings;
   stagePort: number;
   stageToken: string;
   /** 下播提炼观众记忆用的模型（provider/model） */
@@ -89,6 +91,13 @@ export interface Settings {
   blocked: BlockedViewer[];
   /** 直播会话上下文保存记录（FEAT-006）：结构见 shared/sessionContext；损坏值原样保留并显示 invalid */
   sessionContext?: unknown;
+  /**
+   * 可选机器人联动配置（FEAT-DSH-004）：结构见 shared/robotLive；损坏值原样保留并在状态里显示 invalid。
+   * 未安装 dsh-qdroid 插件时保存值不动、直播照常独立运行。
+   */
+  robotLive?: unknown;
+  /** Owner-only, non-secret registration deployment references. */
+  registrationRead?: unknown;
 }
 
 export interface BlockedViewer {
@@ -160,6 +169,12 @@ export const weatherSource = createWeatherSource({
 
 /** 插件包目录（构建产物在 lib/ 或 lib/chunks/，往上找 package.json） */
 export function packageDir(): string {
+  // 组合/测试环境可显式指定包目录（深嵌套的私有构建输出超出向上查找范围时使用）
+  const override = process.env.DSH_LIVESTREAM_PACKAGE_DIR;
+  if (override && existsSync(join(override, 'package.json'))
+    && (JSON.parse(readFileSync(join(override, 'package.json'), 'utf8')) as { name?: string }).name === 'dsh-livestream') {
+    return override;
+  }
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 4; i++) {
     const file = join(dir, 'package.json');
@@ -187,6 +202,7 @@ function loadSettings(): Settings {
     voice: '',
     tts: defaultTtsSettings(process.env, saved.voice ?? ''),
     readOnlyQueries: { weather: false, publicSearch: false },
+    publicChat: parsePublicChatSettings(undefined),
     stagePort: 7390,
     stageToken: '',
     distillModel: 'deepseek-official/deepseek-flash',
@@ -208,6 +224,7 @@ function loadSettings(): Settings {
     ...saved,
   };
   if (settings.livePlatform !== 'bilibili' && settings.livePlatform !== 'douyin') settings.livePlatform = 'bilibili';
+  settings.publicChat = parsePublicChatSettings(saved.publicChat);
   try {
     settings.douyinRoomId = settings.douyinRoomId ? parseDouyinRoomId(settings.douyinRoomId) : '';
   } catch {
@@ -310,6 +327,27 @@ export const sessionTools: {
   verify: ((sessionId: string) => { bound: boolean; note?: string }) | null;
 } = { onCreated: null, verify: null };
 
+/**
+ * FEAT-DSH-004：可选机器人联动的原事件接线点。robotLive 模块加载后填这里；
+ * show 的原事件接收处在注意力聚合之前调用，实现方自行吞错，不影响直播自身路径。
+ */
+export const robotBridge: {
+  onOriginalEvent: ((event: LiveEvent) => void) | null;
+  /** Show 生命周期真失效（ending/offair/session-retired/connection-lost）的同步通知；实现方自行吞错。 */
+  onLiveInvalidated: ((detail: string) => void) | null;
+} = { onOriginalEvent: null, onLiveInvalidated: null };
+
+export const publicChatBridge: {
+  onLiveStarted: (() => void) | null;
+  onLiveInvalidated: (() => void) | null;
+  rememberReply: ((messageId: string, agent: object, event: object) => boolean) | null;
+  forgetReply: ((messageId: string) => void) | null;
+  beginReply: ((agent: object, turn: string, signal: AbortSignal, messages: Array<{ id?: string }>) => void) | null;
+  replyAvailable: ((agent: object, signal: AbortSignal) => boolean) | null;
+  sendReply: ((agent: object, signal: AbortSignal, text: unknown) => Promise<unknown>) | null;
+} = { onLiveStarted: null, onLiveInvalidated: null, rememberReply: null, forgetReply: null,
+  beginReply: null, replyAvailable: null, sendReply: null };
+
 async function ttsAuth(voice: string): Promise<TtsAuth | null> {
   const [apiKey, appId, accessKey] = await Promise.all([hooks.secret(SECRETS.ttsApiKey), hooks.secret(SECRETS.ttsAppId), hooks.secret(SECRETS.ttsAccessKey)]);
   const auth = { apiKey, appId, accessKey };
@@ -364,6 +402,12 @@ export const show = new LiveShow(
     log: (level, message) => hooks.log(level, message),
     persist: (snapshot) => saveLive(snapshot),
     onGame: (source) => placeGame(source),
+    onOriginalEvent: (event) => robotBridge.onOriginalEvent?.(event),
+    onLiveInvalidated: (detail) => {
+      publicChatBridge.onLiveInvalidated?.();
+      robotBridge.onLiveInvalidated?.(detail);
+    },
+    onLiveStarted: () => publicChatBridge.onLiveStarted?.(),
   },
   { dataDir, names: currentCharacter()?.names ?? [], idleAfterMs: () => settings.idleAfterSec * 1000, pace: () => ownerPace(settings.pace), board: currentBoard, title: () => settings.liveTitle, gameChatGapMs: () => (settings.gameChatGapSec ?? 15) * 1000, blocked: (uid) => settings.blocked.some((b) => b.uid === uid) },
 );

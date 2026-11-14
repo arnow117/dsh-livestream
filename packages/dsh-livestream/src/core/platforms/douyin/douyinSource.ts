@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import type { LiveEvent, LiveRoomStats } from '../../live';
 import type { LiveSource, LiveSourceListener } from '../source';
+import { recordSourceIngress } from '../../../publicChat/sourceIngress';
 
 export const DOUYIN_CACHE_TTL_MS = 120_000;
 export const DOUYIN_CACHE_LIMIT = 4_000;
@@ -261,7 +262,24 @@ export class DouyinLiveSource implements LiveSource {
       while (this.groups.size > DOUYIN_CACHE_LIMIT) this.groups.delete(this.groups.keys().next().value!);
       event = { ...base, id: eventId, kind: 'gift', giftName, count: delta, valueYuan: 0, valueKnown: false };
     }
-    if (event) this.listener?.event(event);
+    if (event) {
+      const rawTypes: Record<string, readonly string[]> = {
+        chat: ['WebcastChatMessage', 'WebcastEmojiChatMessage'],
+        member: ['WebcastMemberMessage'],
+        gift: ['WebcastGiftMessage'],
+      };
+      const rawType = text(frame.rawMethod, 64);
+      if (rawType && rawTypes[frame.type]?.includes(rawType)) {
+        recordSourceIngress(event, {
+          rawId: id,
+          rawType,
+          roomId: this.roomId,
+          frameTimeUntrusted: frame.ts,
+          receivedAt: now,
+        });
+      }
+      this.listener?.event(event);
+    }
   }
 
   private settleInitialization(result: 'connected' | 'error'): void {

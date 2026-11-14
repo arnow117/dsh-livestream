@@ -1,0 +1,65 @@
+--- a/src/collector/browser.ts
++++ b/src/collector/browser.ts
+@@ -144,7 +144,11 @@
+    * opts.cookie：传入时创建独立 BrowserContext 注入该 cookie（多账号多房间互不干扰）；
+    *               不传时用共享 context 匿名访问（浏览器自身管理 cookie）。
+    */
+-  async openRoom(roomUrl: string, opts: { clickTrigger?: boolean; cookie?: string } = {}): Promise<OpenedRoom> {
++  async openRoom(roomUrl: string, opts: {
++    clickTrigger?: boolean;
++    cookie?: string;
++    beforeNavigate?: (page: Page, cdp: CDPSession, ownContext?: BrowserContext) => void;
++  } = {}): Promise<OpenedRoom> {
+     await this.init();
+ 
+     let ctx: BrowserContext;
+@@ -182,6 +186,8 @@
+     const page = await ctx.newPage();
+     const cdp = await ctx.newCDPSession(page);
+     await cdp.send('Network.enable');
++    // Install the raw observer before navigation can create the push socket.
++    opts.beforeNavigate?.(page, cdp, ownContext ? ctx : undefined);
+ 
+     // 在打开页面前开始记录直播流地址，两个来源：
+     //  - 播放器的拉流请求：最准，但直播流的 fetch 永远不结束，不进 performance 资源记录，事后补不回来；
+--- a/src/collector/liveSession.ts
++++ b/src/collector/liveSession.ts
+@@ -12,6 +12,9 @@
+ 
+ export interface LiveSessionOptions {
+   onMessage: (msg: RawProtoMessage, frame: { roomId: string }) => void;
++  onRawSocketCreated?: (socketId: string, socketUrl: string) => void;
++  onRawSocketClosed?: (socketId: string) => void;
++  onRawMessage?: (socketId: string, msg: RawProtoMessage) => void;
+   /** 弹幕通道建立（或断开后重新收到推送帧）时的回调 */
+   onOpen?: () => void;
+   /** 会话错误回调 */
+@@ -57,6 +60,12 @@
+   }
+ 
+   private attach(): void {
++    // CDP supplies the URL only on creation, so bind it before frames arrive.
++    this.cdp.on('Network.webSocketCreated', (params: any) => {
++      if (typeof params?.requestId === 'string' && typeof params?.url === 'string') {
++        this.opts.onRawSocketCreated?.(params.requestId, params.url);
++      }
++    });
+     // CDP 的 webSocketFrameReceived 事件不含 url，无法按连接过滤；
+     // 直接对全部帧尝试解码，非 PushFrame / 非法帧会被 decodeFrame 安全忽略（无副作用）。
+     // 页面上还有别的 WebSocket，用 requestId 记下真正推送弹幕的那条连接。
+@@ -85,11 +94,15 @@
+         this.opts.onOpen?.();
+       }
+       for (const msg of decoded.messages) {
++        if (isPush && typeof params?.requestId === 'string') {
++          this.opts.onRawMessage?.(params.requestId, msg);
++        }
+         this.msgCount++;
+         this.opts.onMessage(msg, { roomId: this.roomId });
+       }
+     });
+     this.cdp.on('Network.webSocketClosed', (params: any) => {
++      if (typeof params?.requestId === 'string') this.opts.onRawSocketClosed?.(params.requestId);
+       // 页面上其它 WebSocket 关闭与弹幕无关；只有推送弹幕的连接全部关闭才算断开
+       if (!this.pushSockets.delete(String(params?.requestId))) return;
+       if (!this.stopped && this.pushSockets.size === 0) {

@@ -1,3 +1,5 @@
+import { registerReadRoutes } from '../registration/readRoutes';
+import { createReadService } from '../registration/readService';
 import { mergeQuerySettings } from '../shared/readOnlyQuery';
 import { validateSessionContextSaveRequest, type SessionContextRecord, type SessionContextStateView } from '../shared/sessionContext';
 import {
@@ -42,17 +44,21 @@ import { parseDouyinRoomId } from '../shared/liveTarget';
 import { assertBiliCurrent, beginBiliOperation, biliOperationsActive, inBiliOperation, invalidateTarget } from '../shared/biliOperations';
 import { normalizeDouyinBridgeUrl } from '../core/platforms/douyin/douyinSource';
 import { DouyinRoomControl } from './douyinRoomControl';
+import { applyRobotLiveSettings, disposeRobotLive, errorText, invalidateRobotLiveForShow, robotLiveView, robotOriginalEvent, robotOwnerCancel, robotOwnerGet, skipReasonText } from './robotLive';
+import { normalizeRobotLiveConfig } from '../shared/robotLive';
+import { applySettingsPatch as applyPublicChatSettingsPatch } from '../publicChat/settings';
+import { PublicChatHost } from '../publicChat/publicChatHost';
 import type { RoomControlSnapshot } from '../shared/roomControl';
-import { agentReady, asr, broadcast, cookie, course, courseContext, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publishBoard, publishNotice, SECRETS, sessionTools, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, queryServiceStatus, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
+import { agentReady, asr, broadcast, cookie, course, courseContext, dataDir, DEFAULT_BOARD, DOUYIN_BOARD, hooks, localRehearsal, placeGame, publicChatBridge, publishBoard, publishNotice, robotBridge, SECRETS, sessionTools, social, takeLive, currentCharacter, currentMoods, dm, packs, prepareSpeech, previewSpeech, queryServiceStatus, server, settings, show, updateSettings, type BlockedViewer, type Pace, type Settings } from './runtime';
 
 export const name = 'dsh-livestream';
 export const inject = ['connection'];
 
-interface HostContext {
-  effect(effect: () => () => void, label?: string): unknown;
-  get?(name: string): any;
+type HostContext = Parameters<typeof createReadService>[0] & {
+  connection: Parameters<typeof createReadService>[0]['connection'] & { fetch: { register(route: unknown): () => void } };
+  effect(effect: () => () => void | Promise<void>, label?: string): unknown;
   [service: string]: any;
-}
+};
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const fail = (message: string, status = 400) => json({ ok: false, error: message }, status);
@@ -117,12 +123,14 @@ function makeState(roomControl: DouyinRoomControl) {
     show: show.status(),
     course: course.view(),
     broadcast: broadcast.status(),
-    settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined, sessionContext: undefined },
+    settings: { ...settings, ...(localRehearsal ? { broadcast: false } : {}), stageToken: undefined, sessionContext: undefined, registrationRead: undefined },
+    publicChatSettings: settings.publicChat,
     runtime: { localRehearsal, ttsBackend: settings.tts.backend },
     douyinBridgeUrl,
     roomControl: makeRoomControlSnapshot(roomControl),
     // FEAT-006：显式去掉内部 bindings，owner 只见 saved/config/health/active 视图
     sessionContext: sessionContextStateView() as SessionContextStateView,
+    robot: robotLiveView(),
     stageUrl: server.url,
     characters: packs.list('characters'),
     templates: packs.list('templates'),
@@ -278,6 +286,49 @@ function cancelNativeQueryTurn(lease: QueryTurn): void {
 }
 
 export function apply(ctx: HostContext): void {
+  const publicChat = new PublicChatHost(() => settings.publicChat.enabled && settings.livePlatform === 'douyin' && !localRehearsal,
+    () => settings.publicChat.reply, () => show.currentSession,
+    (kind) => kind === 'welcome' ? settings.publicChat.welcome : settings.publicChat.thanks);
+  const syncPublicChatLive = () => {
+    const config = show.hub.currentConfig;
+    const startedAtMs = show.liveEpochStartedAtMs;
+    if (show.isOnAir && !show.isEnding && settings.livePlatform === 'douyin' && config?.platform === 'douyin'
+      && config.roomId === settings.douyinRoomId && show.streamEpochId && startedAtMs !== null) {
+      publicChat.setLive({ roomId: config.roomId, epoch: show.streamEpochId, startedAtMs });
+    } else {
+      publicChat.invalidate();
+    }
+  };
+  ctx.effect(() => {
+    publicChatBridge.onLiveStarted = syncPublicChatLive;
+    const onInvalidated = () => publicChat.invalidate();
+    const rememberReply = (messageId: string, agent: object, event: object) => publicChat.rememberReply(messageId, agent, event);
+    const forgetReply = (messageId: string) => publicChat.forgetReply(messageId);
+    const beginReply = (agent: object, turn: string, signal: AbortSignal, messages: Array<{ id?: string }>) =>
+      publicChat.beginReply(agent, turn, signal, messages);
+    const replyAvailable = (agent: object, signal: AbortSignal) => publicChat.replyAvailable(agent, signal);
+    const sendReply = (agent: object, signal: AbortSignal, text: unknown) => publicChat.sendReply(agent, signal, text);
+    Object.assign(publicChatBridge, { onLiveInvalidated: onInvalidated, rememberReply, forgetReply, beginReply, replyAvailable, sendReply });
+    const offState = show.hub.onOutputInputState((state, previous) => {
+      publicChat.inputChanged(state, previous);
+      if (state === 'connected') syncPublicChatLive();
+    });
+    const offEvent = show.hub.onDouyinSourceEvent((event, ingress) => publicChat.originalEvent(event, ingress));
+    if (show.hub.isConnected) publicChat.inputChanged('connected', 'idle');
+    syncPublicChatLive();
+    return async () => {
+      if (publicChatBridge.onLiveStarted === syncPublicChatLive) publicChatBridge.onLiveStarted = null;
+      if (publicChatBridge.onLiveInvalidated === onInvalidated) publicChatBridge.onLiveInvalidated = null;
+      if (publicChatBridge.rememberReply === rememberReply) publicChatBridge.rememberReply = null;
+      if (publicChatBridge.forgetReply === forgetReply) publicChatBridge.forgetReply = null;
+      if (publicChatBridge.beginReply === beginReply) publicChatBridge.beginReply = null;
+      if (publicChatBridge.replyAvailable === replyAvailable) publicChatBridge.replyAvailable = null;
+      if (publicChatBridge.sendReply === sendReply) publicChatBridge.sendReply = null;
+      offState();
+      offEvent();
+      await publicChat.close();
+    };
+  }, 'dsh-livestream public chat');
   const currentCourseContext = () => {
     const sessionId = show.currentSession;
     if (!show.isOnAir || !sessionId || !sessionTools.verify?.(sessionId).bound) return null;
@@ -294,6 +345,18 @@ export function apply(ctx: HostContext): void {
   const roomControlSnapshot = () => makeRoomControlSnapshot(roomControl);
   const state = () => makeState(roomControl);
   ctx.effect(() => () => roomControl.dispose(), 'dsh-livestream room control');
+  // 可选机器人联动（FEAT-DSH-004）：启动装配一次；Show 生命周期真失效同步撤销原授权；
+  // 插件退出同步撤销 binding/grants，直播照常独立。
+  ctx.effect(() => {
+    robotBridge.onOriginalEvent = robotOriginalEvent;
+    robotBridge.onLiveInvalidated = invalidateRobotLiveForShow;
+    void applyRobotLiveSettings(ctx);
+    return () => {
+      robotBridge.onOriginalEvent = null;
+      robotBridge.onLiveInvalidated = null;
+      disposeRobotLive();
+    };
+  }, 'dsh-livestream robot live');
   ctx.effect(() => {
     const secret = async (name: string) => {
       const credentials = ctx.get?.('credentials');
@@ -359,6 +422,14 @@ export function apply(ctx: HostContext): void {
       },
     }), label);
 
+  const registrationRead = createReadService(ctx, {
+    dataDir,
+    getSaved: () => settings.registrationRead,
+    save: (value) => { updateSettings({ registrationRead: value }); },
+  });
+  ctx.effect(() => () => registrationRead.dispose(), 'registration private read');
+  registerReadRoutes(route, registrationRead);
+
   route('/api/dsh-livestream/state', ['GET'], async () => {
     const credential = await resolveQueryCredential(ctx.get?.('credentials'), process.env.GLM_CODING_PLAN_API_KEY);
     return json({ ...state(), queryCredential: credential.status, queryService: queryServiceStatus });
@@ -380,6 +451,11 @@ export function apply(ctx: HostContext): void {
     const patch = await controlBody<Partial<Settings> & { controlRevision?: unknown }>(request);
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return fail('设置无效');
     const next: Partial<Settings> = {};
+    if (patch.publicChat !== undefined) {
+      const result = applyPublicChatSettingsPatch(settings.publicChat, patch.publicChat);
+      if (!result.ok) return fail(result.error);
+      next.publicChat = result.next;
+    }
     if (patch.livePlatform !== undefined) {
       if (patch.livePlatform !== 'bilibili' && patch.livePlatform !== 'douyin') return fail('直播平台无效');
       next.livePlatform = patch.livePlatform;
@@ -453,6 +529,16 @@ export function apply(ctx: HostContext): void {
       // 损坏记录：显式替换即可恢复，不比较 revision
       sessionContextRecord = { ...candidate.record, revision: (current && current.kind === 'saved' ? current.record.revision : 0) + 1 };
     }
+    // FEAT-DSH-004：整组替换的机器人联动配置；非法值整体拒绝（不部分扩权、不套默认）。
+    let robotLiveConfig: ReturnType<typeof normalizeRobotLiveConfig> | undefined;
+    const rawRobotLive = (patch as { robotLive?: unknown }).robotLive;
+    if (rawRobotLive !== undefined) {
+      const validated = normalizeRobotLiveConfig(rawRobotLive);
+      if (!validated.ok) {
+        return json({ ok: false, error: `机器人联动设置无效：${validated.reason}` }, 400);
+      }
+      robotLiveConfig = validated;
+    }
     const own = (patch as { ownRoom?: boolean }).ownRoom;
     if (own !== undefined && settings.roomId) {
       const rooms = new Set(settings.ownRooms);
@@ -476,12 +562,20 @@ export function apply(ctx: HostContext): void {
     // 换了 Python 或模型：关掉正在跑的识别进程，下次用新的
     const resetAsr = (next.asrPython !== undefined && next.asrPython !== settings.asrPython) || (next.asrModel !== undefined && next.asrModel !== settings.asrModel);
     if (sessionContextRecord !== undefined) next.sessionContext = sessionContextRecord;
+    if (robotLiveConfig !== undefined && robotLiveConfig.ok) next.robotLive = robotLiveConfig.config;
+    if (next.publicChat && !next.publicChat.reply) publicChat.invalidateReplies();
+    if (next.publicChat && (!next.publicChat.welcome || !next.publicChat.thanks)) publicChat.invalidateAutomatic();
+    if (targetChanged) publicChat.invalidateForSettings();
+    else if (next.publicChat && !next.publicChat.enabled) publicChat.suspendForSettings();
     try {
       updateSettings(next);
     } catch {
       return fail('保存设置失败', 500);
     }
     if (sessionContextRecord !== undefined) await refreshHealth();
+    // FEAT-DSH-004：保存成功后按新配置重新装配并等待完成——响应里的状态就是最终
+    // 装配事实（成功/冲突/插件缺失各自可读），不做 fire-and-forget，UI 不误报已装配。
+    if (robotLiveConfig !== undefined) await applyRobotLiveSettings();
     if (targetChanged) {
       roomControl.advance();
       invalidateTarget();
@@ -499,12 +593,61 @@ export function apply(ctx: HostContext): void {
     return json(state());
   }, 'settings');
 
+  route('/api/dsh-livestream/public-chat', ['GET', 'POST'], async (request) => {
+    if (request.method === 'GET') return json({ ok: true, publicChat: await publicChat.view() });
+    const input = await controlBody<Record<string, unknown>>(request);
+    if (!input || typeof input.action !== 'string') return fail('公屏操作无效');
+    const { action, ...args } = input;
+    const empty = Object.keys(args).length === 0;
+    if (action === 'maintain' && empty) return json(await publicChat.maintain());
+    if (action === 'qualify' && empty) return json(await publicChat.qualify());
+    if (action === 'authorize' && empty) return json(await publicChat.authorize());
+    if (action === 'revoke' && empty) { publicChat.revoke(); return json({ ok: true }); }
+    if (action === 'send') return json({ ok: true, result: await publicChat.sendManual(args) });
+    if (action === 'record-fact') return json(await publicChat.recordFact(args));
+    if (action === 'reconcile-message') return json(await publicChat.reconcileMessage(args));
+    if (action === 'reconcile-control') return json(await publicChat.reconcileControl(args));
+    return fail('公屏操作无效');
+  }, 'public chat');
+
   // FEAT-006：owner 显式重查（不保存、不创建会话）；最多每秒一次、单在途
   route('/api/dsh-livestream/session-context/recheck', ['POST'], async () => {
     const result = await recheckSessionContext();
     if (!result.ok) return json({ ok: false, error: result.note ?? '暂时不能重查' }, 429);
     return json(state());
   }, 'session context recheck');
+
+  // FEAT-DSH-004：owner 确定性查询/取消原机器人任务（原 journal 权威；停用后仍可查历史）。
+  const robotTaskId = (value: unknown): string | null =>
+    typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
+
+  route('/api/dsh-livestream/robot/task', ['POST'], async (request) => {
+    const input = await controlBody<{ taskId?: unknown }>(request);
+    const taskId = robotTaskId(input?.taskId);
+    if (!taskId) return fail('任务查询请求无效');
+    const result = await robotOwnerGet(taskId);
+    if (!result.ok) {
+      const status = result.error === 'not_found' ? 404 : result.error === 'not_configured' ? 409 : 503;
+      return json({ ok: false, error: errorText(result.error), code: result.error }, status);
+    }
+    return json({ ok: true, task: result.task });
+  }, 'robot task get');
+
+  route('/api/dsh-livestream/robot/task/cancel', ['POST'], async (request) => {
+    const input = await controlBody<{ taskId?: unknown }>(request);
+    const taskId = robotTaskId(input?.taskId);
+    if (!taskId) return fail('任务取消请求无效');
+    const result = robotOwnerCancel(taskId);
+    if (!result.ok) {
+      const status = result.error === 'not_found' ? 404 : result.error === 'not_configured' ? 409 : 503;
+      return json({ ok: false, error: errorText(result.error), code: result.error }, status);
+    }
+    return json({
+      ok: true,
+      task: result.task,
+      note: result.task.cancelRequested ? '已受理取消；实际停止要等机器人自己的停止证明' : skipReasonText((result.task as { reason?: unknown }).reason),
+    });
+  }, 'robot task cancel');
 
   route('/api/dsh-livestream/course', ['POST'], async (request) => {
     const input = await controlBody<{ action?: unknown; rootId?: unknown; path?: unknown; index?: unknown }>(request);

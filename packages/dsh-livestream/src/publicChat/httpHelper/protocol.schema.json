@@ -1,0 +1,885 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dsh-public-chat-http-v1",
+  "title": "Private helper request frame and operation payloads",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "seq",
+    "kind",
+    "operationId",
+    "payloadHash",
+    "expectedHelperNonce",
+    "authContextId",
+    "authContextRevision",
+    "materialDigest",
+    "payload"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "dsh-public-chat-http-v1"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "kind": {
+      "enum": [
+        "hello",
+        "profile",
+        "bindGrant",
+        "revoke",
+        "query",
+        "send",
+        "reconcileMessage"
+      ]
+    },
+    "operationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "payloadHash": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "expectedHelperNonce": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "authContextId": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "authContextRevision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "materialDigest": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "description": "Bounded UTF-8 JSON after a four-byte big-endian length; material is read only from the inherited descriptor. Automatic events must be verified against the original raw source by the trusted sender before this private request.",
+  "$defs": {
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instanceId",
+        "senderProcessNonce",
+        "authorizationId",
+        "captureId",
+        "accountRecordId",
+        "helperProcessNonce",
+        "authContextId",
+        "rawSourceSessionId",
+        "rawBrowserContextId",
+        "liveEpoch",
+        "senderConnectionGeneration",
+        "qualificationRevision",
+        "identityEpoch",
+        "authContextRevision",
+        "rawSourceConnectionGeneration",
+        "inputConnectionGeneration",
+        "buildDigest",
+        "qualificationDigest",
+        "materialDigest",
+        "roomBindingProofDigest",
+        "version",
+        "transportKind",
+        "principalUid",
+        "platformRoomId",
+        "roomId",
+        "liveEpochStartedAtMs"
+      ],
+      "properties": {
+        "instanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "senderProcessNonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "authorizationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "captureId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "accountRecordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "helperProcessNonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "authContextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "rawSourceSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "rawBrowserContextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "liveEpoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "senderConnectionGeneration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "qualificationRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "identityEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "authContextRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rawSourceConnectionGeneration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "inputConnectionGeneration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "buildDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "qualificationDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "materialDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "roomBindingProofDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "version": {
+          "const": "dsh-public-chat-v1"
+        },
+        "transportKind": {
+          "const": "frozen_http"
+        },
+        "principalUid": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "platformRoomId": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "roomId": {
+          "type": "string",
+          "pattern": "^[0-9]{1,64}$"
+        },
+        "liveEpochStartedAtMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instanceId",
+        "senderProcessNonce",
+        "authorizationId",
+        "captureId",
+        "accountRecordId",
+        "helperProcessNonce",
+        "authContextId",
+        "rawSourceSessionId",
+        "rawBrowserContextId",
+        "liveEpoch",
+        "senderConnectionGeneration",
+        "qualificationRevision",
+        "identityEpoch",
+        "authContextRevision",
+        "rawSourceConnectionGeneration",
+        "inputConnectionGeneration",
+        "buildDigest",
+        "qualificationDigest",
+        "materialDigest",
+        "roomBindingProofDigest",
+        "version",
+        "transportKind",
+        "principalUid",
+        "platformRoomId",
+        "roomId",
+        "liveEpochStartedAtMs",
+        "grantId",
+        "authorizedAtMs"
+      ],
+      "properties": {
+        "instanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "senderProcessNonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "authorizationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "captureId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "accountRecordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "helperProcessNonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "authContextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "rawSourceSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "rawBrowserContextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "liveEpoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "senderConnectionGeneration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "qualificationRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "identityEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "authContextRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rawSourceConnectionGeneration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "inputConnectionGeneration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "buildDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "qualificationDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "materialDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "roomBindingProofDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "version": {
+          "const": "dsh-public-chat-v1"
+        },
+        "transportKind": {
+          "const": "frozen_http"
+        },
+        "principalUid": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "platformRoomId": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "roomId": {
+          "type": "string",
+          "pattern": "^[0-9]{1,64}$"
+        },
+        "liveEpochStartedAtMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "grantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "authorizedAtMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "empty": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "captureId",
+        "helperNonce",
+        "qualificationRevision",
+        "identityEpoch"
+      ],
+      "properties": {
+        "captureId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "helperNonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "qualificationRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "identityEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "revoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "helperNonce",
+        "kind",
+        "targetId"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "helperNonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "kind": {
+          "enum": [
+            "authorization",
+            "capture"
+          ]
+        },
+        "targetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "grantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "capture"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "grantId"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "send": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "sourceKey",
+        "requestHash",
+        "sourceKind",
+        "grant",
+        "text"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "sourceKey": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "requestHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sourceKind": {
+          "enum": [
+            "manual",
+            "auto"
+          ]
+        },
+        "grant": {
+          "$ref": "#/$defs/grant"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "messageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "sourceKey",
+        "requestHash",
+        "helperPayloadHash",
+        "textDigest",
+        "grant"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "sourceKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "requestHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "helperPayloadHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "textDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "grant": {
+          "$ref": "#/$defs/grant"
+        }
+      }
+    },
+    "recoveryFact": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "factId",
+            "seq",
+            "refDigest",
+            "hostRecordedAtMs",
+            "note"
+          ],
+          "properties": {
+            "kind": {
+              "const": "note"
+            },
+            "factId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "refDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "hostRecordedAtMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "factId",
+            "seq",
+            "refDigest",
+            "hostRecordedAtMs",
+            "source",
+            "attributionStrength",
+            "observedAtMs",
+            "textDigest",
+            "principalUid",
+            "roomId",
+            "platformRoomId",
+            "observerRef"
+          ],
+          "properties": {
+            "kind": {
+              "const": "positive_observation"
+            },
+            "factId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "refDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "hostRecordedAtMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "source": {
+              "enum": [
+                "owner",
+                "designated-viewer"
+              ]
+            },
+            "attributionStrength": {
+              "enum": [
+                "direct",
+                "indirect"
+              ]
+            },
+            "observedAtMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "textDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "principalUid": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,19}$"
+            },
+            "roomId": {
+              "type": "string",
+              "pattern": "^[0-9]{1,64}$"
+            },
+            "platformRoomId": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,19}$"
+            },
+            "observerRef": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[!-~]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "reconcileMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlId",
+        "ref",
+        "factsRevision",
+        "factsDigest",
+        "facts",
+        "originControlPayloadHash"
+      ],
+      "properties": {
+        "controlId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "ref": {
+          "$ref": "#/$defs/messageRef"
+        },
+        "factsRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "factsDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "facts": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/recoveryFact"
+          }
+        },
+        "originControlPayloadHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "hello"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/empty"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "query"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/empty"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "profile"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/profile"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "bindGrant"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/proposal"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "revoke"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/revoke"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "send"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/send"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "reconcileMessage"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/reconcileMessage"
+          }
+        }
+      }
+    }
+  ]
+}

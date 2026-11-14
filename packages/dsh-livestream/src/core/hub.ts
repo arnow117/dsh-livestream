@@ -20,7 +20,9 @@ import type {
   LiveUpdate,
 } from './live';
 import { createLiveSource, type LiveSource } from './platforms';
-import { DOUYIN_CACHE_LIMIT, DOUYIN_CACHE_TTL_MS } from './platforms/douyin/douyinSource';
+import { DOUYIN_CACHE_LIMIT, DOUYIN_CACHE_TTL_MS, DouyinLiveSource } from './platforms/douyin/douyinSource';
+import { markTrustedInternalIngress } from './attention/topics';
+import { readSourceIngress, type SourceIngress } from '../publicChat/sourceIngress';
 
 const RECENT_LIMIT = 300;
 const SEEN_LIMIT = 4000;
@@ -33,6 +35,8 @@ const AMBIENT_PER_FLUSH = 5;
 const AMBIENT_KINDS: ReadonlySet<LiveEventKind> = new Set(['enter', 'like']);
 
 export type LiveEventListener = (event: LiveEvent, isUpdate: boolean) => void;
+/** 连接状态订阅（FEAT-DSH-004）：同步回调，携带来源报告的新状态与原状态。 */
+export type LiveStateListener = (state: LiveConnectionState, previous: LiveConnectionState) => void;
 
 export class LiveHub {
   private source: LiveSource | null = null;
@@ -51,11 +55,51 @@ export class LiveHub {
   private timestamps = new Map<LiveEventKind, number[]>();
 
   private listeners = new Set<LiveEventListener>();
+  /** 连接状态订阅者：真实 source 状态回调/disconnect 的同一同步段内通知（机器人授权撤销依赖它） */
+  private stateListeners = new Set<LiveStateListener>();
+  private sourceListeners = new Set<(event: LiveEvent, ingress: Readonly<SourceIngress>) => void>();
+  private inputListeners = new Set<(state: LiveConnectionState, previous: LiveConnectionState) => void>();
   private updateSink: ((update: LiveUpdate) => void) | null = null;
   private pending: LiveEvent[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly makeSource: (config: LiveConnection) => LiveSource = createLiveSource) {}
+
+  /** 订阅连接状态（FEAT-DSH-004 元数据通道）：状态离开 connected 时在同一同步段收到通知。 */
+  onStateChange(listener: LiveStateListener): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  /** 抖音原事件在 Hub 礼物聚合前送往输出接线；普通 ingest 不调用。 */
+  onDouyinSourceEvent(listener: (event: LiveEvent, ingress: Readonly<SourceIngress>) => void): () => void {
+    this.sourceListeners.add(listener);
+    return () => this.sourceListeners.delete(listener);
+  }
+
+  /** 输出侧同时观察连接建立与失效，不改变机器人原有状态通知。 */
+  onOutputInputState(listener: (state: LiveConnectionState, previous: LiveConnectionState) => void): () => void {
+    this.inputListeners.add(listener);
+    return () => this.inputListeners.delete(listener);
+  }
+
+  private notifyOutputInputState(state: LiveConnectionState, previous: LiveConnectionState): void {
+    if (state === previous) return;
+    for (const listener of this.inputListeners) {
+      try { listener(state, previous); } catch (error) { console.error('[LiveHub] 公屏连接消费者出错：', error); }
+    }
+  }
+
+  /** 连接离开 connected（源回调或主动断开）时同步通知订阅者；consumer 错误不破坏状态流转。 */
+  private notifyStateLost(state: LiveConnectionState, previous: LiveConnectionState): void {
+    for (const listener of this.stateListeners) {
+      try {
+        listener(state, previous);
+      } catch (err) {
+        console.error('[LiveHub] 连接状态订阅者出错：', err);
+      }
+    }
+  }
 
   get isConnected(): boolean {
     return this.state === 'connected';
@@ -90,7 +134,17 @@ export class LiveHub {
     const source = this.makeSource(config);
     this.source = source;
     source.start({
-      event: (event) => this.source === source && this.ingest(event),
+      event: (event) => {
+        if (this.source !== source) return;
+        const ingress = source instanceof DouyinLiveSource ? readSourceIngress(event) : null;
+        if (ingress && this.state === 'connected' && this.config?.platform === 'douyin'
+          && ingress.roomId === this.config.roomId) {
+          for (const listener of this.sourceListeners) {
+            try { listener(event, ingress); } catch (error) { console.error('[LiveHub] 公屏来源消费者出错：', error); }
+          }
+        }
+        this.ingest(event);
+      },
       stats: (stats) => {
         if (this.source !== source) return;
         this.stats = { ...this.stats, ...stats };
@@ -103,7 +157,12 @@ export class LiveHub {
       },
       state: (state, detail) => {
         if (this.source !== source) return;
+        const previous = this.state;
         this.state = state;
+        this.notifyOutputInputState(state, previous);
+        // FEAT-DSH-004：连接离开 connected 的真失效在真实 source 回调的同一同步段通知，
+        // 不等轮询；快速重连也不会恢复已撤销的授权（撤销是粘性的）。
+        if (previous === 'connected' && state !== 'connected') this.notifyStateLost(state, previous);
         if (detail?.loggedIn !== undefined) this.loggedIn = detail.loggedIn;
         if (state === 'connected') {
           this.connectedAt ??= Date.now();
@@ -120,9 +179,13 @@ export class LiveHub {
   disconnect(): LiveStatus {
     const source = this.source;
     this.source = null;
-    source?.stop();
+    const previous = this.state;
     this.config = null;
     this.state = 'idle';
+    this.notifyOutputInputState('idle', previous);
+    // 主动断开同样在同步段通知（与 source 回调同一语义，不产生第二种含义）
+    if (previous === 'connected') this.notifyStateLost('idle', previous);
+    source?.stop();
     this.connectedAt = undefined;
     this.loggedIn = false;
     this.room = undefined;
@@ -170,8 +233,24 @@ export class LiveHub {
     this.updateSink = sink;
   }
 
-  /** 平台事件入口；测试和调试注入也走这里 */
+  /**
+   * 平台事件入口：普通平台回调与重连补发走这里。首次本地接收不是实时资格证明——
+   * 这里不写受信进入标记，机器人来源按未知拒绝（FEAT-DSH-004 fail closed）；
+   * 事件本身照常进入直播整理管线，直播自身行为不变。
+   */
   ingest(event: LiveEvent, now = Date.now()): void {
+    this.processIngest(event, now, false);
+  }
+
+  /**
+   * 受控离线注入的唯一可信入口（控制台模拟观众/确定性测试）：先写内部进入证明，
+   * 再走同一条整理管线。只有这里收进的事件才可能成为机器人动作来源。
+   */
+  ingestTrustedInternal(event: LiveEvent, now = Date.now()): void {
+    this.processIngest(event, now, true);
+  }
+
+  private processIngest(event: LiveEvent, now: number, trustedInternal: boolean): void {
     let isUpdate = false;
     let out: LiveEvent = event;
 
@@ -198,6 +277,10 @@ export class LiveHub {
       if (this.seen.has(event.id)) return;
       this.remember(event.id);
     }
+
+    // FEAT-DSH-004 元数据：只有受控离线注入（内部可信入口）写进入证明与平台原始 id；
+    // 展示 id 的时间后缀只属于本进程；机器人来源必须用适配器原始 id，不换算、不重建。
+    if (!isUpdate && trustedInternal) markTrustedInternalIngress(out, { rawId: event.id, ingestedAt: now });
 
     this.count(event.kind, now);
     if (!isUpdate) {

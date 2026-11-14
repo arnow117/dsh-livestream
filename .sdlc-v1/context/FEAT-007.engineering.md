@@ -492,3 +492,28 @@ TypeScript 严格模式、Node 22 目标、React 18 + `dl-*` CSS、Cordis/DSH `0
 
 - **产品观察计划引用**：`.sdlc-v1/context/REQ-008.product.md` 的"发布后观察计划"。
 - **技术发布准备、实际结果、反馈证据与缺口**：尚未发布；正式播出⑤层证据以"专用屏幕全屏显示舞台"模式为前提，由主 Agent 在授权窗口安排。
+
+
+### 2026-11-13 主 Agent 接受有限真实补充 Validate：SC-002③④通过，⑤仍未执行
+
+**授权与写入范围**：用户明确“1 完全没问题 这类全部授权不用再问我。2后面搞你把能做的都做了吧”，据此在同类有限预算内继续真实 GLM、既有 yovoice 与本地舞台验收，不重复请求普通运行授权；正式播出与独立真实观众⑤仍按用户要求以后安排。此前“真实预算0”的文字保留为历史，不再代表本轮已授权的本地补验。机器人主线程持续拥有 T02 源码独占权，并明确同意完全隔离补验；本段写入另获其“仅末尾追加、保留原字节”的例外，未交还源码范围。
+
+**被测版本与适用边界**：唯一业务候选 `e87ac12dc9d9d44febdf9d21ae669e7d30caea0a`；归档 `/private/tmp/feat007-validate-Gk7wQ2mL/candidate` 始终只读。前期核对的91个生产/静态/使用说明文件与候选 blob 一致，14项既有测试 runner overlay 已在独立 Validate 记录披露。共享 checkout HEAD 仍为 `6eb5e3b17a295e7af27a000e98ee1ee1ee679fe6`，其中机器人 T02 未提交改动不属于本次被测候选。原课件28文件、1,435,956字节及模型/原数据只读。原有697项单测、差异覆盖率、宿主31/27、SC002五阶段与真实课件浏览器检查按同一候选/依赖证据引用，不为报告形式重复执行；本次结果不外推到机器人 WIP 或当前安装包。执行者为独立补充 Validate 的 GLM 会话，主 Agent 接收；宿主 task_status 实际返回 claudeAgent / glm-5.3-flash[1M] / effort=xhigh、executedModel=glm-5.3-flash，1M容量仍未验证。
+
+| 必要层 | 主 Agent 接受结果 | 可复验证据 |
+|---|---|---|
+| SC-002③ 真实GLM课程工具调用、按当前状态回答 | **PASS** | `/private/tmp/feat007-ev3-K9mR4tQw6e/evidence/` 的 `r8-real-glm-transcript.jsonl`、`r8-real-session-dump.json`、`r8-real-journey-events.jsonl`、`r8-real-final-state.json`。4个真实请求/响应配对；自主调用 `apply_livestream_course_action` 的精确参数为 `{"input":{"kind":"param","which":"force","value":30,"unit":"N"}}`，stop_reason=tool_use；原生 tool/call 与 tool/result.message.toolCallId、turn对应，isError=false，结果“课件已回读并应用该参数。”；课件 DOM force=30、力矩60.0对60.0、balanced=true；同session真实续答及状态回答明确30N×2m与60N×1m。 |
+| SC-002④ 旁白、真实yovoice回复、正式本地舞台音频与续课 | **PASS（本地真实浏览器音频）** | `/private/tmp/feat007-real6-D4pLz2vNb8/evidence/` 的 `r7-real-final-state.json`、`r7-real-media-log.json`、`r7-real-sse-said.json`、`r7-real-journey-events.jsonl`、`r7-real-yovoice-audio.jsonl`、`r7-real-cleanup.json`。30项断言全绿；2个真实GLM请求、2个真实yovoice任务均completed且有音频。 |
+| SC-002⑤ 同场正式播出、独立真实观众可见可听 | **NOT_RUN** | 用户明确以后安排；未操作平台账号、OBS、推流或正式开播。不以本地浏览器播放或程序化点击代替真人可听及观众端证据。 |
+
+**③主 Agent 独立复核**：读取实际 checker 后执行只读命令 `node /private/tmp/feat007-ev3-K9mR4tQw6e/runner/integrity8.mjs /private/tmp/feat007-ev3-K9mR4tQw6e/evidence real real`，exit0、33 passed/0 failed。另从原始 session/HTTP 文件核对精确JSON、HTTP tool id与原生callId一致、嵌套 `tool/result.data.message.toolCallId` 对应、结果isError=false且turn相同、动作与状态问答turn全部completed、恰4组请求/响应，全部通过。报告中曾写原生toolu前缀，实际落盘callId与HTTP相同，接收以原始文件为准。该轮TTS为0，文本回复不用于④证明。
+
+**④主 Agent 独立复核**：从实际 `r7-real-final-state.json` 读取30项断言全true、2model/2TTS与全部block0；读取cleanup确认preview与reply两个已准入任务均completed/hasAudio=true，fixture与yovoice真实exit code0；再查PID和共享端口无残留。生产preview先于任何模型请求，声音草稿不落盘；原生开场say完全收束后才切yovoice并GET回读。真实课件经浏览器点击解锁：lab.mp3旁白播放且currentTime增长，问答前pauseReason=speech，原旁白暂停于3.13s；实际48字GLM回答未经截短，经生产YovoiceClient取得814124字节wav，生产转码为68397字节mp3；SSE say与实际浏览器音频原始字节SHA-256一致（前缀3cdfaae3），8.48s播放后真实ended，同say id的 `/said` 明确audio=ended且watcher对应；原旁白从3.13s精确续播，currentTime再次增长。真实运行含收尾79.5s。程序化播放不构成人耳可听或独立观众证据。
+
+**运行装置失败与更正历史保留**：所有失败发生在本轮私有runner/隔离服务，未据此宣称产品缺陷。首轮SSE日志读取抢占返回流，主Agent零网络复现“Response body object should not be disturbed or locked”，后来改为只观察流经字节；首轮734次本机拒绝未到达远端，不计真实模型请求。第二轮模型登记缺失，且残留离线fixture退出覆写了HTTP转写和最终预算：其“8条完整转写”主张已撤回，旧精确JSON缺失保持erratum；本轮③的新证据不回填成旧窗口当时已有。第二轮只满足数量上限、首次yovoice失败后的停止纪律未满足，后由全局停止状态修正，并以21项负例覆盖共享端口、模型、任务与清理边界。后续依次修正了fixture路由标签缺失、开场在途say跨声音配置切换、watcher300ms传播与即时断言竞态、环境文件覆盖自有TTS地址等装置问题；真实前完整离线旅程、快慢响应与多段开场边界通过，日志按模式/进程隔离。共享地址错误请求均被守卫拦截，未触碰共享服务。
+
+**预算与收尾**：各窗口按GLM最多4请求、yovoice最多2任务且每段≤120字、并发1、真实窗口≤300s/270s停新工作执行；最后③补证窗口TTS预算0。累计真实GLM允许17次，734次额外模型尝试被本机守卫拒绝；真实yovoice共5任务（2 completed有音频、2 failed、1 cancelled），其他天气/搜索请求0。各runner记录运行区间合计606.2s，按逐窗口账本保留，不把多窗口合并冒称单一300s运行。最后③runner因未处理 `--help` 在检查入口时提前启动了已授权的一次窗口，实际4请求/0TTS证据完整；其收尾残留变量错误发生在33项完整性检查与fixture exit0之后，手动完成端口/PID核对并留证。业务及fixture运行91.6s，最后人工补充收尾核对在该窗口起点约154.8s完成，仍在300s上限内；不隐去该脚本缺陷，也不把初步计时当完整人工收尾时间。
+
+全部证据保留在历轮0700私有目录（主要成功目录见上表；运行装置裁定另见 `/private/tmp/feat007-live-primary-f8xkk0ni/effective-validation-correction.md`）。各轮旧目录及aborted归档保留；原模型/数据库/课件资产/安装lib与旧备份/共享服务/用户配置未修改。主Agent末次只读核对本轮自有端口57149/57151/57153及共享3080/3081/7390/8757无监听，fixture PID2409已退出。记录保存仅本文件末尾追加，原90308字节SHA-256 `ce209ccf7740544332b01b68debfd26e9775d2397329109f69e8623ca70fb51c` 保持；不commit/push。
+
+**生命周期与下一步**：接受③④补充验证，不接受“所有需求完成”或整体必要条件已满足的结论。⑤仍NOT_RUN，FEAT-007整体validation保持未通过、正式Review/release仍pending；本轮不修改state、不请求pass、不越级Review/Ship。后续在正式播出/独立观众窗口明确后补⑤；届时按实际集成候选及机器人接线影响核对既有证据适用性。REQ-005继续用户明确的暂缓，REQ-004私信/共享业务库前提仍待齐；它们未由本轮课程本地验收抵扣。

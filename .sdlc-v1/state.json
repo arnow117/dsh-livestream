@@ -203,6 +203,110 @@
         "commit": "e87ac12dc9d9d44febdf9d21ae669e7d30caea0a",
         "result": "fail"
       }
+    },
+    "FEAT-008": {
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-13T05:04:05Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-008.engineering.md",
+      "id": "FEAT-008",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-011",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "FEAT-008-T001": {
+          "depends_on": [],
+          "id": "FEAT-008-T001",
+          "status": "done",
+          "title": "独立受控公屏发送模块、固定DyHub副本适配及离线验证",
+          "updated_at": "2026-11-13T22:11:04Z"
+        },
+        "FEAT-008-T002": {
+          "depends_on": [
+            "FEAT-008-T001"
+          ],
+          "id": "FEAT-008-T002",
+          "status": "done",
+          "title": "既有Drawer、owner与Agent/真实事件纵向接线及最小端到端",
+          "updated_at": "2026-11-14T07:42:55Z"
+        }
+      },
+      "updated_at": "2026-11-14T07:42:55Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
+    },
+    "FEAT-009": {
+      "acceptance": {
+        "plan": {
+          "algorithm": "sha256",
+          "at": "2026-11-14T08:36:41Z",
+          "documents": {
+            ".sdlc-v1/context/FEAT-009.engineering.md": "85c269c138e08945dbb6b4983864e79b967dbf587e71a1c378ff49fb247240f5",
+            ".sdlc-v1/context/REQ-012.product.md": "9a74072f02084305687fb0018d704479e991c41feb36693e50718c1c765a7dfc"
+          },
+          "normalization": "context-v1"
+        }
+      },
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-13T16:25:01Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-009.engineering.md",
+      "id": "FEAT-009",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-012",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "FEAT-009-T001": {
+          "depends_on": [],
+          "id": "FEAT-009-T001",
+          "status": "in_progress",
+          "title": "受控资料执行核心、共享artifact与独立Robot私有host",
+          "updated_at": "2026-11-13T16:34:39Z"
+        },
+        "FEAT-009-T002": {
+          "depends_on": [
+            "FEAT-009-T001"
+          ],
+          "id": "FEAT-009-T002",
+          "status": "todo",
+          "title": "原Drawer与真实私有宿主接线及同Base消费修改完整旅程",
+          "updated_at": "2026-11-13T16:25:39Z"
+        },
+        "FEAT-009-T003": {
+          "depends_on": [],
+          "id": "FEAT-009-T003",
+          "status": "done",
+          "title": "原Drawer同记录四字段私有读取增量",
+          "updated_at": "2026-11-14T04:41:19Z"
+        }
+      },
+      "updated_at": "2026-11-14T08:36:41Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
     }
   },
   "requirements": {
@@ -250,7 +354,7 @@
     "REQ-004": {
       "created_at": "2026-11-10T06:11:54Z",
       "depends_on": [],
-      "description": "保留真实获准抖音私聊收/回复与用户主动登记手机号、人脸照片的目标；两Agent以同Skill和真实授权API直读写唯一共享飞书业务DB，登记独立于T1在线。当前无企业号/enterprise.im，可用私信路径和共享飞书合同待核实，作为条件性待办保持captured，不进入当前研发。",
+      "description": "保留真实获准抖音私聊收取与正确回复；登记独立于私信和T1，用户名和联系方式必填，照片和意向商品可选，两Agent以同版受权Skill直读写唯一共享飞书Base。公屏回复由REQ-011独立承接；本需求的获准可达入口、真实私信、扩展映射与executor、私有宿主及两侧共享消费仍待齐，保持captured，不以Demo或接口存在宣称完成。",
       "domain": "douyin-private-messaging",
       "feature_id": null,
       "id": "REQ-004",
@@ -258,7 +362,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-004.product.md",
       "status": "captured",
       "title": "抖音私信互动与访客登记",
-      "updated_at": "2026-11-10T14:19:34Z"
+      "updated_at": "2026-11-13T12:22:32Z"
     },
     "REQ-005": {
       "created_at": "2026-11-10T06:27:24Z",
@@ -347,6 +451,48 @@
       "status": "released",
       "title": "直播会话的工作目录与 Skill 设置",
       "updated_at": "2026-11-12T08:07:15Z"
+    },
+    "REQ-011": {
+      "created_at": "2026-11-13T05:03:47Z",
+      "depends_on": [
+        "REQ-002",
+        "REQ-003"
+      ],
+      "description": "从REQ-004公开互动来源独立交付公屏文字、欢迎与感谢；固定授权账号/房间，默认关闭，保留匿名输入与未知结果保护；不包含登记、私信、挂载或Robot。",
+      "domain": "douyin-public-chat",
+      "feature_id": "FEAT-008",
+      "id": "REQ-011",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-011.product.md",
+      "status": "in_delivery",
+      "title": "抖音公屏文字回复、进场欢迎与礼物感谢",
+      "updated_at": "2026-11-14T07:42:55Z"
+    },
+    "REQ-012": {
+      "acceptance": {
+        "spec_ready": {
+          "algorithm": "sha256",
+          "at": "2026-11-13T15:18:03Z",
+          "documents": {
+            ".sdlc-v1/context/REQ-012.product.md": "9a74072f02084305687fb0018d704479e991c41feb36693e50718c1c765a7dfc"
+          },
+          "normalization": "context-v1"
+        }
+      },
+      "created_at": "2026-11-13T15:17:42Z",
+      "depends_on": [
+        "REQ-003",
+        "REQ-010"
+      ],
+      "description": "由REQ-004派生，owner在原直播配置面明确授权确切原记录，Live和Robot私有组件按同版共享合同读取唯一Base四字段；owner/受权Live在共同受管协调下有限修改并双侧回读，Robot只读。保留原私信、直播入口、原提交与父需求最终验收，独立于T1和公开模型。",
+      "domain": "visitor-profile",
+      "feature_id": "FEAT-009",
+      "id": "REQ-012",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-012.product.md",
+      "status": "in_delivery",
+      "title": "同一 Base 四字段私有资料消费与受管修改",
+      "updated_at": "2026-11-14T04:41:19Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

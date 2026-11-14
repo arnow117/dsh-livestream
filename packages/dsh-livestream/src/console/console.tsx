@@ -1,3 +1,4 @@
+import { RegistrationSettingsPanel } from './RegistrationSettingsPanel';
 /**
  * 主人控制台：连直播间、开播下播、OBS 地址、换模板和角色、舞台预览、看弹幕、跟她说话、模拟观众。
  *
@@ -15,6 +16,9 @@ import type { CourseStateView } from '../shared/course';
 import { parseDouyinRoomId } from '../shared/liveTarget';
 import { usesNewConsole } from '../body/voices';
 import { SessionContextSettingsPanel } from './SessionContextSettingsPanel';
+import { RobotSettingsPanel, type RobotLiveHostView } from './RobotSettingsPanel';
+import { PublicChatSettingsPanel, type PublicChatView } from '../publicChat/PublicChatSettingsPanel';
+import type { PublicChatSettings } from '../publicChat/settings';
 
 // ── DSH 服务 ──────────────────────────────────────────
 
@@ -119,6 +123,9 @@ export interface HostState {
   settings: { livePlatform: 'bilibili' | 'douyin'; douyinRoomId: string; roomId: number | null; character: string; template: string; voice: string; tts: TtsSettings; readOnlyQueries: QuerySettings; stagePort: number; idleAfterSec: number; gameChatGapSec?: number; distillModel: string; ownRooms: number[]; broadcast: boolean; areaId: number | null; liveTitle: string; pushProtocol: 'srt' | 'rtmp'; streamKbps: number; asrPython: string; asrModel: string; boardText: string; noticeText?: string; pace?: { welcomeSec?: number | 'off'; thanksSec?: number; followSec?: number; chatPicks?: number }; blocked?: BlockedViewer[] };
   /** FEAT-006：会话上下文视图（saved/health/active），内部 bindings 不回显 */
   sessionContext?: SessionContextStateView;
+  /** FEAT-DSH-004：可选机器人联动视图（保存配置/装配状态/反馈与任务历史） */
+  robot?: RobotLiveHostView;
+  publicChatSettings?: PublicChatSettings;
   stageUrl: string;
   characters: PackEntry[];
   templates: PackEntry[];
@@ -135,6 +142,12 @@ async function api<T = HostState>(path: string, body?: unknown, signal?: AbortSi
   if (!res.ok || data.ok === false) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data as T;
 }
+
+const readPublicChat = async () => (await api<{ publicChat: PublicChatView }>('public-chat')).publicChat;
+const publicChatAction = async (input: Record<string, unknown>) =>
+  api<{ result?: { status: string; reason?: string } }>('public-chat', input);
+const publicChatTarget = (state: HostState) => state.settings.livePlatform === 'douyin'
+  ? `douyin:${state.settings.douyinRoomId}` : `bilibili:${state.settings.roomId ?? ''}`;
 
 export function CoursePanel({ host, setHost }: { host: HostState | null; setHost: React.Dispatch<React.SetStateAction<HostState | null>> }) {
   const [rootId, setRootId] = useState('');
@@ -1033,7 +1046,15 @@ export function Console() {
               <SecretField label="GLM Coding Plan API Key" ref_={SECRET_REFS.glm} configured={secrets.glm ?? null} hint="GLM Coding Plan API Key" />
               <p>凭据：{host?.queryCredential === 'error' ? '读取失败' : (secrets.glm ?? (host?.queryCredential === 'configured')) ? '已配置' : '未配置'}；服务：{host?.queryService === 'available' ? '上次可用' : host?.queryService === 'incompatible' ? '返回不兼容' : '未验证'}</p>
             </section>
+            <RegistrationSettingsPanel />
             {host?.sessionContext && <SessionContextSettingsPanel view={host.sessionContext} onSaved={setHost} />}
+            {host?.robot && <RobotSettingsPanel view={host.robot} onSaved={setHost} />}
+            {host?.publicChatSettings && <PublicChatSettingsPanel saved={host.publicChatSettings} targetKey={publicChatTarget(host)} onView={readPublicChat} onAction={publicChatAction} onSave={async (value) => {
+              const target = publicChatTarget(host);
+              const updated = await api('settings', { publicChat: value });
+              setHost((previous) => previous && publicChatTarget(previous) === target
+                ? { ...previous, publicChatSettings: updated.publicChatSettings } : previous);
+            }} />}
             {!douyin && <>
             <h3>推流到 B 站</h3>
             <ObsCheck />
@@ -1651,6 +1672,11 @@ export const CONSOLE_CSS = `
 .dl-voice .dl-field > label{align-items:stretch;flex-direction:column}
 .dl-voice .dl-field > label > input,.dl-voice .dl-field > label > select,.dl-voice .dl-field > label > textarea{box-sizing:border-box;width:100%;min-width:0}
 .dl-voice .dl-row{flex-wrap:wrap}
+.dl-registration > label{align-items:stretch;flex-direction:column}
+.dl-registration > label > input{box-sizing:border-box;width:100%;min-width:0}
+.dl-registration .dl-row{flex-wrap:wrap}
+.dl-registration :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
+.dl-registration p{overflow-wrap:anywhere}
 .dl-room :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
 .dl-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dl-dim);margin:8px 0 2px}
 .dl-check input{flex:none}

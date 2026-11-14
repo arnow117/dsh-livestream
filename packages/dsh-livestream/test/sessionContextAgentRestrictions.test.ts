@@ -77,6 +77,10 @@ function createScopedRegistry() {
       chainLayers(scope: string): FakeLayer[] {
         return chain(scope).filter((layer) => layer !== scopes.get('global')!);
       },
+      /** 与 installed dsh-tools 一致：peek(scope) 返回该 scope 自身层对象（chainLayers 含同一实例） */
+      peek(scope: string): FakeLayer {
+        return scopes.get(scope)!;
+      },
     },
     view(scope: string) {
       const layers = chain(scope);
@@ -200,6 +204,7 @@ describe('managed session tool restrictions', () => {
         layers: {
           global: scopes.get('global')!,
           chainLayers: () => registry.layers.chainLayers('agent'),
+          peek: () => registry.layers.peek('agent'),
         },
       },
     },
@@ -572,6 +577,86 @@ describe('managed session tool restrictions', () => {
     const notes = loggerWarn.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
     expect(notes).toContain('限制');
     expect(runtime.sessionTools.verify?.(sessionId)?.bound).toBe(false);
+    sessionContext.clearActiveSessionsForTest();
+    agent.resetSessionBindingStateForTest();
+  });
+
+  it('R3: a managed session with robot enabled creates/reconfigures via the inherited-only allow; revoke never borrows a same-name global', async () => {
+    const robotLive = await import('../src/dsh/robotLive');
+    robotLive.resetRobotLiveStateForTest();
+    const robotConfig = { version: 'robot-live/1', enabled: true, liveSessionId: 'robot-managed', bindingId: 'binding-1', allowedActions: ['greeting'], rules: [], cooldownMs: 1000 };
+    // robot 替身：caller 在 agent 自身 scope 注册四个工具（与 Q caller 相同的 own-scope 语义）
+    let ownRegistered = 0;
+    // 镜像 Q caller 的真实撤销语义：caller 的 own-scope 注册挂在 binding 的 grants 上，
+    // binding.dispose 时一并撤销（fixture.ts disposeLiveBinding 遍历 host.grants）
+    let grantCallerDisposers: Array<() => void> = [];
+    const robotStub = {
+      async readRobotLivePolicy() { return { configRevision: 5, enabled: true, cooldownMs: 10000, authoritySha: '0'.repeat(64), hasAccepted: true }; },
+      async attachRobotLiveBinding() {
+        const handle = {
+          description: { version: 'robot-live/1', journalSchemaVersion: 2, configRevision: 6 },
+          async capture() { return { receiptId: 'r1' }; },
+          dispose() {
+            // Q disposeLiveBinding：撤销全部 grants（caller 的 own-scope 注册随撤销移除）
+            for (const dispose of grantCallerDisposers.splice(0)) dispose();
+          },
+        };
+        return handle;
+      },
+      attachRobotLiveRule() {
+        return { async evaluate() { return null; }, async get() { return null; }, cancel() { return null; }, dispose() {} };
+      },
+      bindRobotLiveMessage() {},
+      attachRobotLiveCaller(agentCtx: { tools: { register(definition: any): () => void } }) {
+        const disposers = ['robot_task_capabilities', 'robot_task_submit', 'robot_task_get', 'robot_task_cancel'].map((name) =>
+          agentCtx.tools.register({ name, execute: async () => 'unused' }),
+        );
+        ownRegistered += disposers.length;
+        grantCallerDisposers.push(...disposers);
+        return () => {
+          for (const dispose of disposers) dispose();
+          grantCallerDisposers = grantCallerDisposers.filter((entry) => !disposers.includes(entry));
+        };
+      },
+    };
+    robotLive.setRobotModuleOverrideForTest(robotStub as never);
+    runtime.settings.robotLive = robotConfig;
+    // 传入宿主 ctx（生产由插件 effect 传入；缺 ctx 时装配会因 hostContext 为空而跳过）
+    await robotLive.applyRobotLiveSettings({} as never);
+    // 受管会话创建（robot 已启用、own 工具已随 agent/created 注册）：initial restriction 必须成功——
+    // 修复前 allow 混入 own 名称，实际 SDK 的 restrict 会抛 unknown-global-tool 并回滚创建
+    const sessionId = 'robot-managed';
+    sessionContext.registerActiveSession(makeSnapshot(sessionId) as never, { ok: true });
+    sessionContext.registerObservationSession(sessionId);
+    const unbind: Array<() => void> = [];
+    await runtime.sessionTools.onCreated!({ agent: agentCtxFor(sessionId, unbind), source: 'create' });
+    expect(ownRegistered).toBe(4);
+    // allow 只含继承层 preset 工具；robot 工具以 own scope 豁免限制可见
+    const restriction = scopes.get('agent')!.restrictions;
+    expect(restriction).toHaveLength(1);
+    expect([...restriction[0].allow!].sort()).toEqual(presetNames());
+    expect([...restriction[0].allow!]).not.toContain('robot_task_submit');
+    expect(registry.get('robot_task_submit', 'agent')).toBeDefined();
+    expect(runtime.sessionTools.verify?.(sessionId)?.bound).toBe(true);
+    // 重配：刷新路径成功且不锁定（修复前同一路径抛错并进入 refreshLockedSessions）
+    runtime.settings.robotLive = { ...robotConfig, cooldownMs: 2000 };
+    await robotLive.applyRobotLiveSettings();
+    expect(runtime.sessionTools.verify?.(sessionId)).toEqual({ bound: true });
+    expect(ownRegistered).toBe(8); // 重装路径先撤旧 caller 再装新（注册数翻倍）
+    expect(registry.get('robot_task_submit', 'agent')).toBeDefined();
+    // 停用：own 注册随撤销移除；之后出现的同名 global 不借 allow 获准
+    runtime.settings.robotLive = { ...robotConfig, enabled: false, bindingId: null, liveSessionId: null, allowedActions: [], rules: [] };
+    await robotLive.applyRobotLiveSettings();
+    // 停用撤销 binding 时 grants 一并撤销（Q disposeLiveBinding 语义）：own 注册随之移除
+    expect(registry.get('robot_task_submit', 'agent')).toBeUndefined();
+    registry.register('robot_task_submit', { name: 'robot_task_submit', execute: async () => 'global' }, 'global');
+    expect(registry.get('robot_task_submit', 'agent')).toBeUndefined();
+    // 清理：移除同名 global，恢复无 robot 状态，不影响其他用例
+    scopes.get('global')!.tools.delete('robot_task_submit');
+    runtime.settings.robotLive = undefined;
+    robotLive.setRobotModuleOverrideForTest(null);
+    robotLive.resetRobotLiveStateForTest();
+    for (const dispose of unbind.splice(0).reverse()) dispose();
     sessionContext.clearActiveSessionsForTest();
     agent.resetSessionBindingStateForTest();
   });

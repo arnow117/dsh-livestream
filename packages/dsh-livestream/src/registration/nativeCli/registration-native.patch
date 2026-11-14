@@ -1,0 +1,1186 @@
+--- /dev/null
++++ b/cmd/registration-fixture-setup/main.go
+@@ -0,0 +1,61 @@
++//go:build registration_fixture
++
++package main
++
++import (
++	"context"
++	"crypto/rand"
++	"encoding/base64"
++	"fmt"
++	"os"
++	"path/filepath"
++	"time"
++
++	"github.com/larksuite/cli/internal/auth"
++	"github.com/larksuite/cli/internal/dpop"
++	"github.com/larksuite/cli/internal/keychain"
++	"github.com/larksuite/cli/internal/keysigner"
++)
++
++func run() error {
++	root := keychain.StorageDir(keychain.LarkCliService)
++	if root == "" {
++		return fmt.Errorf("fixture storage unavailable")
++	}
++	secret := make([]byte, 32)
++	if _, err := rand.Read(secret); err != nil {
++		return err
++	}
++	defer clear(secret)
++	if err := keychain.Set(keychain.LarkCliService, "dpop:software:unlock:v1", base64.StdEncoding.EncodeToString(secret)); err != nil {
++		return err
++	}
++	signer, err := keysigner.NewSoftwareSigner(filepath.Join(root, "keysigner", keysigner.SoftwareSignerName), func(context.Context) ([]byte, error) { return append([]byte(nil), secret...), nil })
++	if err != nil {
++		return err
++	}
++	store := dpop.NewKeyStoreWithSigner(nil, signer)
++	key, err := store.EnsureContext(context.Background(), "fixture-key")
++	if err != nil {
++		return err
++	}
++	if err := store.Save(key); err != nil {
++		return err
++	}
++	thumbprint, err := key.Thumbprint()
++	if err != nil {
++		return err
++	}
++	if err := keychain.Set(keychain.LarkCliService, "appsecret:app1", "synthetic-app-secret"); err != nil {
++		return err
++	}
++	now := time.Now()
++	return auth.SetStoredToken(&auth.StoredUAToken{AppId: "app1", UserOpenId: "user1", AccessToken: "synthetic-bound-token", RefreshToken: "synthetic-bound-refresh", ExpiresAt: now.Add(time.Hour).UnixMilli(), RefreshExpiresAt: now.Add(2 * time.Hour).UnixMilli(), Scope: "base:record:read base:record:update base:record:create", GrantedAt: now.UnixMilli(), TokenType: auth.StoredTokenTypeDPoP, DPoPKeyID: key.ID(), DPoPJKT: thumbprint, DPoPKeySecurityLevel: string(key.SecurityLevel())})
++}
++
++func main() {
++	if err := run(); err != nil {
++		fmt.Fprintln(os.Stderr, "fixture setup failed")
++		os.Exit(1)
++	}
++}
+--- /dev/null
++++ b/cmd/registration-native/fixture_env_prod.go
+@@ -0,0 +1,11 @@
++//go:build !registration_fixture
++
++package main
++
++import (
++	"fmt"
++	"os"
++)
++
++func fixtureEnvironment() map[string]string { return nil }
++func reportFailure(error)                   { fmt.Fprintln(os.Stderr, "registration invocation failed") }
+--- /dev/null
++++ b/cmd/registration-native/fixture_env_testbuild.go
+@@ -0,0 +1,36 @@
++//go:build registration_fixture
++
++package main
++
++import (
++	"errors"
++	"fmt"
++	"os"
++
++	"github.com/larksuite/cli/errs"
++)
++
++func fixtureEnvironment() map[string]string {
++	values := map[string]string{}
++	for _, name := range []string{"REGISTRATION_FIXTURE_ADDR", "REGISTRATION_FIXTURE_CA", "REGISTRATION_FIXTURE_STORE"} {
++		values[name] = os.Getenv(name)
++	}
++	return values
++}
++
++func reportFailure(err error) {
++	for depth := 0; err != nil && depth < 8; depth++ {
++		if err.Error() == "fixture storage unavailable" {
++			fmt.Fprintln(os.Stderr, "fixture error type=fixture_storage_unavailable")
++		}
++		if errors.Is(err, os.ErrPermission) {
++			fmt.Fprintln(os.Stderr, "fixture error type=permission")
++		}
++		if problem, ok := errs.ProblemOf(err); ok {
++			fmt.Fprintf(os.Stderr, "fixture error type=%T category=%s subtype=%s\n", err, problem.Category, problem.Subtype)
++		} else {
++			fmt.Fprintf(os.Stderr, "fixture error type=%T\n", err)
++		}
++		err = errors.Unwrap(err)
++	}
++}
+--- /dev/null
++++ b/cmd/registration-native/main.go
+@@ -0,0 +1,401 @@
++package main
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"os"
++	"os/signal"
++	"path/filepath"
++	"regexp"
++	"strconv"
++	"strings"
++	"syscall"
++	"unicode/utf8"
++
++	"github.com/larksuite/cli/cmd"
++	"github.com/larksuite/cli/internal/cmdutil"
++	"github.com/larksuite/cli/internal/core"
++	"github.com/larksuite/cli/internal/transport"
++)
++
++const maxInput = 1 << 20
++
++var identifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
++
++type request struct {
++	Action string          `json:"action"`
++	Patch  json.RawMessage `json:"patch"`
++}
++
++// binding is written only by the trusted host into the invocation directory.
++type binding struct {
++	Action          string   `json:"action"`
++	Profile         string   `json:"profile"`
++	Brand           string   `json:"brand"`
++	Base            string   `json:"base"`
++	Table           string   `json:"table"`
++	Record          string   `json:"record"`
++	Fields          []string `json:"fields"`
++	WritableFields  []string `json:"writableFields"`
++	NumericFields   []string `json:"numericFields"`
++	PhotoField      string   `json:"photoField"`
++	AttachmentToken string   `json:"attachmentToken,omitempty"`
++	AttachmentExtra string   `json:"attachmentExtra,omitempty"`
++}
++
++func hex4(data []byte) (uint16, bool) {
++	if len(data) < 4 {
++		return 0, false
++	}
++	var value uint16
++	for _, char := range data[:4] {
++		value <<= 4
++		switch {
++		case char >= '0' && char <= '9':
++			value += uint16(char - '0')
++		case char >= 'a' && char <= 'f':
++			value += uint16(char - 'a' + 10)
++		case char >= 'A' && char <= 'F':
++			value += uint16(char - 'A' + 10)
++		default:
++			return 0, false
++		}
++	}
++	return value, true
++}
++
++func validUTF16Escapes(data []byte) bool {
++	inString := false
++	for i := 0; i < len(data); i++ {
++		if !inString {
++			if data[i] == '"' {
++				inString = true
++			}
++			continue
++		}
++		if data[i] == '"' {
++			inString = false
++			continue
++		}
++		if data[i] != '\\' {
++			continue
++		}
++		i++
++		if i >= len(data) {
++			return false
++		}
++		if data[i] != 'u' {
++			continue
++		}
++		value, ok := hex4(data[i+1:])
++		if !ok {
++			return false
++		}
++		i += 4
++		if value >= 0xdc00 && value <= 0xdfff {
++			return false
++		}
++		if value >= 0xd800 && value <= 0xdbff {
++			if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
++				return false
++			}
++			low, ok := hex4(data[i+3:])
++			if !ok || low < 0xdc00 || low > 0xdfff {
++				return false
++			}
++			i += 6
++		}
++	}
++	return !inString
++}
++
++func validateJSONValue(decoder *json.Decoder, depth int) error {
++	if depth > 32 {
++		return errors.New("invalid input")
++	}
++	token, err := decoder.Token()
++	if err != nil {
++		return err
++	}
++	delim, ok := token.(json.Delim)
++	if !ok {
++		return nil
++	}
++	switch delim {
++	case '{':
++		seen := map[string]bool{}
++		for decoder.More() {
++			key, err := decoder.Token()
++			if err != nil {
++				return err
++			}
++			name, ok := key.(string)
++			if !ok || seen[name] {
++				return errors.New("invalid input")
++			}
++			seen[name] = true
++			if err := validateJSONValue(decoder, depth+1); err != nil {
++				return err
++			}
++		}
++	case '[':
++		for decoder.More() {
++			if err := validateJSONValue(decoder, depth+1); err != nil {
++				return err
++			}
++		}
++	default:
++		return errors.New("invalid input")
++	}
++	_, err = decoder.Token()
++	return err
++}
++
++func decodeJSON(data []byte, result any) error {
++	if len(data) > maxInput || !utf8.Valid(data) || !validUTF16Escapes(data) {
++		return errors.New("invalid input")
++	}
++	check := json.NewDecoder(bytes.NewReader(data))
++	if err := validateJSONValue(check, 0); err != nil {
++		return errors.New("invalid input")
++	}
++	if _, err := check.Token(); err != io.EOF {
++		return errors.New("invalid input")
++	}
++	dec := json.NewDecoder(bytes.NewReader(data))
++	dec.DisallowUnknownFields()
++	if err := dec.Decode(result); err != nil {
++		return errors.New("invalid input")
++	}
++	return nil
++}
++
++func decodeInput() (request, error) {
++	var result request
++	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxInput+1))
++	if err != nil || len(data) > maxInput {
++		return result, errors.New("invalid input")
++	}
++	err = decodeJSON(data, &result)
++	return result, err
++}
++
++func loadBinding() (binding, error) {
++	var result binding
++	fd, err := syscall.Open("registration-binding.json", syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
++	if err != nil {
++		return result, errors.New("binding unavailable")
++	}
++	file := os.NewFile(uintptr(fd), "registration-binding.json")
++	defer file.Close()
++	info, err := file.Stat()
++	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0400 || info.Size() > 16384 {
++		return result, errors.New("binding unavailable")
++	}
++	stat, ok := info.Sys().(*syscall.Stat_t)
++	if !ok || stat.Uid != uint32(os.Getuid()) || stat.Nlink != 1 {
++		return result, errors.New("binding unavailable")
++	}
++	data, err := io.ReadAll(io.LimitReader(file, 16385))
++	if err != nil || len(data) > 16384 {
++		return result, errors.New("binding unavailable")
++	}
++	err = decodeJSON(data, &result)
++	return result, err
++}
++
++func run() int {
++	if len(os.Args) == 2 && os.Args[1] == "--version" {
++		fmt.Fprintln(os.Stdout, "registration-native 1.0.99-derived")
++		return 0
++	}
++	if len(os.Args) != 1 {
++		fmt.Fprintln(os.Stderr, "invalid invocation")
++		return 2
++	}
++	keep := map[string]string{}
++	for _, name := range []string{"HOME", "USER", "PATH", "LANG", "TMPDIR", "LARKSUITE_CLI_CONFIG_DIR"} {
++		if value, ok := os.LookupEnv(name); ok {
++			keep[name] = value
++		}
++	}
++	for name, value := range fixtureEnvironment() {
++		keep[name] = value
++	}
++	if keep["LARKSUITE_CLI_CONFIG_DIR"] == "" {
++		return 2
++	}
++	os.Clearenv()
++	for name, value := range keep {
++		_ = os.Setenv(name, value)
++	}
++	req, err := decodeInput()
++	if err != nil {
++		fmt.Fprintln(os.Stderr, "invalid invocation")
++		return 2
++	}
++	bound, err := loadBinding()
++	if err != nil || req.Action != bound.Action || !identifier.MatchString(bound.Profile) || (bound.Brand != "feishu" && bound.Brand != "lark") {
++		fmt.Fprintln(os.Stderr, "invalid invocation")
++		return 2
++	}
++	if !identifier.MatchString(bound.Base) || !identifier.MatchString(bound.Table) || !identifier.MatchString(bound.Record) {
++		fmt.Fprintln(os.Stderr, "invalid invocation")
++		return 2
++	}
++	allowed := map[string]bool{}
++	for _, field := range bound.Fields {
++		if !identifier.MatchString(field) || allowed[field] {
++			fmt.Fprintln(os.Stderr, "invalid invocation")
++			return 2
++		}
++		allowed[field] = true
++	}
++	if len(bound.Fields) == 0 || len(bound.Fields) > 32 {
++		fmt.Fprintln(os.Stderr, "invalid invocation")
++		return 2
++	}
++	writable := map[string]bool{}
++	for _, field := range bound.WritableFields {
++		if !allowed[field] || writable[field] {
++			return 2
++		}
++		writable[field] = true
++	}
++	numeric := map[string]bool{}
++	for _, field := range bound.NumericFields {
++		if !writable[field] || numeric[field] {
++			return 2
++		}
++		numeric[field] = true
++	}
++	if bound.PhotoField != "" && (!writable[bound.PhotoField] || numeric[bound.PhotoField]) {
++		return 2
++	}
++	if req.Action != "attachment_url" && (bound.AttachmentToken != "" || bound.AttachmentExtra != "") {
++		return 2
++	}
++	common := []string{"--format", "json", "--profile", bound.Profile, "--as", "user"}
++	basePath := "/open-apis/base/v3/bases/" + bound.Base + "/tables/" + bound.Table
++	method, endpoint, query := "", "", ""
++	var args []string
++	var payload []byte
++	switch req.Action {
++	case "user_info":
++		if len(req.Patch) != 0 {
++			return 2
++		}
++		method, endpoint = "GET", "/open-apis/authen/v1/user_info"
++		args = append([]string{"api", method, endpoint}, common...)
++	case "record_get":
++		if len(req.Patch) != 0 {
++			return 2
++		}
++		method, endpoint = "POST", basePath+"/records/batch_get"
++		args = []string{"base", "+record-get", "--base-token", bound.Base, "--table-id", bound.Table, "--record-id", bound.Record}
++		for _, field := range bound.Fields {
++			args = append(args, "--field-id", field)
++		}
++		args = append(args, common...)
++	case "attachment_metadata":
++		if len(req.Patch) != 0 {
++			return 2
++		}
++		method, endpoint = "POST", basePath+"/get_attachments"
++		payload, _ = json.Marshal(map[string][]string{"record_id_list": {bound.Record}})
++		args = []string{"api", method, endpoint, "--data", "@registration-payload.json"}
++		args = append(args, common...)
++	case "attachment_url":
++		if len(req.Patch) != 0 || !identifier.MatchString(bound.AttachmentToken) || len(bound.AttachmentExtra) > 8192 || strings.IndexFunc(bound.AttachmentExtra, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
++			return 2
++		}
++		method, endpoint = "GET", "/open-apis/drive/v1/medias/batch_get_tmp_download_url"
++		parameters := map[string]interface{}{"file_tokens": []string{bound.AttachmentToken}}
++		values := url.Values{"file_tokens": []string{bound.AttachmentToken}}
++		if bound.AttachmentExtra != "" {
++			parameters["extra"] = bound.AttachmentExtra
++			values.Set("extra", bound.AttachmentExtra)
++		}
++		query = values.Encode()
++		encoded, err := json.Marshal(parameters)
++		if err != nil {
++			return 2
++		}
++		args = []string{"api", method, endpoint, "--params", string(encoded)}
++		args = append(args, common...)
++	case "record_patch":
++		var body struct {
++			Fields map[string]json.RawMessage `json:"fields"`
++		}
++		if len(req.Patch) == 0 || decodeJSON(req.Patch, &body) != nil || len(body.Fields) == 0 || len(writable) == 0 {
++			return 2
++		}
++		for key, raw := range body.Fields {
++			if !writable[key] {
++				return 2
++			}
++			if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
++				continue
++			}
++			if key == bound.PhotoField {
++				var attachments []struct {
++					FileToken string `json:"file_token"`
++				}
++				if decodeJSON(raw, &attachments) != nil || len(attachments) != 1 || !identifier.MatchString(attachments[0].FileToken) {
++					return 2
++				}
++			} else if numeric[key] {
++				value, err := strconv.ParseInt(string(raw), 10, 64)
++				if err != nil || value <= 0 || value > 9007199254740991 {
++					return 2
++				}
++			} else {
++				var value string
++				if json.Unmarshal(raw, &value) != nil {
++					return 2
++				}
++			}
++		}
++		method = "PUT"
++		endpoint = "/open-apis/bitable/v1/apps/" + bound.Base + "/tables/" + bound.Table + "/records/" + bound.Record
++		payload = req.Patch
++		args = []string{"api", method, endpoint, "--data", "@registration-payload.json"}
++		args = append(args, common...)
++	default:
++		return 2
++	}
++	if len(payload) != 0 {
++		file, err := os.OpenFile(filepath.Join(".", "registration-payload.json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
++		if err != nil {
++			return 2
++		}
++		_, writeErr := file.Write(payload)
++		closeErr := file.Close()
++		defer os.Remove("registration-payload.json")
++		if writeErr != nil || closeErr != nil {
++			return 2
++		}
++	}
++	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
++	defer cancel()
++	if err := transport.ConfigureRegistrationOperation(ctx, bound.Brand, method, endpoint, query); err != nil {
++		return 2
++	}
++	http.DefaultTransport = &transport.RegistrationRequestGuard{Base: transport.Shared()}
++	http.DefaultClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
++	inv := cmdutil.InvocationContext{Profile: bound.Profile, ProfileSource: core.ProfileFromFlag}
++	root := cmd.Build(ctx, inv, cmd.WithoutPlugins(), cmd.WithInvocationArgs(args))
++	if err := root.ExecuteContext(ctx); err != nil {
++		reportFailure(err)
++		return 1
++	}
++	return 0
++}
++
++func main() { os.Exit(run()) }
+--- /dev/null
++++ b/cmd/registration-native/main_test.go
+@@ -0,0 +1,60 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestRegistrationStrictInput(t *testing.T) {
++	for _, input := range []string{
++		`{"action":"record_get","base":"other"}`,
++		`{"action":"record_get","action":"record_patch"}`,
++		`{"action":"record_patch","patch":{"field":"\ud800"}}`,
++		`{"action":"record_patch","patch":{"field":"\udc00"}}`,
++		`{"action":"record_get"} {}`,
++	} {
++		var decoded request
++		if decodeJSON([]byte(input), &decoded) == nil {
++			t.Errorf("accepted malformed input %s", input)
++		}
++	}
++	var decoded request
++	if err := decodeJSON([]byte(`{"action":"record_patch","patch":{"field":"\ud83d\ude00"}}`), &decoded); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestRegistrationBindingRejectsSymlinkAndWrongMode(t *testing.T) {
++	dir := t.TempDir()
++	old, err := os.Getwd()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Chdir(dir); err != nil {
++		t.Fatal(err)
++	}
++	defer os.Chdir(old)
++	content := []byte(`{"action":"record_get","profile":"p","brand":"feishu","base":"b","table":"t","record":"r","fields":["f"],"writableFields":[]}`)
++	if err := os.WriteFile("registration-binding.json", content, 0600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := loadBinding(); err == nil {
++		t.Fatal("accepted writable binding")
++	}
++	if err := os.Chmod("registration-binding.json", 0400); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := loadBinding(); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Rename("registration-binding.json", "original.json"); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Symlink(filepath.Join(dir, "original.json"), "registration-binding.json"); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := loadBinding(); err == nil {
++		t.Fatal("accepted symlink binding")
++	}
++}
+--- a/internal/cmdutil/factory_default.go
++++ b/internal/cmdutil/factory_default.go
+@@ -229,7 +229,7 @@
+ 		client := &http.Client{
+ 			Transport:     transport.NewHTTPPolicyRouter(platform, external),
+ 			Timeout:       30 * time.Second,
+-			CheckRedirect: safeRedirectPolicy,
++			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+ 		}
+ 		return client, nil
+ 	})
+@@ -242,7 +242,7 @@
+ 	if platform {
+ 		builtIn = &auth.SecurityPolicyTransport{Base: builtIn}
+ 	}
+-	return builtIn
++	return &transport.RegistrationRequestGuard{Base: builtIn}
+ }
+ 
+ func cachedLarkClientFunc(f *Factory, workspaceConfig workspaceConfigSource) func() (*lark.Client, error) {
+@@ -262,7 +262,7 @@
+ 		hostSignalSource := resolveSDKHostSignalSource(workspaceConfig)
+ 		opts = append(opts, lark.WithHttpClient(&http.Client{
+ 			Transport:     buildSDKTransport(hostSignalSource),
+-			CheckRedirect: safeRedirectPolicy,
++			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+ 		}))
+ 		ep := core.ResolveEndpoints(acct.Brand)
+ 		opts = append(opts, lark.WithOpenBaseUrl(ep.Open))
+@@ -305,7 +305,7 @@
+ 	if platform {
+ 		builtIn = &auth.SecurityPolicyTransport{Base: builtIn}
+ 	}
+-	return builtIn
++	return &transport.RegistrationRequestGuard{Base: builtIn}
+ }
+ 
+ type credentialDeps struct {
+@@ -317,14 +317,6 @@
+ }
+ 
+ func buildCredentialProvider(deps credentialDeps) *credential.CredentialProvider {
+-	store := credential.NewTenantTokenStore(deps.Keychain)
+-	providers := withTenantAccessTokenLookup(extcred.Providers(), func(_ context.Context, appID string) (*extcred.Token, error) {
+-		value, found, err := store.Get(appID)
+-		if err != nil || !found {
+-			return nil, err
+-		}
+-		return &extcred.Token{Value: value, Source: "keychain:tenant-access-token"}, nil
+-	})
+ 	defaultAcct := credential.NewDefaultAccountProvider(deps.Keychain, deps.Profile, deps.ProfileSource)
+ 	defaultToken := credential.NewDefaultTokenProvider(defaultAcct, deps.HttpClient, deps.ErrOut)
+ 	// NOTE: Do not pass deps.ErrOut as warnOut. Credential resolution
+@@ -333,7 +325,18 @@
+ 	// depend on. enrichUserInfo failures are already non-fatal (the
+ 	// provider clears unverified identity fields), so silencing the
+ 	// warning is safe.
+-	return credential.NewCredentialProvider(providers, defaultAcct, defaultToken, deps.HttpClient)
++	return credential.NewCredentialProvider(nil, defaultAcct, userOnlyTokenResolver{next: defaultToken}, deps.HttpClient)
++}
++
++type userOnlyTokenResolver struct {
++	next credential.DefaultTokenResolver
++}
++
++func (r userOnlyTokenResolver) ResolveToken(ctx context.Context, request credential.TokenSpec) (*credential.TokenResult, error) {
++	if request.Type != credential.TokenTypeUAT || r.next == nil {
++		return nil, errs.NewSecurityPolicyError(errs.SubtypeAccessDenied, "registration: user token required")
++	}
++	return r.next.ResolveToken(ctx, request)
+ }
+ 
+ func withTenantAccessTokenLookup(
+--- /dev/null
++++ b/internal/cmdutil/registration_useronly_test.go
+@@ -0,0 +1,34 @@
++package cmdutil
++
++import (
++	"context"
++	"testing"
++
++	"github.com/larksuite/cli/internal/credential"
++)
++
++type registrationTestResolver struct{ calls int }
++
++func (r *registrationTestResolver) ResolveToken(_ context.Context, _ credential.TokenSpec) (*credential.TokenResult, error) {
++	r.calls++
++	return &credential.TokenResult{Token: "fixture"}, nil
++}
++
++func TestRegistrationRejectsNonUserBeforeDefaultProvider(t *testing.T) {
++	underlying := &registrationTestResolver{}
++	r := userOnlyTokenResolver{next: underlying}
++	for _, kind := range []credential.TokenType{credential.TokenTypeTAT, "", "other"} {
++		if _, err := r.ResolveToken(context.Background(), credential.TokenSpec{Type: kind}); err == nil {
++			t.Fatalf("accepted %q", kind)
++		}
++	}
++	if underlying.calls != 0 {
++		t.Fatal("default provider reached for non-user token")
++	}
++	if _, err := r.ResolveToken(context.Background(), credential.TokenSpec{Type: credential.TokenTypeUAT}); err != nil {
++		t.Fatal(err)
++	}
++	if underlying.calls != 1 {
++		t.Fatal("user token was not delegated")
++	}
++}
+--- /dev/null
++++ b/internal/transport/registration_fixture_prod.go
+@@ -0,0 +1,14 @@
++//go:build !registration_fixture
++
++package transport
++
++import (
++	"context"
++	"crypto/tls"
++	"net"
++)
++
++func registrationFixtureDial(context.Context) (net.Conn, bool, error) { return nil, false, nil }
++func registrationFixtureTLS() *tls.Config                             { return nil }
++
++func registrationFixtureBudgetExhausted(int64) {}
+--- /dev/null
++++ b/internal/transport/registration_fixture_testbuild.go
+@@ -0,0 +1,36 @@
++//go:build registration_fixture
++
++package transport
++
++import (
++	"context"
++	"crypto/tls"
++	"crypto/x509"
++	"fmt"
++	"net"
++	"os"
++)
++
++func registrationFixtureDial(ctx context.Context) (net.Conn, bool, error) {
++	address := os.Getenv("REGISTRATION_FIXTURE_ADDR")
++	host, _, err := net.SplitHostPort(address)
++	if err != nil || host != "127.0.0.1" {
++		return nil, true, errRegistrationLimit
++	}
++	var dialer net.Dialer
++	conn, err := dialer.DialContext(ctx, "tcp", address)
++	return conn, true, err
++}
++
++func registrationFixtureTLS() *tls.Config {
++	data, err := os.ReadFile(os.Getenv("REGISTRATION_FIXTURE_CA"))
++	pool := x509.NewCertPool()
++	if err != nil || !pool.AppendCertsFromPEM(data) {
++		return &tls.Config{RootCAs: x509.NewCertPool()}
++	}
++	return &tls.Config{RootCAs: pool}
++}
++
++func registrationFixtureBudgetExhausted(bytes int64) {
++	fmt.Fprintf(os.Stderr, "fixture-wire-budget bytes=%d\n", bytes)
++}
+--- /dev/null
++++ b/internal/transport/registration_limit.go
+@@ -0,0 +1,237 @@
++package transport
++
++import (
++	"bytes"
++	"context"
++	"crypto/tls"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptrace"
++	"net/textproto"
++	"strconv"
++	"strings"
++	"sync/atomic"
++	"time"
++
++	"github.com/larksuite/cli/errs"
++)
++
++const registrationJSONLimit = 1 << 20
++const registrationWireLimit = 8 << 20
++const registrationDialLimit = 12
++
++var errRegistrationLimit = errs.NewSecurityPolicyError(errs.SubtypeAccessDenied, "registration transport policy rejected request")
++
++type registrationOperation struct {
++	ctx           context.Context
++	host          string
++	method        string
++	path          string
++	query         string
++	resourceCount atomic.Int32
++	authCount     atomic.Int32
++}
++
++var registrationCurrent *registrationOperation
++
++// ConfigureRegistrationOperation is called once by the private executable before Build.
++func ConfigureRegistrationOperation(ctx context.Context, brand, method, path, query string) error {
++	if registrationCurrent != nil || ctx == nil || (brand != "feishu" && brand != "lark") ||
++		(method != http.MethodGet && method != http.MethodPost && method != http.MethodPut) ||
++		!strings.HasPrefix(path, "/open-apis/") || strings.ContainsAny(path, "?#") {
++		return errRegistrationLimit
++	}
++	host := "open.feishu.cn"
++	if brand == "lark" {
++		host = "open.larksuite.com"
++	}
++	if query != "" && (method != http.MethodGet || path != "/open-apis/drive/v1/medias/batch_get_tmp_download_url") {
++		return errRegistrationLimit
++	}
++	registrationCurrent = &registrationOperation{ctx: ctx, host: host, method: method, path: path, query: query}
++	return nil
++}
++
++func (p *registrationOperation) allow(req *http.Request) bool {
++	if p == nil || req == nil || req.URL == nil || req.URL.Scheme != "https" || req.URL.User != nil || req.URL.Fragment != "" {
++		return false
++	}
++	accounts := "accounts.feishu.cn"
++	if p.host == "open.larksuite.com" {
++		accounts = "accounts.larksuite.com"
++	}
++	if req.Method == http.MethodPost && req.URL.Host == accounts && req.URL.Path == "/accounts/status/heartbeat" && req.URL.RawQuery == "" {
++		return req.Header.Get("Authorization") == "" && p.authCount.Add(1) <= 8
++	}
++	if req.Method == http.MethodPost && req.URL.Host == accounts && req.URL.Path == "/oauth/v3/token" && req.URL.RawQuery == "" {
++		return p.authCount.Add(1) <= 8
++	}
++	return req.Context().Err() == nil && p.ctx.Err() == nil && req.Method == p.method && req.URL.Host == p.host && req.URL.Path == p.path && req.URL.RawQuery == p.query && p.resourceCount.Add(1) == 1
++}
++
++// registrationBudgetConn counts encrypted socket input, including TLS records.
++type registrationBudgetConn struct {
++	net.Conn
++	remaining int64
++}
++
++func (c *registrationBudgetConn) Read(p []byte) (int, error) {
++	if c.remaining <= 0 {
++		registrationFixtureBudgetExhausted(registrationWireLimit)
++		_ = c.Conn.Close()
++		return 0, errRegistrationLimit
++	}
++	if int64(len(p)) > c.remaining {
++		p = p[:int(c.remaining)]
++	}
++	n, err := c.Conn.Read(p)
++	c.remaining -= int64(n)
++	return n, err
++}
++
++type registrationDialBudget struct{ attempts atomic.Int32 }
++
++func (b *registrationDialBudget) dial(ctx context.Context, network, address string) (net.Conn, error) {
++	if b.attempts.Add(1) > registrationDialLimit || network != "tcp" {
++		return nil, errRegistrationLimit
++	}
++	host, port, err := net.SplitHostPort(address)
++	if err != nil || port != "443" || (host != "open.feishu.cn" && host != "open.larksuite.com" && host != "accounts.feishu.cn" && host != "accounts.larksuite.com") {
++		return nil, errRegistrationLimit
++	}
++	if conn, used, err := registrationFixtureDial(ctx); used {
++		if err != nil {
++			return nil, err
++		}
++		return &registrationBudgetConn{Conn: conn, remaining: registrationWireLimit}, nil
++	}
++	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
++	if err != nil || len(addresses) == 0 || len(addresses) > 16 {
++		return nil, errRegistrationLimit
++	}
++	first := addresses[0]
++	ip := first.IP.String()
++	if first.Zone != "" {
++		ip += "%" + first.Zone
++	}
++	dialer := net.Dialer{Timeout: 10 * time.Second, FallbackDelay: -1}
++	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
++	if err != nil {
++		return nil, err
++	}
++	return &registrationBudgetConn{Conn: conn, remaining: registrationWireLimit}, nil
++}
++
++// registrationLeaf remains present around every structurally rebuilt transport.
++type registrationLeaf struct {
++	base   *http.Transport
++	budget *registrationDialBudget
++}
++
++func newRegistrationLeaf(budget *registrationDialBudget) *registrationLeaf {
++	t := &http.Transport{
++		Proxy:                  nil,
++		DialContext:            budget.dial,
++		DisableCompression:     true,
++		DisableKeepAlives:      true,
++		ForceAttemptHTTP2:      false,
++		TLSNextProto:           map[string]func(string, *tls.Conn) http.RoundTripper{},
++		TLSHandshakeTimeout:    10 * time.Second,
++		MaxResponseHeaderBytes: 16 << 10,
++		TLSClientConfig:        registrationFixtureTLS(),
++	}
++	return &registrationLeaf{base: t, budget: budget}
++}
++
++func (t *registrationLeaf) BaseRoundTripper() http.RoundTripper { return t.base }
++
++func (t *registrationLeaf) WithBaseRoundTripper(base http.RoundTripper) http.RoundTripper {
++	if _, ok := base.(*http.Transport); !ok {
++		return registrationDeny{}
++	}
++	return newRegistrationLeaf(t.budget)
++}
++
++type registrationDeny struct{}
++
++func (registrationDeny) RoundTrip(*http.Request) (*http.Response, error) {
++	return nil, errRegistrationLimit
++}
++
++func (t *registrationLeaf) RoundTrip(req *http.Request) (*http.Response, error) {
++	if req == nil || req.Header.Get("Accept-Encoding") != "identity" || !registrationCurrent.allow(req) {
++		return nil, errRegistrationLimit
++	}
++	if req.Body != nil && req.Body != http.NoBody {
++		body, err := io.ReadAll(io.LimitReader(req.Body, registrationJSONLimit+1))
++		_ = req.Body.Close()
++		if err != nil || len(body) > registrationJSONLimit || (req.ContentLength >= 0 && req.ContentLength != int64(len(body))) {
++			return nil, errRegistrationLimit
++		}
++		req = req.Clone(req.Context())
++		req.Body = io.NopCloser(bytes.NewReader(body))
++		req.ContentLength = int64(len(body))
++		req.GetBody = nil
++	}
++	response, err := t.base.RoundTrip(req)
++	if err != nil || response == nil || response.Body == nil {
++		if response != nil && response.Body != nil {
++			_ = response.Body.Close()
++		}
++		return nil, errRegistrationLimit
++	}
++	defer response.Body.Close()
++	encoding := response.Header.Get("Content-Encoding")
++	if response.StatusCode == 101 || (response.StatusCode >= 300 && response.StatusCode < 400) ||
++		(encoding != "" && !strings.EqualFold(encoding, "identity")) || response.ContentLength > registrationJSONLimit {
++		return nil, errRegistrationLimit
++	}
++	body, err := io.ReadAll(io.LimitReader(response.Body, registrationJSONLimit+1))
++	if err != nil || len(body) > registrationJSONLimit || (response.ContentLength >= 0 && int64(len(body)) != response.ContentLength) {
++		return nil, errRegistrationLimit
++	}
++	response.Body = io.NopCloser(bytes.NewReader(body))
++	response.ContentLength = int64(len(body))
++	response.Header.Set("Content-Length", strconv.Itoa(len(body)))
++	return response, nil
++}
++
++// RegistrationRequestGuard must be outside signing so identity is signed as sent.
++type RegistrationRequestGuard struct{ Base http.RoundTripper }
++
++func (t *RegistrationRequestGuard) BaseRoundTripper() http.RoundTripper { return t.Base }
++func (t *RegistrationRequestGuard) WithBaseRoundTripper(base http.RoundTripper) http.RoundTripper {
++	return &RegistrationRequestGuard{Base: base}
++}
++func (t *RegistrationRequestGuard) RoundTrip(req *http.Request) (*http.Response, error) {
++	if req == nil || t.Base == nil {
++		return nil, errRegistrationLimit
++	}
++	old := httptrace.ContextClientTrace(req.Context())
++	if old != nil && old.Got1xxResponse != nil {
++		return nil, errRegistrationLimit
++	}
++	count := 0
++	trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, _ textproto.MIMEHeader) error {
++		count++
++		if code == 101 || count > 4 {
++			return errRegistrationLimit
++		}
++		return nil
++	}}
++	request := req.Clone(httptrace.WithClientTrace(req.Context(), trace))
++	request.Header = req.Header.Clone()
++	request.Header.Set("Accept-Encoding", "identity")
++	if request.Body != nil && request.Body != http.NoBody {
++		body, err := io.ReadAll(io.LimitReader(request.Body, registrationJSONLimit+1))
++		_ = request.Body.Close()
++		if err != nil || len(body) > registrationJSONLimit || (request.ContentLength >= 0 && request.ContentLength != int64(len(body))) {
++			return nil, errRegistrationLimit
++		}
++		request.Body = io.NopCloser(bytes.NewReader(body))
++		request.ContentLength = int64(len(body))
++		request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
++	}
++	return t.Base.RoundTrip(request)
++}
+--- /dev/null
++++ b/internal/transport/registration_limit_test.go
+@@ -0,0 +1,135 @@
++package transport
++
++import (
++	"bytes"
++	"context"
++	"crypto/tls"
++	"errors"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/http/httptrace"
++	"net/textproto"
++	"net/url"
++	"strings"
++	"testing"
++
++	"github.com/larksuite/cli/errs"
++)
++
++func TestRegistrationLimiterSyntheticTLS(t *testing.T) {
++	for _, size := range []int{16, registrationJSONLimit + 1} {
++		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++			w.Header().Set("Content-Type", "application/json")
++			_, _ = io.WriteString(w, strings.Repeat("x", size))
++		}))
++		registrationCurrent = &registrationOperation{ctx: context.Background(), host: "open.feishu.cn", method: "GET", path: "/open-apis/test"}
++		leaf := newRegistrationLeaf(&registrationDialBudget{})
++		leaf.base.TLSClientConfig = &tls.Config{RootCAs: server.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs, ServerName: "example.com"}
++		leaf.base.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
++			var d net.Dialer
++			return d.DialContext(ctx, "tcp", server.Listener.Addr().String())
++		}
++		req, _ := http.NewRequest("GET", "https://open.feishu.cn/open-apis/test", nil)
++		response, err := (&RegistrationRequestGuard{Base: leaf}).RoundTrip(req)
++		if size <= registrationJSONLimit {
++			if err != nil {
++				t.Fatal(err)
++			}
++			body, err := io.ReadAll(response.Body)
++			if err != nil || len(body) != size {
++				t.Fatal("small response mismatch")
++			}
++			_ = response.Body.Close()
++		} else if err == nil || response != nil {
++			t.Fatal("oversized response reached caller")
++		}
++		server.Close()
++	}
++}
++
++func TestRegistrationRejectsOld1xxHook(t *testing.T) {
++	called := false
++	base := registrationTestRoundTripper(func(*http.Request) (*http.Response, error) { called = true; return nil, nil })
++	req, _ := http.NewRequest("GET", "https://open.feishu.cn/open-apis/test", nil)
++	ctx := httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{Got1xxResponse: func(int, textproto.MIMEHeader) error { return nil }})
++	if _, err := (&RegistrationRequestGuard{Base: base}).RoundTrip(req.WithContext(ctx)); err == nil || called {
++		t.Fatal("old 1xx hook not rejected")
++	}
++}
++
++type registrationTestRoundTripper func(*http.Request) (*http.Response, error)
++
++func (f registrationTestRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
++
++func TestRegistrationLocalPolicyCategorySurvivesURLWrapping(t *testing.T) {
++	wrapped := &url.Error{Op: "Post", URL: "https://example.invalid", Err: errRegistrationLimit}
++	problem, ok := errs.ProblemOf(wrapped)
++	if !ok || problem.Category != errs.CategoryPolicy || errors.Is(wrapped, context.Canceled) {
++		t.Fatal("local rejection lost policy category")
++	}
++}
++
++func TestRegistrationSocketReadBudget(t *testing.T) {
++	reader, writer := net.Pipe()
++	defer writer.Close()
++	conn := &registrationBudgetConn{Conn: reader, remaining: registrationWireLimit}
++	defer conn.Close()
++	done := make(chan struct{})
++	go func() {
++		defer close(done)
++		_, _ = writer.Write(bytes.Repeat([]byte{'x'}, registrationWireLimit+1))
++	}()
++	bytesRead, err := io.Copy(io.Discard, conn)
++	if bytesRead != registrationWireLimit || !errors.Is(err, errRegistrationLimit) {
++		t.Fatalf("budget mismatch: bytes=%d, err=%v", bytesRead, err)
++	}
++	<-done
++}
++
++func TestRegistrationRefreshUsesFixedAccountsEndpoint(t *testing.T) {
++	operation := &registrationOperation{ctx: context.Background(), host: "open.feishu.cn", method: "GET", path: "/open-apis/test"}
++	accepted, _ := http.NewRequest("POST", "https://accounts.feishu.cn/oauth/v3/token", nil)
++	if !operation.allow(accepted) {
++		t.Fatal("fixed user token refresh rejected")
++	}
++	for _, raw := range []string{
++		"https://open.feishu.cn/open-apis/authen/v2/oauth/token",
++		"https://accounts.larksuite.com/oauth/v3/token",
++		"https://accounts.feishu.cn/oauth/v3/token?extra=1",
++	} {
++		request, _ := http.NewRequest("POST", raw, nil)
++		if operation.allow(request) {
++			t.Fatal("unexpected refresh destination accepted")
++		}
++	}
++}
++
++func TestRegistrationAttachmentQueryExact(t *testing.T) {
++	path := "/open-apis/drive/v1/medias/batch_get_tmp_download_url"
++	query := url.Values{"file_tokens": {"token1"}, "extra": {"{\"source\":\"row\"}"}}.Encode()
++	for _, tc := range []struct {
++		name  string
++		query string
++		allow bool
++	}{
++		{"exact", query, true},
++		{"duplicate-token", query + "&file_tokens=token2", false},
++		{"unknown-key", query + "&other=1", false},
++		{"wrong-token", url.Values{"file_tokens": {"token2"}, "extra": {"{\"source\":\"row\"}"}}.Encode(), false},
++		{"missing-extra", "file_tokens=token1", false},
++		{"duplicate-extra", query + "&extra=x", false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			operation := &registrationOperation{ctx: context.Background(), host: "open.feishu.cn", method: "GET", path: path, query: query}
++			req, err := http.NewRequest("GET", "https://open.feishu.cn"+path+"?"+tc.query, nil)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if got := operation.allow(req); got != tc.allow {
++				t.Fatalf("allow=%t, want %t", got, tc.allow)
++			}
++		})
++	}
++}
+--- a/internal/transport/shared.go
++++ b/internal/transport/shared.go
+@@ -5,7 +5,6 @@
+ 
+ import (
+ 	"net/http"
+-	"os"
+ 	"sync"
+ 	"time"
+ 
+@@ -26,18 +25,10 @@
+ // required so persistConn read/write goroutines are reused; cloning per call
+ // leaks them until IdleConnTimeout (~90s) fires.
+ func Shared() http.RoundTripper {
+-	// Proxy-plugin mode overrides everything, INCLUDING LARK_CLI_NO_PROXY. When
+-	// the plugin config exists but is invalid, pluginTransport returns a
+-	// fail-closed transport with ok=true and we return it here — we MUST NOT
+-	// fall through to the NO_PROXY / DefaultTransport direct-egress paths below.
+-	if t, ok := pluginTransport(); ok {
+-		return t
+-	}
+-	if os.Getenv(EnvNoProxy) != "" {
+-		return noProxyTransport()
+-	}
+-	return http.DefaultTransport
++	return registrationShared
+ }
++
++var registrationShared = newRegistrationLeaf(&registrationDialBudget{})
+ 
+ // Fallback returns a shared *http.Transport. It is a thin wrapper over Shared
+ // retained so modules already on the leak-free singleton path (internal/auth,
+@@ -50,11 +41,8 @@
+ // reached when no proxy plugin is configured and some external code replaced
+ // http.DefaultTransport with a non-*http.Transport — a case with no fail-closed
+ // intent, where a proxy-disabled transport is acceptable.
+-func Fallback() *http.Transport {
+-	if t, ok := Shared().(*http.Transport); ok {
+-		return t
+-	}
+-	return noProxyTransport()
++func Fallback() http.RoundTripper {
++	return registrationShared
+ }
+ 
+ // NewHTTPClient returns a policy-routed client over the shared proxy-aware
+@@ -67,8 +55,9 @@
+ func NewHTTPClient(timeout time.Duration) *http.Client {
+ 	base := Shared()
+ 	return &http.Client{
+-		Transport: NewHTTPPolicyRouter(base, base),
+-		Timeout:   timeout,
++		Transport:     &RegistrationRequestGuard{Base: NewHTTPPolicyRouter(base, base)},
++		Timeout:       timeout,
++		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+ 	}
+ }
+ 

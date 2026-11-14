@@ -1,0 +1,16 @@
+{
+  "provenance": {
+    "decoderSource": "dyhub@3a79c57d85c59289db3b77211b3ec01fae47d42c src/proto/douyin.proto.ts Common.createTime (uint64 = 4)",
+    "protobufjsVersion": "8.8.0",
+    "encodedDecimal": "1700000040",
+    "note": "protobufjs 将 uint64 解码为 Long 对象；本文件记录真实解码输出的无损三元组"
+  },
+  "observation": {
+    "constructorName": "Long",
+    "low": 1700000040,
+    "high": 0,
+    "unsigned": true,
+    "toStringValue": "1700000040",
+    "toNumberValue": 1700000040
+  }
+}

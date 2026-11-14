@@ -1,0 +1,13 @@
+The files abogus.go, bd_ticket.go, params.go and sm3.go derive from
+yunsur/douyin-mcp commit 7e90d139007f141cb7389aa509d8e6e67f7b5840,
+under the MIT license in LICENSE.yunsur.
+
+Changes: package adapted for the helper; the signer receives its fingerprint,
+clock and random source explicitly instead of reading a global profile or
+environment; unknown signing hosts are rejected; ticket signing requires an
+explicit mode and timestamp; P-256 private scalars are padded before ECDH and
+trailing material after PEM keys is rejected. The code is not a claim that any real account or
+platform request has been verified.
+
+The helper uses the Go standard library. The Go distribution license is
+included as LICENSE.golang.txt.

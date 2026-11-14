@@ -236,6 +236,7 @@ it('runs native tool calls through the real Harness loop and model adapter again
           picks: [{
             event: { id, platform: 'douyin' as const, kind: 'chat' as const, ts: Date.now(), user: { id: 'viewer-1', name: '观众' }, text },
             text,
+            sources: [{ id, live: false }],
             tags: ['问题'],
             score: 1,
           }],

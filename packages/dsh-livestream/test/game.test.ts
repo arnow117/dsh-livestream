@@ -133,7 +133,7 @@ describe('game layout', () => {
 
 describe('replies while playing', () => {
   it('asks for a short line while she plays', () => {
-    const topic = { kind: 'chat' as const, picks: [{ event: chat('1', '挖到钻石了吗'), text: '挖到钻石了吗', tags: [], score: 1 }], id: 'c', priority: 10, heat: 'quiet' as const, createdAt: 0 };
+    const topic = { kind: 'chat' as const, picks: [{ event: chat('1', '挖到钻石了吗'), text: '挖到钻石了吗', sources: [{ id: '1', live: false }], tags: [], score: 1 }], id: 'c', priority: 10, heat: 'quiet' as const, createdAt: 0 };
     expect(topicText(topic, { inGame: true })).toContain('你正在玩游戏，');
     expect(topicText(topic, { inGame: true })).toContain('不超过 30 字');
     expect(topicText(topic, {})).toContain('不超过 60 字');

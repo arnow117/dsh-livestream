@@ -63,6 +63,19 @@ export interface ShowHooks {
   persist?(snapshot: LiveSnapshot | null): void;
   /** 游戏画面上舞台、撤下（OBS 抓游戏窗口、叠 HUD） */
   onGame?(source: GameSource | null): void;
+  /**
+   * 可选联动的原事件登记（FEAT-DSH-004）：在可信原始接收处（注意力/话题聚合之前）调用。
+   * 实现方自行吞错；这里不等待、不影响直播自身路径。
+   */
+  onOriginalEvent?(event: LiveEvent): void;
+  /**
+   * 可选联动的同步失效通知（FEAT-DSH-004）：下播收尾（ending）、真正下播（offair）、
+   * 直播会话被替换（session-retired）或直播间连接断开（connection-lost）时，在失效动作的
+   * 同一同步段调用。实现方必须先于任何异步等待撤销原授权，迟到的 receipt/ACK 不产生新动作。
+   */
+  onLiveInvalidated?(detail: 'ending' | 'offair' | 'session-retired' | 'connection-lost'): void;
+  /** 本次内存中的直播身份或恢复状态已建立；消费者自行验证真实开始时间。 */
+  onLiveStarted?(): void;
 }
 
 /** 正在播的一场：插件重启后接着播要的东西 */
@@ -85,6 +98,11 @@ export interface LiveSnapshot {
   gameSessionId?: string;
   /** 点单队列（插件重启后接着排） */
   orders?: OrderBookData;
+  /**
+   * 本场次的持久身份（FEAT-DSH-004 原事件元组的 streamEpoch）：重启续播沿用同一场次，
+   * 不因重连/重启更换；显式新开播（goLive）才是新场次。
+   */
+  robotEpoch?: string;
 }
 
 export interface ShowOptions {
@@ -190,7 +208,6 @@ export class LiveShow {
   course?: import('./course/controller').CourseController;
   private readonly courseAudienceEvents = new Set<string>();
   private courseAudienceLimitReported = false;
-  readonly hub = new LiveHub();
   readonly stage = new Stage();
   /** 舞台上放视频（她用 play_video）：放完了告诉她 */
   readonly player = new Player(this.stage, (video, how, playedSec) => {
@@ -279,11 +296,31 @@ export class LiveShow {
   /** 这一场记不记（开播时按 rememberViewers 定下来） */
   private memoryStream = false;
 
-  constructor(private readonly hooks: ShowHooks, private readonly options: ShowOptions) {
+  /** 直播间事件中枢：默认自建；测试可注入带确定性 source 的实例 */
+  readonly hub: LiveHub;
+
+  constructor(private readonly hooks: ShowHooks, private readonly options: ShowOptions, hub: LiveHub = new LiveHub()) {
+    this.hub = hub;
     mkdirSync(options.dataDir, { recursive: true });
     this.memory = new LiveMemory(new LiveMemoryStore(join(options.dataDir, 'live-memory.db')));
     this.attention = this.freshAttention();
     setHerNames(options.names);
+    this.watchHubState();
+  }
+
+  /**
+   * 连接状态真失效（FEAT-DSH-004）：订阅 hub 的真实 source 状态回调通道——连接离开
+   * connected（源断开/重连/换房间）在同一同步段撤销机器人授权；快速重连不会恢复旧授权。
+   * 这是断连失效的唯一权威来源，替代轮询发现（轮询可能错过快速断连窗口）。
+   */
+  private hubStateUnwatch: (() => void) | null = null;
+  private watchHubState(): void {
+    this.hubStateUnwatch?.();
+    this.hubStateUnwatch = this.hub.onStateChange((state, previous) => {
+      if (this.onAir && previous === 'connected' && state !== 'connected') {
+        this.hooks.onLiveInvalidated?.('connection-lost');
+      }
+    });
   }
 
   private freshAttention(): LiveAttention {
@@ -321,6 +358,8 @@ export class LiveShow {
   }
 
   disconnect(): void {
+    // 断订阅真失效（FEAT-DSH-004）：开播期间断开直播间连接，同一同步段撤销原授权。
+    if (this.onAir) this.hooks.onLiveInvalidated?.('connection-lost');
     this.invalidateSession(this.onAir);
     this.unsubscribe?.();
     this.unsubscribe = null;
@@ -345,11 +384,11 @@ export class LiveShow {
     this.platform = platform;
   }
 
-  /** 测试用：不连直播间也能往里塞事件（控制台的「模拟观众」） */
+  /** 测试用：不连直播间也能往里塞事件（控制台的「模拟观众」）。这是受控离线注入的可信入口 */
   inject(event: LiveEvent): void {
     // 先订阅再塞：反过来的话，没连直播间时塞的第一条事件谁也收不到（彩排里第一位进场的观众没被欢迎）
     if (!this.unsubscribe) this.unsubscribe = this.hub.subscribe((e, isUpdate) => this.observe(e, isUpdate));
-    this.hub.ingest(event);
+    this.hub.ingestTrustedInternal(event);
   }
 
   private observe(event: LiveEvent, isUpdate: boolean): void {
@@ -367,6 +406,9 @@ export class LiveShow {
       this.courseAudienceEvents.add(key);
     }
     const now = Date.now();
+    // 可选联动的原事件登记在可信接收处、注意力/话题聚合之前（FEAT-DSH-004）：
+    // 不等待、不参与直播自身路径；实现方自行决定是否使用。
+    this.hooks.onOriginalEvent?.(event);
     this.attention.observe(event, isUpdate, now);
     // 只记自己直播间的观众（主人在控制台勾了的）；模拟观众（控制台彩排）不记
     if (this.onAir && this.memoryStream && !event.user.id.startsWith(SIMULATED_PREFIX)) this.memory.observe(event, isUpdate, now);
@@ -412,6 +454,8 @@ export class LiveShow {
   // ── 开播、下播 ─────────────────────────────────────
 
   private retireSession(): void {
+    // 被替换的直播会话真失效（FEAT-DSH-004）：之前有直播会话才通知联动撤销其原授权。
+    const retiringSession = this.brainSession;
     this.onCourseEnd?.();
     this.courseAudienceEvents.clear();
     this.courseAudienceLimitReported = false;
@@ -420,6 +464,7 @@ export class LiveShow {
     this.endingTimer = null;
     this.ending = false;
     this.endingPushed = false;
+    if (retiringSession) this.hooks.onLiveInvalidated?.('session-retired');
   }
 
   private invalidateSession(keepSession: boolean): void {
@@ -451,16 +496,20 @@ export class LiveShow {
     this.gameSession = gameSessionId ?? null;
     if (this.onAir) {
       this.stage.setOutputEpoch(randomUUID());
+      this.hooks.onLiveStarted?.();
       return;
     }
     this.resetGameLine();
     this.onAir = true;
     this.ending = false;
+    this.showEpoch = randomUUID();
     this.stage.setOutputEpoch(randomUUID());
     this.endingPushed = false;
     this.turnRunning = false;
     this.attention = this.freshAttention();
     this.liveSince = Date.now();
+    this.publicChatLiveStartedAtMs = this.liveSince;
+    this.hooks.onLiveStarted?.();
     this.spoken = 0;
     // 别人的直播间（旁观、试播）不留任何记忆：不建档，也不写这场的回顾
     this.memoryStream = this.rememberViewers;
@@ -494,6 +543,10 @@ export class LiveShow {
     }
     this.onAir = true;
     this.ending = false;
+    // 续播是同一场次：沿用存档里的场次身份，不因插件重启更换（FEAT-DSH-004）。
+    // 存档没有场次身份（旧格式/丢失）时保持为空：直播照常续播，但机器人来源因
+    // 无法证明同场次而保持拒绝，不得凭空生成新场次身份重放旧互动。
+    this.showEpoch = snapshot.robotEpoch ?? '';
     this.stage.setOutputEpoch(randomUUID());
     this.endingPushed = false;
     this.turnRunning = false;
@@ -501,6 +554,10 @@ export class LiveShow {
     this.memoryStream = snapshot.streamId !== null;
     if (snapshot.streamId !== null) this.memory.resume(snapshot.streamId);
     this.liveSince = snapshot.startedAt ?? snapshot.at;
+    // Legacy snapshots also write the display fallback to startedAt.  Their
+    // format cannot distinguish that fallback from an actual start boundary.
+    this.publicChatLiveStartedAtMs = null;
+    this.hooks.onLiveStarted?.();
     this.spoken = snapshot.spokenChars ?? 0;
     this.orders = new OrderBook(snapshot.orders);
     this.publishOrders(false);
@@ -530,11 +587,14 @@ export class LiveShow {
   private persistLive(now = Date.now()): void {
     if (!this.onAir || !this.brainSession) return;
     this.persistedAt = now;
-    this.hooks.persist?.({ sessionId: this.brainSession, platform: this.platform, roomId: this.roomId, streamId: this.memoryStream ? this.memory.currentStream : null, logFile: this.logFile, at: now, startedAt: this.liveSince, spokenChars: this.spoken, ...(this.gameOn || this.resumingGame ? { playing: true } : {}), ...(this.gameSession ? { gameSessionId: this.gameSession } : {}), ...(this.orders.open().length || this.orders.shown().length ? { orders: this.orders.toJSON() } : {}) });
+    this.hooks.persist?.({ sessionId: this.brainSession, platform: this.platform, roomId: this.roomId, streamId: this.memoryStream ? this.memory.currentStream : null, logFile: this.logFile, at: now, startedAt: this.liveSince, spokenChars: this.spoken, ...(this.showEpoch ? { robotEpoch: this.showEpoch } : {}), ...(this.gameOn || this.resumingGame ? { playing: true } : {}), ...(this.gameSession ? { gameSessionId: this.gameSession } : {}), ...(this.orders.open().length || this.orders.shown().length ? { orders: this.orders.toJSON() } : {}) });
   }
 
   private liveSince = 0;
+  private publicChatLiveStartedAtMs: number | null = null;
   private spoken = 0;
+  /** 本场次身份（FEAT-DSH-004）：goLive 生成、resumeLive 沿用存档；重连不换。 */
+  private showEpoch = '';
 
   /** 这场播了多久、她念了多少字 */
   stats(now = Date.now()): { liveMs: number; spokenChars: number } {
@@ -546,6 +606,8 @@ export class LiveShow {
     if (!this.onAir || this.ending) return;
     this.onCourseEnd?.();
     this.ending = true;
+    // 下播收尾真失效（FEAT-DSH-004）：进入道别期即撤销原授权，迟到的 receipt/ACK 不产生新动作。
+    this.hooks.onLiveInvalidated?.('ending');
     this.query = null;
     this.stage.setOutputEpoch(null);
     this.priority.unshift({ kind: 'ending', summary: '' });
@@ -558,6 +620,8 @@ export class LiveShow {
     if (!this.onAir) return;
     this.stopVideo('off');
     this.onAir = false;
+    // 真正下播真失效（FEAT-DSH-004）：结束这场直播即撤销原授权（幂等，ending 已撤过则无操作）。
+    this.hooks.onLiveInvalidated?.('offair');
     this.stage.setOutputEpoch(null);
     this.ending = false;
     this.endingPushed = false;
@@ -1112,6 +1176,24 @@ export class LiveShow {
 
   get currentSessionGeneration(): number {
     return this.sessionIdentity;
+  }
+
+  /**
+   * 本场次的持久身份（FEAT-DSH-004 原事件元组的 streamEpoch）：开播时生成、
+   * 重启续播沿用存档值；重连直播间不更换。
+   */
+  get streamEpochId(): string {
+    return this.showEpoch;
+  }
+
+  /** 原直播开始时间；旧存档缺失时不给输出侧推测一个时间。 */
+  get liveEpochStartedAtMs(): number | null {
+    return this.onAir ? this.publicChatLiveStartedAtMs : null;
+  }
+
+  /** 是否已进入下播收尾（道别/谢幕）：机器人联动在此同步失去新动作资格。 */
+  get isEnding(): boolean {
+    return this.ending;
   }
 
   // ── 她的工具用到的 ──────────────────────────────────

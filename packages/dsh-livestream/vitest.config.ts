@@ -1,8 +1,17 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // FEAT-DSH-004：dsh-qdroid/robot 是可选运行时依赖（构建保持 external）。
+  // 单测环境没有安装 dsh-qdroid，别名到本地占位模块让 vite 静态分析可解析；
+  // 真实替身经 robotLive 的 setRobotModuleOverrideForTest 注入，不经过这个文件。
+  resolve: {
+    alias: {
+      'dsh-qdroid/robot': fileURLToPath(new URL('./test/robot/qdroidRobotStub.mjs', import.meta.url)),
+    },
+  },
   test: {
-    exclude: ['test/e2e/**', 'test/e2e-douyin/**', 'test/e2e-query/**', 'test/e2e-session-context/**', 'test/e2e-course/**', '.e2e/**', '**/node_modules/**'],
+    exclude: ['test/e2e/**', 'test/e2e-robot/**', 'test/e2e-robot-connected/**', 'test/e2e-douyin/**', 'test/e2e-query/**', 'test/e2e-session-context/**', 'test/e2e-course/**', '.e2e/**', '**/node_modules/**'],
     coverage: {
       provider: 'v8',
       reportsDirectory: 'coverage/feat-001',

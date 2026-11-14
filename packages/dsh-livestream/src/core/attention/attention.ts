@@ -24,7 +24,7 @@ import type {
 } from '../live';
 import { sanitizeChat } from '../safety';
 import { chatFeatures, type ChatFeatures } from './features';
-import type { ChatPick, RoomHeat, Topic, TopicBody } from './topics';
+import { liveIngress, registerPickComposition, type ChatPick, type RoomHeat, type Topic, type TopicBody } from './topics';
 
 /** 可调参数集中在这里 */
 /** 主人定的节奏（控制台「节奏」里填的；没填的项不出现，按热度自动） */
@@ -390,7 +390,15 @@ export class LiveAttention {
           // 这个人还没回的话全部按顺序合成一句交给她（她说话的十几秒里他可能又发了好几条，一条都不能丢）
           const mine = this.chats.filter((o) => o.uid === c.uid).sort((a, b) => a.at - b.at);
           const text = mine.map((o) => o.text).join(' ');
-          picks.push({ event: c.event, text, tags: [...new Set(mine.flatMap((o) => o.tags))], score });
+          // FEAT-DSH-004：组成身份按发生顺序透出；只有带受信进入证明的事件带 live 标记。
+          // 组成同时登记到私有 registry（不可从公开字段伪造）：机器人来源解析只认这份登记。
+          const sources = mine.map((o) => {
+            const ingress = liveIngress(o.event);
+            return { id: ingress?.rawId ?? o.event.id, live: ingress?.live === true };
+          });
+          const pick: ChatPick = { event: c.event, text, sources, tags: [...new Set(mine.flatMap((o) => o.tags))], score };
+          registerPickComposition(pick, mine.map((o) => o.event));
+          picks.push(pick);
         }
         for (const uid of taken) {
           this.remember(uid, now).answeredAt = now;

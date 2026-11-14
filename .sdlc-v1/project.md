@@ -18,6 +18,7 @@
 | Agent | `packages/dsh-livestream/src/dsh/agent.ts`、`cordis.patch.yml` | 注册直播预设和工具、监听助手正文、绑定模型服务；凭据 resolver 属于根插件生命周期。课程会话按受信任注册机制接线 `apply_livestream_course_action`（`courseTools.activate/deactivate`，课程结束/会话卸载移除；`agent.ts` 课程段），`CourseTurns` 维持每轮一项与事件去重（租约 ≤100、事件 id 去重 ≤5000）。 |
 | 控制台 | `packages/dsh-livestream/src/console/client.tsx`、`console.tsx` | 侧栏「直播」面板、设置 Drawer、`TtsSettingsPanel` 声音草稿/保存/私有试听、DSH credentials 输入、状态轮询与事件流。 |
 | 共享声音配置 | `packages/dsh-livestream/src/shared/ttsSettings.ts` | 浏览器与宿主共用 TTS 类型、环境兼容默认值和增量字段验证；不依赖 Node API。 |
+| 受控公屏核心 | `packages/dsh-livestream/src/publicChat/`、`dyhub/verified_sender_loader.mjs`、`helperLauncher.ts`、`httpHelper/` | Controller/客户端、独立 Sender Runtime/Service、固定 DyHub raw 适配与 Go HTTP helper。认证材料由独立 helper 持有，匿名输入与实际发送认证上下文分开；具体授权、撤权、unknown 和当前启动实例采用合同见 `.sdlc-v1/context/FEAT-008.engineering.md`。 |
 | 原生房间控制 | `packages/dsh-livestream/src/shared/roomControl.ts`、`src/dsh/douyinRoomControl.ts`、`douyinControlJournal.ts` | 主页平台/房间原子保存、owner 房间控制、revision、匿名采集前提与插件自有操作日志；固定 loopback HTTP/WS，未知结果保守保护。 |
 | 直播目标与操作归属 | `packages/dsh-livestream/src/shared/liveTarget.ts`、`biliOperations.ts` | 抖音字符串房间输入验证；进程内 B 站/OBS 操作计数、目标 epoch 与 AsyncLocalStorage lease，用于切平台和拒绝过期异步结果。`biliOperations.ts` 是 Node 端模块。 |
 | 舞台 | `packages/dsh-livestream/src/stage/`、`stage/index.html`、`stage/stage.css` | 协议、状态、音频播放（结构化 ended/error 回执）、字幕、布局（chat/video/game/course）、组件与特效；course 挂件经自带 bridge 页同源加载课件。 |
@@ -28,6 +29,7 @@
 | 抖音 source/归一化 | `packages/dsh-livestream/src/core/platforms/douyin/douyinSource.ts`、`platforms/index.ts`、`core/live.ts` | `DouyinLiveSource` 对接指定房间 WS 与有界状态 GET；在 source 中校验/归一化 envelope、ID、统计和礼物增量，输出共同 LiveEvent/LiveRoomStats。 |
 | 测试 | `packages/dsh-livestream/test/*.{test.ts,test.tsx}`、`vitest.config.ts` | Vitest 覆盖声音、平台 source/路由/UI/状态、操作 lease、课程域（controller/assets/action/speech/turns/lifecycle/audio/panel/widget）和既有业务。配置排除 `test/e2e/**`、`test/e2e-douyin/**`、`test/e2e-query/**`、`test/e2e-session-context/**`、`test/e2e-course/**`、`.e2e/**`；大部分本机 fixture 忽略，带来源的合成 DyHub wire fixture 有明确例外，作为测试资产纳入版本控制。 |
 | Web 测试 | `packages/dsh-livestream/{e2e.config.ts,e2e-douyin.config.ts,e2e-voice-regression.config.ts,e2e-query.config.ts,e2e-session-context.config.ts,e2e-course.config.ts}`、`test/{e2e,e2e-douyin,e2e-query,e2e-session-context,e2e-course}/` | tester-army/e2e 精确 locator 旅程；真实 React/宿主路由，外部服务替身、动态端口及隔离数据/构建。查询/会话配置/课程 fixture 使用实际 Harness/工具与自有 StageServer；声音/抖音 fixture 的 Stage stub 边界保留。课程 fixture 另含按课件扩展面构造的合成替身页，`FEAT007_REAL_ASSET_ROOT` 时切换为只读真实课件根。 |
+| 公屏核心测试 | `packages/dsh-livestream/test/publicChat/vitest.public-chat.config.ts`、`test/publicChat/**/*.case.ts`、`src/publicChat/httpHelper/*_test.go` | 独立显式 case 集合覆盖控制协议、持久化、加载前校验，以及固定 patched raw Session/实际 helper/任务自有 TLS 组合。Go helper 的模块、构建支持、协议 schema 和 NOTICE 在其源码目录；外部平台接受、真实材料和观众结果仍须单独取证。 |
 | 原生查询验收 | `packages/dsh-livestream/test/live-query/{run.mjs,scenario.ts,transport.ts}` | 默认离线、显式真实模式的双题正式预设入口；通过 `createAgentPlugin(source)` 内部依赖注入组合原生工具，分别计数 MCP、地理、观测、预报、模型和语音；不是用户 API 或舞台播放入口。 |
 | 变更覆盖检查 | `packages/dsh-livestream/test/coverage-diff.mjs` | 显式 Git 功能基线必需；可选 coverage report path，不传时兼容原 FEAT-001 报告路径。 |
 | 静态资源 | `packages/dsh-livestream/assets/` | 角色、模板、字体与 ASR worker。角色素材有单独许可。 |
@@ -60,6 +62,7 @@
 | 设置 | `runtime.ts` 的 `Settings`、`loadSettings()`、`updateSettings()` | `settings.tts` 包含 backend、yovoice 模型/描述、Mac 音色、豆包 speaker/rate；保存字段优先旧 env 默认。旧 `settings.voice` 保留豆包 alias，空串在每次合成时跟随角色。保存同目录独占临时 JSON 后 rename，再发布内存。 |
 | 平台与房间 | `settings.livePlatform`、`settings.douyinRoomId`、`shared/liveTarget.ts` | 平台默认 `bilibili`，旧数字 `roomId` 保留。抖音房间为 1–64 位 ASCII 数字字符串或完整 `https://live.douyin.com/<digits>`，不接受短链/query/hash/任意 URL，不转换成 Number；房间/用户/事件 ID 保留字符串语义。 |
 | 抖音部署地址 | `DSH_LIVESTREAM_DOUYIN_BRIDGE_URL`、`normalizeDouyinBridgeUrl()` | 默认 `http://127.0.0.1:8757`，由 DSH 启动者管理；只接受 HTTP 数字 loopback `127.0.0.1` / `[::1]` 和合法端口，拒绝 userinfo/query/hash/非根 path/远端与重定向。页面不编辑 bridge 地址或 Cookie，部署参数见抖音指南。 |
+| 公屏受信加载 | `src/publicChat/dyhub/{build_raw,verified_sender_loader}.mjs`、`src/publicChat/helperLauncher.ts` | `build_raw.mjs` 生成固定 raw 导出对应的 sender bundle/manifest；受信宿主通过 `loadVerifiedSender(deploymentFile)` 读取独立 0600 部署文件，先核清单、固定导出/patch、构建支持、源文件和 bundle 字节，再从独占已核副本加载，`buildDigest` 使用实际 manifest 摘要。`sender_entry.mjs` 是构建输入；普通设置/模型不选择部署路径或摘要。helper 启动前另核自身源/清单/binary，通过 `spawn` 的直接 argv、私有 stdio/只读 FD 装配；不由 Node 清单替代 helper 校验。 |
 | 抖音订阅与停止 | `DouyinRoomControl`、`DouyinLiveSource`、GET `room-control`、POST `connect/disconnect/collector/stop` | 主页同页显式连接/重试、只读状态及确认后停止已保存房间；断开订阅仍不停止采集。socket-open/初始化 ack 不代表 live；终态不自动重订阅。支持独立匿名目录，拒绝含认证账号或无法确认的账号集合；不管理全局进程。外部 mutation 前持久 journal，未确认结果锁定目标，重启/uptime 不单独解除保护。 |
 | 目标切换与旧操作 | `shared/biliOperations.ts`、`index.ts`、`body/show.ts` | 舞台活动、已有订阅、Bili/OBS 在途操作或清理未完成时，平台/房间变更返回 409；目标 epoch 和 lease 检查拒绝旧结果继续产生副作用。断开清理旧 Hub/attention/控制台/舞台临时目标上下文，保留历史、声音与已存 B 站设置。 |
 | 平台预设与权限 | `cordis.patch.yml`、`console.tsx`、`agent.ts` | 独立 `dsh-livestream-douyin` 预设保持只读抖音输入、本地输出和 `show_stats`，并在启用/凭据/当前归属有效时提供 `weather_lookup`、`public_search`；旧 `dsh-livestream` B 站及游戏预设保留。Console 按平台选择预设；B 站工具注册、执行及异步结果检查当前平台，查询不增加平台写权限。 |
@@ -144,6 +147,12 @@ surfaces:
       - packages/dsh-livestream/cordis.patch.yml
     roles: [server-dev, architect, qa]
     modes: [correctness, eval-bench]
+  - name: public-chat-control
+    globs:
+      - packages/dsh-livestream/src/publicChat/**
+      - packages/dsh-livestream/test/publicChat/**
+    roles: [server-dev, architect, security, qa]
+    modes: [correctness, "e2e:OpenAPI"]
   - name: body-integrations
     globs:
       - packages/dsh-livestream/src/body/**

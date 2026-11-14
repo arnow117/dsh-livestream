@@ -10,11 +10,13 @@
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { assembleContextFor } from '@deepseek-ai/dsh-agent';
 import { randomUUID } from 'node:crypto';
 import { isSupportedWeatherLocation, runReadOnlyQuery } from '../body/readOnlyQuery';
 import type { QueryRequest } from '../shared/readOnlyQuery';
-import type { Topic } from '../core/attention/topics';
+import { pickCompositionOf, type Topic } from '../core/attention/topics';
 import { queryTurns, type TrustedQueryInput } from './queryTurns';
+import { attachRobotForSession, robotPushSource, robotToolDefinitionsFor, setRobotRestrictionSync } from './robotLive';
 import { CourseTurns } from '../body/course/turns';
 import { resolveQueryCredential } from './queryCredential';
 import {
@@ -40,7 +42,7 @@ import { splitByMood } from '../core/moodText';
 import { orderTags } from '../core/orders';
 import { ttsYuan, turnYuan } from '../core/cost';
 import { assertBiliCurrent, beginBiliOperation, inBiliOperation } from '../shared/biliOperations';
-import { asr, cookie, course, courseTools, currentMoods, dm, hooks, library, localRehearsal, markAgentReady, onPlatformChange, onQuerySettingsChange, sessionTools, setQueryServiceStatus, settings, show, social, videos, weatherSource } from './runtime';
+import { asr, cookie, course, courseTools, currentMoods, dm, hooks, library, localRehearsal, markAgentReady, onPlatformChange, onQuerySettingsChange, publicChatBridge, sessionTools, setQueryServiceStatus, settings, show, social, videos, weatherSource } from './runtime';
 import { BiliRoom } from '../body/biliRoom';
 import { screenshot } from '../body/obs';
 import { whoIs } from '../body/biliLogin';
@@ -87,18 +89,56 @@ const refreshLockedSessions = new Map<string, string>();
 /** 会话两个新增工具的卸下函数（bind 时登记）：refresh 路径 fail-closed 时也要能卸下 */
 const sessionToolDisposers = new Map<string, () => void>();
 const boundAgents = new Map<string, any>();
+const publicChatPersonaAgents = new WeakSet<object>();
 /** 已注入会话 manifest 的会话（每个会话一次） */
 const manifestSessions = new Set<string>();
 
 /**
- * 与限制无关的「当前解析链注册表」：global 层 + agent 完整 scope 链（含自身层）按 nearest-wins
- * 合并的 registration 对象（固定安装版 dsh-tools 0.2.2-rc.1：layers.global.tools + layers.chainLayers）。
- * tools.layers 在类型声明中为 private；这里依赖已验证安装组合的内部结构，宿主升级须重新验证。
- * view().visible/registrations 受已有限制过滤（原始 MEDIUM-1 根因），
- * 不能用作依据；这里不读 restriction-aware 视图，也不临时解除任何限制。
- * 层链不可用（API 缺失/抛错）返回 null：调用方按安装失败处理（首装回滚 / 刷新锁定），不静默豁免。
+ * 与限制无关的「继承层解析链注册表」（R3 修正）：global 层 + chainLayers 按 nearest-wins 合并
+ * 后，仅保留 SDK `tools.view(scope).restrictableNames` 中的名称——该集合是 SDK 计算的
+ * pre-restriction 继承层名称（不受已有限制过滤），own scope 的注册（robot 工具等）天然不在其中，
+ * 因此不会进入 restrict 的 allow 名单：实际 SDK 的 restrict 只接受继承层名称，混入 own 名称会被
+ * `names unknown global tool` 拒绝（受管 Session 首装/刷新即抛错并永久锁定）。真实宿主的
+ * tools.layers 是 {global, chainLayers} shim（无 peek），继承/own 的区分只能由 SDK 的
+ * restrictableNames 提供。own scope 的可信工具保持 SDK 自身注册语义（限制豁免可见、撤销随
+ * 注册移除），其授权与定义核对由 robot 侧自身承担，不借继承 allow 放行。
+ * 身份核对数据源仍是与限制无关的层链 registration 对象（不用 restriction-filtered 的
+ * visible/registrations 作身份依据），也不临时解除任何限制。
+ * 层链/视图不可用（API 缺失/抛错）返回 null：调用方按安装失败处理（首装回滚 / 刷新锁定），不静默豁免。
  */
-function currentChainRegistrations(agentCtx: any, agent: any): Map<string, any> | null {
+function inheritedChainRegistrations(agentCtx: any, agent: any): Map<string, any> | null {
+  const layers = agentCtx?.tools?.layers;
+  if (!layers || typeof layers.chainLayers !== 'function' || !layers.global?.tools) return null;
+  try {
+    // 继承层名称集合以 SDK 自身的 view().restrictableNames 为准（pre-restriction 的继承层
+    // 名称集合，与已有限制无关）：真实宿主的 agentCtx.tools.layers 是 {global, chainLayers}
+    // shim（无 peek），own scope 注册只能经由 SDK 计算的 restrictableNames 排除。
+    const restrictable = agentCtx.tools.view?.(agent)?.restrictableNames;
+    if (!(restrictable instanceof Set)) return null;
+    const merged = new Map<string, any>();
+    for (const [name, registration] of layers.global.tools.entries()) merged.set(name, registration);
+    for (const layer of layers.chainLayers(agent)) {
+      const own = typeof layers.peek === 'function' ? layers.peek(agent) : undefined;
+      if (own !== undefined && layer === own) continue;
+      for (const [name, registration] of layer.tools.entries()) merged.set(name, registration);
+    }
+    const inherited = new Map<string, any>();
+    for (const [name, registration] of merged) {
+      if (restrictable.has(name)) inherited.set(name, registration);
+    }
+    return inherited;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 与限制无关的「完整解析链注册表」（含 agent 自身层）：global 层 + agent 完整 scope 链按
+ * nearest-wins 合并的 registration 对象。用于 own scope 注册的身份核对——robot 工具登记
+ * （Q caller 注册在 agent 自身 scope）与课程会话工具（同样注册在自身 scope）按
+ * 「registration.definition === 注册时对象」核对其当前有效性；它们不进 restrict 的继承 allow。
+ */
+function fullChainRegistrations(agentCtx: any, agent: any): Map<string, any> | null {
   const layers = agentCtx?.tools?.layers;
   if (!layers || typeof layers.chainLayers !== 'function' || !layers.global?.tools) return null;
   try {
@@ -114,19 +154,28 @@ function currentChainRegistrations(agentCtx: any, agent: any): Map<string, any> 
 }
 
 /**
- * 本实例可信注册的当前身份核对（当前有效方案 83 行合同）：名单只含「解析链上该名称的当前
- * registration 仍指向本实例注册时的同一个 definition 对象」的工具——注册被移除、被同名注册
- * 替换（近 scope 遮蔽后当前身份非本实例）时该名称不得获准，同名 global 不借名获准。
+ * 本实例可信注册的当前身份核对（当前有效方案 83 行合同 + R3 继承层修正）：名单只含
+ * 「继承层解析链上该名称的当前 registration 仍指向本实例注册时的同一个 definition 对象」
+ * 的工具——注册被移除、被同名注册替换（近 scope 遮蔽后当前身份非本实例）时该名称不得获准，
+ * 同名 global 不借名获准。own scope 的注册（robot 工具）不在继承链上，永不进入 allow：
+ * 实际 SDK 的 restrictableNames 只含继承层名称，混入 own 名称会让受管 Session 的
+ * restrict 直接抛错并永久锁定（R3 缺陷）；own 工具由 SDK 自身注册语义保证可见与撤销。
  * 返回 null = 无法核实 → 调用方按安装失败处理（fail-closed），不得退化为仅凭名称的名单。
  */
 function presetAllowNames(state: PresetBindingState, agentCtx: any, agent: any): string[] | null {
-  const chain = currentChainRegistrations(agentCtx, agent);
+  const chain = inheritedChainRegistrations(agentCtx, agent);
   if (chain === null) return null;
   const names: string[] = [];
-  for (const [name, definition] of state.trustedTools) {
-    const registration = chain.get(name);
-    if (registration && registration.definition === definition) names.push(name);
-  }
+  const collect = (trusted: Map<string, any>) => {
+    for (const [name, definition] of trusted) {
+      const registration = chain.get(name);
+      // 只认「继承层且当前身份仍指向本实例注册的同一 definition」的名称；
+      // own scope 的 robot 工具不在继承链上，天然不进入 allow（SDK own 注册豁免限制可见）。
+      if (registration && registration.definition === definition) names.push(name);
+    }
+  };
+  collect(state.trustedTools);
+  collect(robotToolDefinitionsFor(agent) ?? new Map());
   return names;
 }
 
@@ -353,10 +402,14 @@ async function handleAgentCreatedForState(payload: { agent: any; source?: unknow
   // 已绑定的重播 announce（clear/compaction 重新发布等）：幂等返回
   if (boundAgents.has(sessionId)) return;
   const outcome = await restoreManagedSnapshot(sessionId, agent?.ctx?.get?.('loader'));
-  if (outcome.kind === 'none') return;
   if (outcome.kind === 'invalid') {
     throw new Error(`直播会话快照无法恢复（${sessionId}）：${outcome.error}；已拒绝本次会话创建/恢复，请创建新的直播会话`);
   }
+  // 可选机器人联动（FEAT-DSH-004）：先登记实际会话 Agent（既有会话后续启用/重配依赖），
+  // 再在本 Agent 的 setup 内、首个工具集合解析前装配（管理与非管理会话一致）；
+  // 返回的 definition 交给会话限制名单按身份核对。未配置/非绑定会话返回空 Map。
+  attachRobotForSession(agent?.ctx, agent, sessionId, fullChainRegistrations);
+  if (outcome.kind === 'none') return;
   const composition = compositionForSession(sessionId);
   const bound = bindSessionContextTools(agent, state);
   if (!bound) {
@@ -367,6 +420,39 @@ async function handleAgentCreatedForState(payload: { agent: any; source?: unknow
       ? `宿主组合不支持受限会话（${composition.reason}）`
       : failureNote ?? '会话缺少可用的受限绑定条件';
     throw new Error(`直播会话受限绑定失败（会话 ${sessionId}，${reason}）；本场停用 Skill 与资料工具，已拒绝本次会话创建/恢复`);
+  }
+  if (snapshotForSession(sessionId)?.presetId === 'dsh-livestream-douyin') {
+    await installPublicChatPersona(agent, state);
+  }
+}
+
+/** 只在受管抖音会话的当前可信工具可用时，调整该会话自己的原 persona。 */
+async function installPublicChatPersona(agent: any, state: PresetBindingState): Promise<void> {
+  try {
+    const assembly = await agent.ctx.systemPrompt.assemble(assembleContextFor(agent));
+    const section = assembly.sections.find((item: { name: string }) => item.name === 'deployment:persona-prefix');
+    const original = section?.text;
+    const noSpeech = '不向抖音发言或推流';
+    const noExternal = '没有账号操作、对外发言、视频、游戏或长期观众记忆能力';
+    if (typeof original !== 'string' || original.split(noSpeech).length !== 2 || original.split(noExternal).length !== 2) return;
+    const adjusted = original.replace(noSpeech, '仅在 send_public_chat_reply 对当前唯一原弹幕可用时使用该工具发送文字，不推流')
+      .replace(noExternal, '没有账号操作、其他对外发言、视频、游戏或长期观众记忆能力');
+    agent.ctx.systemPrompt.section({ name: 'deployment:persona-prefix',
+      order: agent.ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'), complete: true,
+      ...(section.interpolate === undefined ? {} : { interpolate: section.interpolate }),
+      text: ({ signal }: { signal?: AbortSignal }) => {
+        const sessionId = agent?.session?.id;
+        const definition = state.trustedTools.get('send_public_chat_reply');
+        return signal && sessionId === show.currentSession && boundAgents.get(sessionId) === agent
+          && sessionOwnerStates.get(sessionId) === state && !sessionRestrictionFailed(sessionId)
+          && definition && fullChainRegistrations(agent.ctx, agent)?.get('send_public_chat_reply')?.definition === definition
+          && publicChatBridge.replyAvailable?.(agent, signal) ? adjusted : original;
+      },
+    });
+    publicChatPersonaAgents.add(agent);
+    agent.ctx.effect(() => () => { publicChatPersonaAgents.delete(agent); }, 'dsh-livestream public chat persona');
+  } catch {
+    // The session keeps its original restrictive persona if its own scope cannot be verified.
   }
 }
 
@@ -593,18 +679,37 @@ async function push(ctx: AgentContext, sessionId: string, text: string, now = fa
   const found = agents?.get?.(sessionId);
   const agent = found?.followup ? found : found?.agent;
   if (!agent?.followup) return false;
+  const messageId = randomUUID();
+  const composition = topic?.kind === 'chat' && topic.picks.length === 1 ? pickCompositionOf(topic.picks[0]) : null;
+  const sourceEvent = composition?.length === 1 ? composition[0] : null;
+  const expectedTool = sessionOwnerStates.get(sessionId)?.trustedTools.get('send_public_chat_reply');
+  const trustedTool = expectedTool && fullChainRegistrations(agent.ctx, agent)?.get('send_public_chat_reply')?.definition === expectedTool;
+  const replyBound = !!sourceEvent && sourceEvent.kind === 'chat' && publicChatPersonaAgents.has(agent) && boundAgents.get(sessionId) === agent
+    && !sessionRestrictionFailed(sessionId) && !!trustedTool && !!publicChatBridge.rememberReply?.(messageId, agent, sourceEvent);
+  const readOnlyPrefix = '当前是抖音只读接入 / 本地舞台，不向抖音发送消息。\n';
+  const promptText = replyBound && text.startsWith(readOnlyPrefix) ? text.slice(readOnlyPrefix.length) : text;
   // 和 DSH 自己的 createUserMessage 一样：带 id、role，冻结（消息进会话后不能再改）
   const prompt = settings.livePlatform === 'douyin'
-    ? `当前是抖音只读接入 / 本地舞台，可以用 show_stats；查询工具实际可用时可以查询天气或公开资料；不发送抖音消息，不使用 B 站、账号、社交、视频、游戏或 OBS 工具。\n\n${text}`
+    ? `当前是抖音只读接入 / 本地舞台，可以用 show_stats；查询工具实际可用时可以查询天气或公开资料；${replyBound ? '仅在受控工具可用时可用 send_public_chat_reply 回复本条弹幕；' : '不发送抖音消息；'}不使用 B 站、账号、社交、视频、游戏或 OBS 工具。\n\n${promptText}`
     : localRehearsal
     ? `当前是本机彩排，没有连接 B 站或 OBS。只能与主人和模拟观众互动，并可用 show_stats 查看本场数据；查询工具实际可用时可以查询天气或公开资料；视频、游戏、账号和社交工具均不可用。不要主动宣传或承诺这些不可用的功能。\n\n${text}`
     : text;
-  const message = Object.freeze({ id: randomUUID(), role: 'user', content: [{ type: 'text', text: prompt }], source: { kind: 'dsh-livestream' } });
+  const message = Object.freeze({ id: messageId, role: 'user', content: [{ type: 'text', text: prompt }], source: { kind: 'dsh-livestream' } });
   queryTurns.remember(message.id, topicInputs(topic));
   if (topic?.kind === 'chat' && topic.picks.length === 1) courseTurns.remember(message.id, topic.picks[0].event.id);
   if (topic?.kind === 'superchat') courseTurns.remember(message.id, topic.event.id);
-  if (now && agent.steer) await agent.steer(message);
-  else await agent.followup(message);
+  // 可选机器人联动（FEAT-DSH-004）：话题唯一对应一条原事件时，先在 followup/steer 之前把
+  // 原 receipt 绑到这条冻结消息上；聚合/歧义/未登记来源不绑定（机器人侧返回 source_unverified），
+  // 绑定失败也不影响直播推送本身。
+  const robotSource = topic ? robotPushSource(topic) : null;
+  try {
+    if (robotSource) await robotSource.bind(agent, message);
+    if (now && agent.steer) await agent.steer(message);
+    else await agent.followup(message);
+  } catch (error) {
+    if (replyBound) publicChatBridge.forgetReply?.(message.id);
+    throw error;
+  }
   return true;
 }
 
@@ -731,6 +836,10 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
   // onCreated seam 指向本实例的处理器（最近 apply 的实例生效；生产由各实例自己的 agent/created 监听驱动）
   sessionTools.onCreated = (payload) => handleAgentCreatedForState(payload, instanceState);
   sessionTools.verify = verifySessionBinding;
+  // FEAT-DSH-004：robot 联动撤销（停用/改绑/插件退出）与既有会话补装/重装后，
+  // 都同步刷新会话限制名单：已撤销的 robot 工具 definition 不再获准（同名 global
+  // 不借名获准），新装配的定义按身份原子加入。
+  setRobotRestrictionSync(() => refreshSessionToolRestrictions());
   // 警告也打到 stderr：DSH 网页版的日志只在内存里，服务器上看 web.log 才找得到
   if (ctx.logger) hooks.log = (level, message) => {
     ctx.logger[level]?.(`dsh-livestream: ${message}`);
@@ -755,6 +864,44 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
       dispose();
     };
   };
+
+  ctx.effect(() => {
+    const definition = defineTool({
+      name: 'send_public_chat_reply',
+      description: '向当前受信关联的唯一公屏弹幕发送简短文字回复。',
+      parameters: { text: { type: 'string', required: true, description: '要发送的普通文字' } },
+      output: stringOut,
+      async execute(args: unknown, exec: any) {
+        const agent = exec?.agent;
+        const signal = exec?.signal as AbortSignal | undefined;
+        if (!agent || !signal || !available(agent, signal) || !args || typeof args !== 'object'
+          || Array.isArray(args) || Object.keys(args).length !== 1 || !Object.hasOwn(args, 'text')) {
+          return '当前回合不能发送公屏回复。';
+        }
+        const result = await publicChatBridge.sendReply?.(agent, signal, (args as { text: unknown }).text);
+        return JSON.stringify(result ?? { status: 'rejected', reason: 'turn-unavailable' });
+      },
+    });
+    const available = (agent: any, signal: AbortSignal): boolean => {
+      const sessionId = agent?.session?.id;
+      return settings.livePlatform === 'douyin' && !localRehearsal && !!sessionId
+        && show.isOnAir && sessionId === show.currentSession && publicChatPersonaAgents.has(agent) && boundAgents.get(sessionId) === agent
+        && sessionOwnerStates.get(sessionId) === instanceState && !sessionRestrictionFailed(sessionId)
+        && fullChainRegistrations(agent.ctx, agent)?.get('send_public_chat_reply')?.definition === definition
+        && !!publicChatBridge.replyAvailable?.(agent, signal);
+    };
+    const unregister = registerLiveTool(definition, { when: ({ agent, signal }: any) => available(agent, signal) });
+    const offStep = ctx.on?.('agent/pre-step', async ({ agent, turn, signal, messages }: any, next: () => Promise<unknown>) => {
+      const sessionId = agent?.session?.id;
+      if (sessionId && sessionId === show.currentSession && boundAgents.get(sessionId) === agent
+        && sessionOwnerStates.get(sessionId) === instanceState && !sessionRestrictionFailed(sessionId)
+        && Number.isSafeInteger(turn) && signal && !signal.aborted && Array.isArray(messages)) {
+        publicChatBridge.beginReply?.(agent, String(turn), signal, messages);
+      }
+      return next();
+    });
+    return () => { offStep?.(); unregister(); };
+  }, 'dsh-livestream public chat reply');
 
   ctx.effect(() => {
     const invalidate = () => queryTurns.invalidateAll();
@@ -809,7 +956,7 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
           const caller = exec?.agent;
           const signal = exec?.signal;
           if (caller !== agent || !signal || sessionRestrictionFailed(sessionId)
-            || currentChainRegistrations(agent.ctx, agent)?.get(toolName)?.definition !== definition) return '课程工具不可用。';
+            || fullChainRegistrations(agent.ctx, agent)?.get(toolName)?.definition !== definition) return '课程工具不可用。';
           const lease = courseTurns.find(agent, signal);
           if (!lease || lease.sessionId !== sessionId || lease.outputEpoch !== show.stage.outputEpoch || !courseTurns.claim(lease)) return '当前课程话题已失效或本轮已有动作。';
           const result = await course.applyAction(args.input, () => lease.valid() && show.stage.outputEpoch === lease.outputEpoch);
@@ -821,7 +968,7 @@ function applyWithWeather(ctx: AgentContext, source: typeof weatherSource): void
         const dispose = agent.ctx.tools.register(definition, {
           when: ({ agent: candidate }: any) => candidate === agent && show.isOnAir && show.currentSession === sessionId && !!course.view(),
         });
-        if (currentChainRegistrations(agent.ctx, agent)?.get(toolName)?.definition !== definition) {
+        if (fullChainRegistrations(agent.ctx, agent)?.get(toolName)?.definition !== definition) {
           dispose();
           return false;
         }

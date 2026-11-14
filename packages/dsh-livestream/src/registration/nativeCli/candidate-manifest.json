@@ -1,0 +1,78 @@
+{
+  "status": "candidate-incomplete",
+  "upstream_revision": "8d8357d39dd15ac5e9aa815d4ab2639d56bd3239",
+  "upstream_version": "1.0.99",
+  "go_version": "go1.27.3",
+  "source_archive_sha256": "a709190ec00caafa4b737ad5925d30a1da509d3533a92caf8b65a27ddd7b2ac0",
+  "source_manifest_sha256": "fd9f1b182061b27a2b4a2908432799cbd7c3d23f1a0f0ccb1d4939888c01777b",
+  "go_mod_sha256": "a9c905a561f4954a5bd36c5872ef3023f82beef7c41a844e25a25eb762cec1bf",
+  "go_sum_sha256": "74847b3e5f3444e7f017c736cd5e902b179f111353deee027804da298dc311f9",
+  "patch_sha256": "af6c215c5ba663c4970408e565ef1280fa42e1870c8f8233e0386379d91dee3b",
+  "upstream_license_sha256": "c969fc7e3af68e6bf40b0d8dd9c3dcc377eb685a2139535b203b39fdcad739ee",
+  "changed_sources": [
+    {
+      "path": "cmd/registration-fixture-setup/main.go",
+      "before": null,
+      "after": "94329dc025b07738c079c735e1b2b3ca7ddefd7f658bee4bb6831c334a382d07"
+    },
+    {
+      "path": "cmd/registration-native/fixture_env_prod.go",
+      "before": null,
+      "after": "35d22e3126b8a150099caf076f8fbca66650e587d8943e98a358f47e58b86807"
+    },
+    {
+      "path": "cmd/registration-native/fixture_env_testbuild.go",
+      "before": null,
+      "after": "078e3f8691ef4d49db7ea10d211556a70a41fddbc226f101d11dc11e2bd0598c"
+    },
+    {
+      "path": "cmd/registration-native/main.go",
+      "before": null,
+      "after": "713d54e679f9df0ca1c9286cbb55890e6b12697572b23bf4b3b68e933f7f484b"
+    },
+    {
+      "path": "cmd/registration-native/main_test.go",
+      "before": null,
+      "after": "08903271b53c8c3716e74c1c4f481cdc3cd1ae3e8f46edb85cd1b69ec3a23fc9"
+    },
+    {
+      "path": "internal/cmdutil/factory_default.go",
+      "before": "cfd805b03ad36d1dbace94a90592c2097162d4e3e026c6b7269d949684fde9fc",
+      "after": "adefdda08cfa102c2922100a3d6fe56e19b306a48cb667d1dcb5aed2f2308452"
+    },
+    {
+      "path": "internal/cmdutil/registration_useronly_test.go",
+      "before": null,
+      "after": "10ecb60ee6cc245980f9fe08fd3c6880c6baca90a8bb92e0f0df6a0ac2e8c1c1"
+    },
+    {
+      "path": "internal/transport/registration_fixture_prod.go",
+      "before": null,
+      "after": "190728d6500a23a60f08a73fdc688ee1125df4938db34c377f61806c0e931984"
+    },
+    {
+      "path": "internal/transport/registration_fixture_testbuild.go",
+      "before": null,
+      "after": "869a4d5dae4377520a604335fbe6e7dff35b309e5c289dd670431467c81083e9"
+    },
+    {
+      "path": "internal/transport/registration_limit.go",
+      "before": null,
+      "after": "5f69dd7414516111733cc404f8e4e590333084002ff9aa48e0aadf60c819e3a7"
+    },
+    {
+      "path": "internal/transport/registration_limit_test.go",
+      "before": null,
+      "after": "4ddd47d83a915b8a9ac9184c4d78c9c8cc6044b996dfd11bb932555ed1b38ac1"
+    },
+    {
+      "path": "internal/transport/shared.go",
+      "before": "09b42c43ed98c4b6e529ef38cabef9ec96fe0df1645249d0f28947593b8248af",
+      "after": "3e2deb7e915390772308b6b29be9cb0fa9c8c0fbddd7f0247a23c1727485a374"
+    }
+  ],
+  "candidate_binary_sha256": "154145d18732e0a1823d91be611dcff55bdda36ac46c1fce7c3354748d9e94c4",
+  "candidate_binary_release_approved": false,
+  "fixture_build": "registration_fixture build tag and task-owned keychain overlay; no fixture tag or overlay in production candidate",
+  "reproducibility_and_runtime_verification": "two fixed-source builds match; complete runtime, trusted host composition and deployment checks remain incomplete"
+}
