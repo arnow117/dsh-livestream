@@ -1677,6 +1677,10 @@ export const CONSOLE_CSS = `
 .dl-registration .dl-row{flex-wrap:wrap}
 .dl-registration :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
 .dl-registration p{overflow-wrap:anywhere}
+.dl-public-chat{min-width:0;max-width:100%}
+.dl-public-chat .dl-row{flex-wrap:wrap}
+.dl-public-chat input:not([type="checkbox"]),.dl-public-chat textarea,.dl-public-chat select{box-sizing:border-box;min-width:0;max-width:100%}
+.dl-public-chat p,.dl-public-chat h4,.dl-public-chat dt,.dl-public-chat dd{min-width:0;overflow-wrap:anywhere}
 .dl-room :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
 .dl-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dl-dim);margin:8px 0 2px}
 .dl-check input{flex:none}

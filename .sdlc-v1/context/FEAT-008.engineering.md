@@ -578,3 +578,87 @@ root 已核原 run16 的四文件补丁、52项 V8 源与其基线摘要，以�
 首次gofmt使用继承环境、早期Go telemetry实际local的偏差原样保留，不能事后追认完全隔离；local目录在任务私有HOME，随后实际off且完整65项复验通过。接受当前有效软件/最终检查，不以历史偏差虚构新产品缺陷或重复不变检查。旧未记录系统temp/编译子PID等限制照原，不全局清理。原失败、同segment、主诊断未用和executedModel NOT_VERIFIED保持。
 
 T002离线软件实现完成，root将以合法CLI置done并固定推送候选；Feature仍待正式独立Validate、独立Review与本机发布smoke。当前144项coverage范围含新增3个Go测试的非V8分类，52项V8源/原基线未变；旧Build报告/receipt不改，正式Validate用W/main-public-final-build-acceptance-68/coverage-scope.json生成其独立报告和receipt。用户明确真实发送与另一观众核验后续与直播间一并进行，该项仍未完成；不将软件测试通过称为平台可见、完整真实交付或整个Goal完成。
+
+
+## Validation — 832e14ee02e97acfab4940b6a1343b96cf41aa9f（独立 Validate，2026-11-14）
+
+**结论：INCONCLUSIVE；请求 `record-validation --feature-id FEAT-008 --result fail --commit 832e14ee02e97acfab4940b6a1343b96cf41aa9f`。** 本轮必要软件运行多数通过，但故事 10 的视觉/可达性证据存在下列具体问题；不得将 CLI 的 locator 通过直接作为该条件通过。未修改实现或测试；由 root 评估并安排修正/重验。真实发送与另一观众观察由用户明确延至直播间联合验收，不计为本轮已实证。
+
+### 输入、环境与证据索引
+
+被测 L=`/Users/mac/hansen_agent_team/workspace/20261109-deepseek-harness/dsh-livestream`，P=`L/packages/dsh-livestream`，R=`/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat008-validate-832e14e-69`。13:29:58 UTC 首次 preflight，截止 14:04:58 UTC；执行前后业务 HEAD 与 origin/codex/macos-yovoice 均为上述 commit，执行前及本次附加证据前 L 工作树干净。`feature-projection`：T001/T002 done、Feature in_progress，validation/review/release pending。输入 Spec `e165e21a81c2bc9b90269db251b70c2f5ed8fc9cb1c84ff4b0b1a46a3f783f1a`、Plan（追加前）`2891ec3d98b3c180ae116f60f75ba05ef8de92edaeae9225a28c14d938050c9a`、state `f5798e7e1b3857eebc65bfa554d8ebe479fbcf4a90920d5fbebfe44013615b85` 均与 authority 一致。`verify-acceptance` 的 spec_ready 与 plan 均为 **missing**，不是 match、也不是 stale；按 root 已接受的当前语义与精确 Plan 执行，不补旧指纹。
+
+全部实际命令的完整 argv、cwd、脱敏显式环境、PID、精确 UTC 起止与 exit 在 `$R/output/<名称>.json`，对应原始输出 `$R/output/<名称>.log`；以下时间均 UTC，exit 为进程实际退出码。命令由 `$R/run.py` 以最小显式环境启动（等同 env -i）：私有 HOME/DSH_HOME/TMP/XDG/Go caches，单 worker、无测试重试、只读依赖、loopback guard；宿主 import 前 task settings 为 stagePort=0。`go telemetry off` 随后 `go env GOTELEMETRY GOTELEMETRYDIR`：off，目录在 R 私有 HOME。Go 1.27.3、Node 26.13.0；GOTOOLCHAIN=local、GOENV/GOWORK/GOPROXY/GOSUMDB=off。客户端截图与合成账户数据均为任务 fixture。注册 native 仅按明确许可复制和做 hash/mode 检查，未执行。
+
+### Correctness / 构建与兼容
+
+| 名称（完整命令及环境见对应 JSON） | UTC 起止 / exit / 实际结果 |
+|---|---|
+| `typecheck`：P 的 `tsc --noEmit -p tsconfig.json` | 13:32:26–13:32:28 / 0 |
+| `build`：P 的 `node build.mjs`，`DSH_LIVESTREAM_BUILD_OUT=$R/output/host` | 13:32:28–13:32:29 / 0；标准宿主、客户端和舞台均输出到 R。`client-build` 13:38:22 / 0；前后 53 个非客户端文件 hash/mode 与成员一致。 |
+| `registration-build-assets`、`registration-output-symlink` | 13:42:13–13:42:14、13:42:14 / 均 0；两次标准构建、client 保留及 native missing/wronghash/symlink 和输出 symlink 拒绝；测试报告 nativeExecuted=false。公屏 `buildAssets.case.ts` 的 missing/symlink/new-dependency 3 项包含在下述全量 suite 中。native 本次源/产物 SHA256 均 `154145d18732e0a1823d91be611dcff55bdda36ac46c1fce7c3354748d9e94c4`、均 mode 0500、57,996,370 bytes；NOTICE/许可输出 mode 0400、字节摘要与源相符。详 `output/audit.json`。 |
+| `prepare-raw`：原 `prepare_raw.py` 从 D 仓库固定 `3a79c57d85c59289db3b77211b3ec01fae47d42c` 的 git archive 导出到新 R 路径 | 13:32:29 / 0；archive `127c884b84a34a59d3cd0cfcbd438d4b3a49fe3d25b6da8a7bb6490491b6881b`，export manifest `832cbc54ed74bbe3b4467ee39aafbd3000ac9d089529ef7b8ae35cb3a400ccb1`。`raw-typecheck` 13:49:33 / 0，复用只读 D node_modules；无读取 D 未提交源码。 |
+| `sender-source`、`sender-built`：分别以当前源码和标准构建的原 `build_raw.mjs` 处理本轮固定导出 | 13:33:42、13:33:41 / 均 0；source bundle/manifest `9c36514e91ffdcd2b62f1878f12f82b6757f128db1588ab24b8b94cf7e4846b3` / `e7d9395f7e15103be4450fd75f4a87aaee324c743763764c70b9c07b3ea9e303`；built bundle/manifest `a041ec1456934a6eede6902d5322ff69e3ec2eaa1ecd06595b4d596d88be463c` / `1853a4d1c704cfc5723340af737799cb94fcb06b40e2196a5809f16cadaded69`。实际绝对位置不同，清单身份分别核验。 |
+| `go-build`、`fixture-build`、`go-modules`、`go-version-binary` | 13:33:42–13:33:46、13:34:11–13:34:12、13:49:33、13:49:33 / 均 0。生产 helper 离线构建、不用于真实发送；模块列表仅本模块。私有 hello fixture 从当前源码复制，仅 main 准备调用替换成已有受控 fixtureTargets 并复用原 fixture 定义；真实纵向行为由 actualHelperComposition 自建动态 loopback TLS fixture。生产/fixture binary SHA256 `d51c6b6a29efa37fb8deaa84a4fae347caf078d1ce6b42adebc1d896ed4ce76f` / `b3b46438d5b3245dea52b535900fd803f647aecdda380175b10b1ebc5472ef76`。 |
+| `go-coverage`：`go test -v -mod=readonly -count=1 -timeout=60s -p=1 -parallel=1 -coverprofile=$R/output/go-coverage.out ./...`，CWD P/src/publicChat/httpHelper | 13:34:30–13:34:57 / 0；65 顶层通过、0 skip；21 个生产 Go 文件含 main，1530/1840 **语句**、83.15%（原工具显示 83.2%），不是行率或分支率。`go-cover-func` 13:34:57 / 0。 |
+| `go-race`：同目录 `go test -v -race -mod=readonly -count=1 -timeout=60s -p=1 -parallel=1 -run 'Test.*(Write\|Join\|Revoke\|PrepareFixedTargets\|UnsupportedResponseVersions\|ProfileResponseFault)' ./...`（实际 argv 内竖线无转义） | 13:45:52–13:46:25 / 0；27 顶层通过、0 skip。此次独立重验，不依赖旧 race；关键授权/撤权、原 Write 至多一次、unknown、响应限制、材料、joined 并发行为对应 `$W/t002/go-native-coverage-67/output/behavior-mapping.json` 中的测试，均在本轮 Go 输出中。 |
+| `coverage`：`node test/publicChat/run-source-coverage.mjs <scope> <report> <receipt> -- vitest run --config test/publicChat/vitest.public-chat.config.ts --maxWorkers 1 --no-file-parallelism --retry 0 --no-cache --coverage ...` | 13:35:08–13:36:31 / 0；48 文件、260 项通过、0 skip，包括 actualHelperComposition 和 buildAssets；`DSH_PUBLIC_CHAT_COVERAGE_SOURCE=1`，同时提供本轮标准 built 和本轮 source sender/manifest。组合实际经过固定 patched raw Session/CDP/decodeFrame→Controller→HTTP→Runtime→实际 fixture helper→loopback TLS；合成模型 5 请求，不是实际模型。 |
+| `coverage-diff`：以 `6eb5e3b17a295e7af27a000e98ee1ee1ee679fe6`、当前 144 路径 scope 与本轮 receipt | 13:36:58–13:36:59 / 0；改动行 6456/7760=83.20%，分支 3033/3943=76.92%，超过 80%/70%。scope SHA256 `6f8114067397a7990b4bce852502e82d667fca90600555a133c7e1eeb01a525c`；未把浏览器或未归源子进程命中凭空合并，真实零值/未计量保留。report/receipt SHA256 `e34f020e6a0ad8dcc7e671ba40dacbd15955684590caf3238401f14b150548fa` / `01fd207ed8e1df656f97e7485c6bb3f1a5dbb8e56a3efd34bd6c7b5ec4558d41`。 |
+| `compatibility`：原 8 文件含 roomControlIntegration 的 Vitest 命令，`--no-cache` | 13:36:59–13:37:22 / 0；8 文件 94 项通过（roomControl 6 项），0 skip；原 test 在实际临时 DSH_HOME import 前设置 stagePort=0。 |
+| `private-build-corrected`、`private-read-corrected` | 13:37:58–13:37:59 / 均 0；实际读取指定 registration-profile **目录**，其 manifest SHA256 `cff638ff461fab35b082e93d62c28c768472688d03888b69864700f89abb8fcb`；真实 SDK fixture、Node 子进程替身，授权前无读取、撤权/配置变更迟到拒绝、无写。非真实 Harness 用户身份，也未执行登记 native。首次自有目录权限错误见下。 |
+
+### E2E、截图与未通过的视觉证据
+
+四次均使用已提交配置和测试的逐字节副本（配置及测试各 SHA256 见 `$R/runner`；与 P 原文件一致）、tester-army/e2e 0.23.0 CLI、Chromium 156、strict read-only cache、1 worker、0 retries、任务内 profile、实际标准 built sender/host，本轮无 `DSH_PUBLIC_CHAT_COVERAGE_SOURCE`：
+
+| 名称 | UTC 起止 / exit / 实际结果 |
+|---|---|
+| `e2e-settings-desktop-corrected`、`e2e-settings-narrow` | 13:40:03–13:40:12、13:40:28–13:40:34 / 均 0；1440×900 与 375×812 各 1 测试、1 通过，保存零 sender 动作及失败保留草稿。 |
+| `e2e-integration-desktop`、`e2e-integration-narrow` | 13:40:34–13:41:18、13:41:18–13:42:03 / 均 0；各 1 测试、1 通过；合成 owner 通过 built sender 单次发送并核对原 unknown，零重试。 |
+
+每次新鲜 `report.json`、JUnit、逐步 trace 位于 `$R/runner/.task-e2e/{settings-desktop-corrected,settings-narrow,integration-desktop,integration-narrow}/`；fixture 日志及 `e2e/*/output/*cleanup*.json` 有各自服务正常退出记录。由于 runner 放在 R，框架报告中的 VCS 自动识别为外层仓库 `9b16b514.../main dirty`，不是本次业务 commit；commit 关联依据 L 实际 HEAD、提交配置拷贝 hash 与命令中本轮 built 资产，不能把报告 VCS 字段当 832e14e。测试使用确定 locator，真实模型调用为零；浏览器 fixture 中有合成模型协议调用。CLI trace 记录 stagePort=0 的舞台预览/图片 `ERR_UNSAFE_PORT`、fixture 未注册的 events/room-control/registration 路由 404；保留观察，不据此宣称舞台或这些其他路由已在此旅程验证。CLI 本身未输出 PNG；以下补充组合实际产生截图。
+
+`built-visual-corrected` 13:44:54–13:45:39 / 0，实际使用本轮 standard built host/sender 和 `actualHelperComposition`/`owner-journey` 默认 built 分支，1 文件 1 项通过，输出 `$R/output/owner-journey-52438-trace.zip` 和截图。**截图直接观察**：`owner-unknown-52438-1440.png` 实测 1440×900、`owner-unknown-52438-375.png` 实测 375×812，两个视口都出现 Drawer 左侧文字/按钮部分裁切；375 图中“维护发送材料”等文字不能完整显示。`PublicChatSettingsPanel.tsx:167` 的操作行使用 `dl-row`，`console.tsx:1598,1664` 为不换行 flex 与可滚动 Drawer；这提示需要检查横向溢出与滚动状态，但截图本身不足以证明所有被裁切控件不可通过横向滚动或键盘到达，不把猜测当成确定根因。**测试资产问题**：`owner-journey.ts:409` 将 viewport 设为 375，之后 `:457` 保存文件名 `owner-drawer-...-1440.png` 前未恢复 1440；实际两个 `owner-drawer-52438-{1440,375}.png` 均为 375×812。不要以文件名宣称晚期状态有 1440 截图。以上裁切与误标使故事 10 响应式/可达性证据为 PARTIAL / INCONCLUSIVE；请 root 交回核实并补齐后重验。
+
+### 首次失败、保护和范围
+
+- `private-build` / `private-read` 首次 13:37:22 均 exit 1、入口报 `test_paths_unavailable`：本执行者新建的 R/registration-fixture 为 0755，而测试要求 0700；修改此任务目录权限后显式运行上述 corrected 命令通过。原失败日志保留。
+- `e2e-settings-desktop` 首次 13:38:56–13:38:57 exit 3，0 测试、无报告：私有 HOME 中未配置已有浏览器，框架自动尝试下载 Chromium headless shell，内部尝试 5 次均被 loopback 网络 guard 拒绝，未下载安装；此自动重试与本轮不自动重试约束存在执行偏差。首轮框架提示遥测默认启用，不能声称首轮已关闭；连接保护生效，但不臆称遥测发送状态。随后复制本机已有 shell 至 R，明确设置 `PLAYWRIGHT_BROWSERS_PATH`、`E2E_TELEMETRY_DISABLED=1` 和 `DO_NOT_TRACK=1`，手动 corrected 运行；原失败日志保留。
+- `built-visual` 首次 13:43:57–13:44:18 exit 1，1 项失败，`dsh-livestream: 找不到插件包目录`：本执行者漏设深层隔离输出所需 `DSH_LIVESTREAM_PACKAGE_DIR`；实际 runtime 的包查找条件与已提交 integration config 的参数确认该原因。显式补充 P 路径后 corrected 运行通过；首次结果不抹除。
+- 本次 R 输出约 1 GiB，低于 2 GiB。安装 `lib` 12 文件和 `lib.previous-92a3019` 8 文件成员及 SHA256 与既有保护基线匹配，未覆盖。`output/final-resources.json`：从本轮日志/命令提取的 137 个 PID 无存活、94 个端口无监听；只证明已记录资源，不能证明未记录的后代或旧 Go temp 路径，旧 run16/17/18 隔离偏差和原诊断历史保留。未杀共享服务。
+
+### 故事、使用和范围映射
+
+| 故事 | 本轮合成/loopback 结果与边界 |
+|---|---|
+| 1 | COVERED：settings 双视口、`hostSettingsSdk`；默认关闭、保存/失败及零 sender 动作。 |
+| 2–3 | 软件路径 COVERED：built integration、`identityQualification`、`senderEntry`、`senderClientGuard`、Go grant/race；固定目标、owner/非 owner、拒绝和一次性边界。真实账号、真实身份、平台接受及另一观众 **NOT_RUN / DEFERRED**。 |
+| 4–5 | 软件路径 COVERED：`eventRefAgentTool`、`agentTurns`、`rawProofWelcome`、`automaticEventsCoverage`、actualHelperComposition；当前原事件关联、去重、欢迎/礼物增量。真实匿名 gift **NOT_RUN**。 |
+| 6–8 | 软件路径 COVERED：`controllerSend`、`frozenControl`、`correctionComposition`、`operationsReconciliation`、`frozenJournal`、actual helper/TLS 与 Go race；旧队列、撤权、迟到、unknown、原 ID 恢复、历史采用和持久失败边界按各测试断言，不将接口码当观众回执。 |
+| 9 | COVERED：`textPolicy`、`rawProofWelcome`、`journalSecurity` 等合成负例；规则不声称识别全部语义隐私。 |
+| 10 | PARTIAL / INCONCLUSIVE：两视口 CLI locator 与键盘断言通过，补充截图发现上述裁切、晚期 1440 文件误标；不能确认完整视觉/可达验收。 |
+
+使用入口 `L/README.md#LIVE-PUBLIC-CHAT` → `examples/douyin/README.md#公屏文字发送`，参数来自固定导出、受信部署及 Mac 模板；本轮实际按该入口的固定导出、标准 builder、合成 owner 保存/授权/发送及原请求核对运行，参数及结果均为任务 fixture。未验证真实登录维护、真实身份/API、真实 TLS 平台接受、公开发送/观众、真实 gift、开播、真实模型/TTS/设备、真实 registration native、Robot 部署或生产发布。不存在以接口成功码证明平台接收或可见的结论。
+
+**模型元数据**：dispatch 返回 providerInstanceId=codex、model=gpt-6.1-terra、reasoningEffort=xhigh；`executedModel=null`，独立执行模型标识为 NOT_VERIFIED。root 唯一拥有 lifecycle/state 与最终验收；本执行者未调用状态变更、Git 或发布。
+
+### 主 Sol 对第二次独立 Validate 的处置与 Drawer 修正（2026-11-14）
+
+832e14e的独立Validate为INCONCLUSIVE，已先实际record-validation fail。root核11项结果/工件摘要及两张unknown原图，保留独立Node260、V8行83.20%/分支76.92%、Go65/语句83.15%及27race、94兼容、标准build/assets和四个正式Web旅程的对应范围；没有把这些数字抵扣响应式条件。当前视觉截图左侧文字/按钮出现裁切，晚期1440文件实际375×812已由owner-journey.ts:409/457的视口切换确认是测试资产错误。root按done→todo、next/依赖→in_progress恢复T002；reopen由CLI清空validation，但原fail和日志永久保留W/main-validate-acceptance-72/。首轮浏览器下载尝试被guard阻止和遥测状态未核等执行偏差照原，不追认为完全合规。
+
+只读源码定位：公屏根section只标dl-field，操作行复用不换行的dl-row（console.tsx:1598）；Drawer自身overflow:auto（:1664）；普通请求/来源/控制标识段落包含长不间断字符串，只有FullBinding details已有overflow-wrap:anywhere。这支持“内容横向溢出、聚焦后容器发生横向滚动”的可证伪假设，尚未用DOM测量排除动画或截图时机；不得将假设写成已证实根因。原实现者先在源开发fixture+fresh browser context记录1440/375下Drawer/panel/动作按钮与长ID的scrollWidth/clientWidth、scrollLeft和边界，再修正已确认的实际原因。
+
+目标保持原故事10：375与1440下长来源/绑定及unknown/recovery内容仍完整可访问，按钮/标签不被横向裁切，键盘焦点不引起内容横移，允许正常纵向滚动；不通过overflow-x:hidden、截短标识、隐藏操作或重置scrollLeft/裁图掩盖问题。优先复用现有dl-check与局部样式模式，只为公屏组件加作用域并处理动作行换行、字段宽度和长标识断行。无新UI框架、结构重做或共享Drawer/全局dl-row改动；所有授权、pending/unknown、请求ID与事实核对语义保持。
+
+完整写域仅P/src/publicChat/PublicChatSettingsPanel.tsx的局部语义class/必要无行为布局标记、P/src/console/console.tsx的公屏专属CSS区块、P/test/publicChat/**必要回归与截图资产。截图在unknown和核对后两个状态分别显式设置1440/375，记录实际viewport与PNG尺寸；不得再依文件名推定尺寸。新增真实浏览器几何/滚动与键盘回归，不只断言locator存在。代码改动前后均保留原失败与匹配图/DOM证据。
+
+源开发验证先行，再包级noEmit/标准build，重启自有fixture并用fresh context检查正式产物，运行受影响的四个正式strict read-only Web旅程和当前完整Node覆盖（仍80%行/70%分支）。coverage范围仍144路径/52 V8源，基线和排除类别不变，只有本次授权两源的currentSha随真实diff更新；新文件必须完整归类，不能缩分母。当前未改Go27非test/65及race输入、94兼容和私有读取相关逻辑可按独立69原证据匹配复用，不无依据重跑Go或整个旧套件。生产核心/协议/Go/固定patch/host接线/资料/Q/安装目录不改。35分钟有限纠正窗口、自有输出<=1.5GiB、单并发、隔离/已安装浏览器/遥测预先关闭、真实业务预算0；到限不自续。保留同segment与全部失败，原唯一主诊断未使用；本次新增视觉发现不是重复无进展的同输入循环。
+
+
+### 主 Sol 接受 Drawer 响应式修正（2026-11-14，独立重验前）
+
+root 已读取原实现者 run19 终态、完整结果及实际 diff，接受 FEAT-008-T002 的本次软件修正。仅两处生产输入改变：PublicChatSettingsPanel 增加公屏局部 class；console 的公屏专属 CSS 允许操作行换行、限制字段宽度并完整断开长标识。原授权、发送、unknown、原 ID 核对与恢复语义未变。源开发 fresh context 的前后 DOM 测量证实两视口 Drawer scrollWidth 原为1492，修正后等于439/344 clientWidth；焦点与Tab后scrollLeft为0。实际标准构建client.js经测试宿主ModuleLoader加载；unknown及核对后375/1440图均有实际viewport、PNG尺寸和无水平裁切几何证据，root已直接查看375图。正式settings/integration四旅程、标准构建、包级noEmit与最终48文件260项Node通过；52源/144分类保持原覆盖范围，仅两个实际修改源currentSha更新，最终改动行6456/7760=83.20%、分支3031/3941=76.91%。未改Go/兼容/私有读取执行输入，复用独立69对应证据，不为汇总重复运行。
+
+原结果仍为build/incomplete，唯一未完是早期命令未记录PGID、部分浏览器/编译子PID无法重建。root将其处置为不可追补的执行记录偏差，照实保留，不追认为资源记录完全合规，不宣称未记录资源全部退出；已有193个PID/133个端口无残留和任务路径进程扫描为空的证据只按原范围引用。这不是已发现的产品缺陷，不通过重跑已完成检查伪造历史完整性，也不新增实现轮次。后续独立执行须从首次命令记录归属与进程收尾。开发fixture三次准备失败、旧隔离与临时目录偏差、全部历史失败和唯一主诊断未用均保留。
+
+匹配范围：本轮9项源码候选、23项证据工件、217保护输入、5项authority、52项coverage源及10张PNG，root只读机械核验0差异；原生结果SHA256 `26de023e9307b0a0ece0ca5599a2ef872e3baee3f17742232b2f33c9cbd6107c`，逐项核查见W/main-drawer-acceptance-74/input-audit.json，原命令/失败/截图见W/t002/drawer-responsive-73/output/build-result-incomplete-01.json。此为root的软件Build接受，原结果不改写；不等于独立Validate、Review、发布或真实外部验收。root通过CLI将T002恢复done并固定提交push后，派不同执行者做独立受影响Validate；真实账号/房间暂无，用户已明确与直播间一起验收，发送/另一观众/真实gift保持NOT_RUN/DEFERRED。REQ012/FEAT009/Q无新工作。

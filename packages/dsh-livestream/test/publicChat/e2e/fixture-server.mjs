@@ -41,16 +41,42 @@ const handler = connection.createSharedFetchHandler('/api');
 let failNextSave = false;
 let settingsPosts = 0;
 let publicActions = 0;
+let showLongHistory = false;
+const longId = 'request-' + 'r'.repeat(110);
+const longSource = 'source-' + 's'.repeat(180);
+const longDigest = 'a'.repeat(64);
+const longGrant = { version: 'dsh-public-chat-v1', transportKind: 'fixture', buildDigest: longDigest,
+  principalUid: '42', roomId: '101', platformRoomId: '202', liveEpoch: 'live-' + 'l'.repeat(80),
+  grantId: 'grant-' + 'g'.repeat(80), materialDigest: longDigest };
+const longView = { available: true, historyAvailable: true, starting: false, hold: true, grant: null,
+  identity: { accountRecordId: 'account-' + 'a'.repeat(100), roomId: '101', principalUid: '42', platformRoomId: '202', qualified: false },
+  messages: [{ requestId: longId, sourceKey: longSource, state: 'unknown', textDigest: longDigest, createdAtMs: 1000,
+    writeAttempted: true, executionEnded: true, senderProcessNonce: 'sender', requestHash: longDigest,
+    helperPayloadHash: longDigest, autoEvent: null, facts: [], factsRevision: 0, factsDigest: longDigest,
+    conflicts: [], terminalEvidence: null, recovery: { state: 'pending', controlId: 'control-' + 'c'.repeat(110) }, grant: longGrant }],
+  controls: [{ id: 'control-' + 'c'.repeat(110), kind: 'authorize', historicalState: 'unknown', adoptedInCurrentInstance: false }] };
+
 const server = createServer((request, response) => {
   void (async () => {
     if (request.url === '/') {
       response.writeHead(200, { 'content-type': 'text/html' });
-      response.end('<!doctype html><html><body><div id="app"></div><script src="/console.js"></script></body></html>');
+      response.end('<!doctype html><html><body><div id="app"></div><script src="/console.js"></script><script src="/built-client.js"></script></body></html>');
+      return;
+    }
+    if (request.url === '/built-client.js') {
+      response.writeHead(200, { 'content-type': 'text/javascript' });
+      response.end(readFileSync(join(builtRoot, 'client.js')));
       return;
     }
     if (request.url === '/console.js') {
       response.writeHead(200, { 'content-type': 'text/javascript' });
       response.end(readFileSync(join(taskRoot, 'output/e2e-console.js')));
+      return;
+    }
+    if (request.url === '/fixture-long-public-chat') {
+      showLongHistory = true;
+      response.writeHead(204);
+      response.end();
       return;
     }
     if (request.url === '/fixture-counts') {
@@ -68,6 +94,11 @@ const server = createServer((request, response) => {
     }
     const admission = connection.admit(request);
     if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(); return; }
+    if (showLongHistory && request.url === '/api/dsh-livestream/public-chat' && request.method === 'GET') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ ok: true, publicChat: longView }));
+      return;
+    }
     const chunks = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = Buffer.concat(chunks);

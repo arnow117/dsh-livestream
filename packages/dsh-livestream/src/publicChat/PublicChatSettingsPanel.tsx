@@ -131,7 +131,7 @@ export function PublicChatSettingsPanel({ saved, targetKey, onSave, onView, onAc
   ] as const;
 
   return (
-    <section className="dl-field" aria-labelledby={`${prefix}-title`}>
+    <section className="dl-field dl-public-chat" aria-labelledby={`${prefix}-title`}>
       <h3 id={`${prefix}-title`}>公屏文字</h3>
       <p className="dl-hint">保存不会登录、连接或授权发送。发送账号和房间由受信部署及当前房间决定。</p>
       {switches.map(([key, label]) => (

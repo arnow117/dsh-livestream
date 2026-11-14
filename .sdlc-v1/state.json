@@ -236,10 +236,10 @@
           "id": "FEAT-008-T002",
           "status": "done",
           "title": "既有Drawer、owner与Agent/真实事件纵向接线及最小端到端",
-          "updated_at": "2026-11-14T13:22:56Z"
+          "updated_at": "2026-11-14T14:47:02Z"
         }
       },
-      "updated_at": "2026-11-14T13:22:56Z",
+      "updated_at": "2026-11-14T14:47:02Z",
       "validation": {
         "at": null,
         "command": null,
@@ -466,7 +466,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-011.product.md",
       "status": "in_delivery",
       "title": "抖音公屏文字回复、进场欢迎与礼物感谢",
-      "updated_at": "2026-11-14T13:22:56Z"
+      "updated_at": "2026-11-14T14:47:02Z"
     },
     "REQ-012": {
       "acceptance": {

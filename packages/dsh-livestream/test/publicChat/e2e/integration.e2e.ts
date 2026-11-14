@@ -1,7 +1,19 @@
 import { test } from '@e2e-dev/web';
 import { expect } from 'e2e';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readPublicChatGeometry } from './responsive-geometry';
 import { join } from 'node:path';
+
+async function assertPublicChatLayout(browser: any) {
+  const geometry = await browser.evaluate(readPublicChatGeometry);
+  expect(geometry.document.scrollWidth).toBeLessThanOrEqual(geometry.document.clientWidth + 1);
+  expect(geometry.drawer.scrollWidth).toBeLessThanOrEqual(geometry.drawer.clientWidth + 1);
+  expect(geometry.drawer.scrollLeft).toBe(0);
+  expect(geometry.panel.scrollWidth).toBeLessThanOrEqual(geometry.panel.clientWidth + 1);
+  expect(geometry.clipped).toEqual([]);
+  expect(geometry.textOverflow).toEqual([]);
+  return geometry;
+}
 
 test('owner sends once and reconciles the original unknown through the built sender', async ({ app, screen, browser }) => {
   try {
@@ -53,6 +65,21 @@ test('owner sends once and reconciles the original unknown through the built sen
     await expect(screen.getByText(/结果未知，需核对原请求/)).toBeVisible({ timeout: 20000 });
     const view = await browser.evaluate(async () => (await (await fetch('/api/dsh-livestream/public-chat')).json()).publicChat);
     const original = view.messages.find((message: { state: string }) => message.state === 'unknown');
+    const screenshotEvidence: Array<{ state: string; path: string; viewport: { width: number; height: number } }> = [];
+    const capture = async (state: string) => {
+      await browser.evaluate(() => {
+        const heading = document.querySelector('.dl-public-chat h4');
+        if (!heading) throw new Error('original recovery heading unavailable');
+        heading.scrollIntoView({ block: 'start', inline: 'nearest' });
+      });
+      const geometry = await assertPublicChatLayout(browser);
+      const path = await app.screenshot(`${state}-${geometry.viewport.width}`);
+      const png = readFileSync(path);
+      expect(png.readUInt32BE(16)).toBe(geometry.viewport.width);
+      expect(png.readUInt32BE(20)).toBe(geometry.viewport.height);
+      screenshotEvidence.push({ state, path, viewport: geometry.viewport });
+    };
+    await capture('unknown');
     expect(view.hold).toBe(true);
     await screen.getByText('原请求完整绑定').tap();
     const binding = await browser.evaluate(() => {
@@ -65,9 +92,11 @@ test('owner sends once and reconciles the original unknown through the built sen
     expect(binding.text).toContain(original.grant.helperProcessNonce);
     expect(binding.text).toContain(original.requestHash);
     expect(binding.scrollWidth).toBeLessThanOrEqual(binding.width);
+    await assertPublicChatLayout(browser);
     await screen.getByLabel('备注或未看到').fill('没有看到');
     await screen.getByLabel('备注或未看到').press('Tab');
     await expect(screen.getByRole('button', '记录备注')).toBeFocused();
+    await assertPublicChatLayout(browser);
     await browser.keyboard.press('Enter');
     await expect.poll(async () => (await browser.evaluate(async () => (await (await fetch('/api/dsh-livestream/public-chat')).json()).publicChat)).hold).toBe(true);
     await screen.getByLabel('观察到的 UID').fill(original.grant.principalUid);
@@ -84,6 +113,11 @@ test('owner sends once and reconciles the original unknown through the built sen
     const after = await browser.evaluate(async () => (await (await fetch('/api/dsh-livestream/public-chat')).json()).publicChat);
     expect(after.messages.find((message: { requestId: string }) => message.requestId === original.requestId).state).toBe('unknown');
     expect(after.hold).toBe(false);
+    await capture('reconciled');
+    const evidenceRoot = process.env.DSH_PUBLIC_CHAT_E2E_ROOT;
+    if (!evidenceRoot) throw new Error('task-owned output required');
+    writeFileSync(join(evidenceRoot, 'output', `formal-responsive-${process.pid}-${screenshotEvidence[0].viewport.width}.json`),
+      JSON.stringify(screenshotEvidence, null, 2), { flag: 'wx' });
     expect((await counts()).chatCount).toBe(initial.chatCount + 2);
     // Restart off-air, disconnected and with no authentication material.
     // History must still be visible and an existing receipt explicitly adopted.

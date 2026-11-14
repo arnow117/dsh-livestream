@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect } from 'vitest';
 import { runManagedAgent } from './managed-agent';
+import { readPublicChatGeometry } from './responsive-geometry';
 
 interface Inputs {
   root: string;
@@ -41,6 +42,37 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
   });
 }
 
+async function verifyAndCaptureDrawer(page: any, root: string, state: string): Promise<void> {
+  const screenshots = [];
+  for (const size of [{ width: 1440, height: 900 }, { width: 375, height: 812 }]) {
+    await page.setViewportSize(size);
+    await page.evaluate(async () => {
+      const elements = [document.querySelector('.dl-drawer'), document.querySelector('.dl-drawer-wrap')];
+      await Promise.all(elements.flatMap((element) => element?.getAnimations().map((animation) => animation.finished.catch(() => {})) ?? []));
+    });
+    await page.evaluate(() => {
+      const heading = document.querySelector('.dl-public-chat h4');
+      if (!heading) throw new Error('original recovery heading unavailable');
+      heading.scrollIntoView({ block: 'start', inline: 'nearest' });
+    });
+    const geometry = await page.evaluate(readPublicChatGeometry);
+    expect(geometry.viewport).toEqual(size);
+    expect(geometry.document.scrollWidth).toBeLessThanOrEqual(geometry.document.clientWidth + 1);
+    expect(geometry.drawer.scrollWidth).toBeLessThanOrEqual(geometry.drawer.clientWidth + 1);
+    expect(geometry.drawer.scrollLeft).toBe(0);
+    expect(geometry.panel.scrollWidth).toBeLessThanOrEqual(geometry.panel.clientWidth + 1);
+    expect(geometry.clipped).toEqual([]);
+    expect(geometry.textOverflow).toEqual([]);
+    const path = join(root, `output/owner-${state}-${process.pid}-${geometry.viewport.width}.png`);
+    await page.screenshot({ path });
+    const png = readFileSync(path);
+    expect(png.readUInt32BE(16)).toBe(size.width);
+    expect(png.readUInt32BE(20)).toBe(size.height);
+    screenshots.push({ state, path, viewport: geometry.viewport, geometry });
+  }
+  writeFileSync(join(root, `output/owner-${state}-${process.pid}-metadata.json`), JSON.stringify(screenshots, null, 2), { flag: 'wx' });
+}
+
 /** Original Console and actual connection SDK, with only task-owned synthetic endpoints. */
 export async function runOwnerJourney(input: Inputs): Promise<void> {
   const requireFixture = createRequire(join(input.fixtureRoot, 'fixture-runner.cjs'));
@@ -48,7 +80,9 @@ export async function runOwnerJourney(input: Inputs): Promise<void> {
   const requirePackage = createRequire(join(process.cwd(), 'package.json'));
   const esbuild = requirePackage('esbuild');
   const jsPath = join(input.root, 'console-fixture.js');
-  await esbuild.build({ entryPoints: [join(process.cwd(), 'test/publicChat/e2e/console-fixture.tsx')],
+  const builtRoot = process.env.DSH_PUBLIC_CHAT_COVERAGE_SOURCE === '1' ? undefined : process.env.DSH_PUBLIC_CHAT_BUILT_ROOT;
+  const fixtureEntry = builtRoot ? 'production-client-fixture.tsx' : 'console-fixture.tsx';
+  await esbuild.build({ entryPoints: [join(process.cwd(), 'test/publicChat/e2e', fixtureEntry)],
     outfile: jsPath, bundle: true, platform: 'browser', format: 'iife', target: 'chrome120', logLevel: 'silent' });
   const sdkRoot = '/Users/mac/hansen_agent_team/workspace/20261110-qdroid-dsh-t1/dsh-qdroid/node_modules';
   const { Context } = await import(/* @vite-ignore */ pathToFileURL(join(sdkRoot, '@deepseek-ai/cordis/lib/index.js')).href);
@@ -154,7 +188,6 @@ export async function runOwnerJourney(input: Inputs): Promise<void> {
   let runtime: typeof import('../../../src/dsh/runtime') | null = null;
   const ownedHelperPids: number[] = [];
   try {
-    const builtRoot = process.env.DSH_PUBLIC_CHAT_COVERAGE_SOURCE === '1' ? undefined : process.env.DSH_PUBLIC_CHAT_BUILT_ROOT;
     runtime = builtRoot
       ? await import(/* @vite-ignore */ pathToFileURL(process.env.DSH_PUBLIC_CHAT_BUILT_RUNTIME!).href)
       : await import('../../../src/dsh/runtime');
@@ -269,7 +302,12 @@ export async function runOwnerJourney(input: Inputs): Promise<void> {
         }
         if (request.url === '/') {
           response.writeHead(200, { 'content-type': 'text/html' });
-          response.end('<!doctype html><html><body><div id="app"></div><script src="/console.js"></script></body></html>');
+          response.end(`<!doctype html><html><body><div id="app"></div><script src="/console.js"></script>${builtRoot ? '<script src="/built-client.js"></script>' : ''}</body></html>`);
+          return;
+        }
+        if (request.url === '/built-client.js' && builtRoot) {
+          response.writeHead(200, { 'content-type': 'text/javascript' });
+          response.end(readFileSync(join(builtRoot, 'client.js')));
           return;
         }
         if (request.url === '/console.js') {
@@ -405,12 +443,12 @@ export async function runOwnerJourney(input: Inputs): Promise<void> {
     if (!unknown) throw new Error('original unknown not exposed');
     expect(currentView.hold).toBe(true);
     const recovery = panel.getByRole('heading', { name: `核对原请求 ${unknown.requestId}` }).locator('..');
-    await page.screenshot({ path: join(input.fixtureRoot, `output/owner-unknown-${process.pid}-1440.png`) });
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.screenshot({ path: join(input.fixtureRoot, `output/owner-unknown-${process.pid}-375.png`) });
+    await recovery.getByLabel('备注或未看到').scrollIntoViewIfNeeded();
+    await verifyAndCaptureDrawer(page, input.fixtureRoot, 'unknown');
     await recovery.getByLabel('备注或未看到').fill('没有看到');
     await recovery.getByLabel('备注或未看到').press('Tab');
     expect(await recovery.getByRole('button', { name: '记录备注' }).evaluate((element: Element) => document.activeElement === element)).toBe(true);
+    expect((await page.evaluate(readPublicChatGeometry)).drawer.scrollLeft).toBe(0);
     const [noteResponse] = await Promise.all([
       page.waitForResponse((response: any) => response.url().endsWith('/api/dsh-livestream/public-chat')
         && response.request().method() === 'POST' && response.request().postDataJSON()?.action === 'record-fact'),
@@ -454,9 +492,7 @@ export async function runOwnerJourney(input: Inputs): Promise<void> {
     expect(currentView.hold).toBe(false);
     expect(input.chatCount()).toBe(before + 5);
     console.info(`owner-unknown-recovery request=${unknown.requestId} original=unknown recovery=committed chat-count=${input.chatCount()}`);
-    await page.screenshot({ path: join(input.fixtureRoot, `output/owner-drawer-${process.pid}-1440.png`) });
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.screenshot({ path: join(input.fixtureRoot, `output/owner-drawer-${process.pid}-375.png`) });
+    await verifyAndCaptureDrawer(page, input.fixtureRoot, 'reconciled');
     const beforeDisableSave = senderRequests;
     await panel.getByLabel('启用公屏发送').uncheck();
     await panel.getByRole('button', { name: '保存公屏设置' }).click();
