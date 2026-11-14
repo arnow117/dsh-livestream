@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -69,6 +69,9 @@ describe('room control with a controlled collector', () => {
     const address = bridge.address();
     if (!address || typeof address === 'string') throw new Error('missing fixture port');
     process.env.DSH_HOME = directory;
+    const settingsDir = join(directory, 'dsh-livestream');
+    await mkdir(settingsDir, { recursive: true, mode: 0o700 });
+    await writeFile(join(settingsDir, 'settings.json'), JSON.stringify({ stagePort: 0 }), { mode: 0o600 });
     process.env.DSH_LIVESTREAM_LOCAL_REHEARSAL = '1';
     process.env.DSH_LIVESTREAM_DOUYIN_BRIDGE_URL = `http://127.0.0.1:${address.port}`;
     const host = await import('../src/dsh/index');

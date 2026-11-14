@@ -31,6 +31,6 @@ export default {
     { name: 'desktop', engine: web({ browser: 'chromium', viewport: { width: 1440, height: 900 }, headers: { 'x-fixture-owner': 'owner-fixture' } }), app },
     { name: 'narrow', engine: web({ browser: 'chromium', viewport: { width: 375, height: 812 }, headers: { 'x-fixture-owner': 'owner-fixture' } }), app },
   ],
-  cache: { mode: 'off', dir: `${root}/cache/e2e` }, workers: 1, retries: 0,
+  cache: { mode: 'read-only', strict: true, dir: `${root}/cache/e2e` }, workers: 1, retries: 0,
   timeout: 120000, actionTimeout: 10000, assertionTimeout: 15000, trace: 'on',
 } satisfies E2EConfig;

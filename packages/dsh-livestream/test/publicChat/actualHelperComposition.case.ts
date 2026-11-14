@@ -43,7 +43,7 @@ describe('actual helper process and TLS recovery composition', () => {
     const senderDeploymentPath = join(root, 'sender-deployment.json');
     fs.writeFileSync(senderDeploymentPath, JSON.stringify({ bundlePath, manifestPath, exportPath,
       manifestSha256: expectedManifestSha256 }), { flag: 'wx', mode: 0o600 });
-    const builtRoot = process.env.DSH_PUBLIC_CHAT_BUILT_ROOT;
+    const builtRoot = process.env.DSH_PUBLIC_CHAT_COVERAGE_SOURCE === '1' ? undefined : process.env.DSH_PUBLIC_CHAT_BUILT_ROOT;
     const loaderPath = builtRoot ? join(builtRoot, 'chunks/dyhub/verified_sender_loader.mjs')
       : fileURLToPath(new URL('../../src/publicChat/dyhub/verified_sender_loader.mjs', import.meta.url));
     const startTrustedSender: typeof startSourceTrustedSender = builtRoot

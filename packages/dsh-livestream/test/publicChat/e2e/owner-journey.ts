@@ -154,7 +154,7 @@ export async function runOwnerJourney(input: Inputs): Promise<void> {
   let runtime: typeof import('../../../src/dsh/runtime') | null = null;
   const ownedHelperPids: number[] = [];
   try {
-    const builtRoot = process.env.DSH_PUBLIC_CHAT_BUILT_ROOT;
+    const builtRoot = process.env.DSH_PUBLIC_CHAT_COVERAGE_SOURCE === '1' ? undefined : process.env.DSH_PUBLIC_CHAT_BUILT_ROOT;
     runtime = builtRoot
       ? await import(/* @vite-ignore */ pathToFileURL(process.env.DSH_PUBLIC_CHAT_BUILT_RUNTIME!).href)
       : await import('../../../src/dsh/runtime');
@@ -354,7 +354,7 @@ export async function runOwnerJourney(input: Inputs): Promise<void> {
     expect(input.chatCount()).toBe(before + 1);
     if (!runtime) throw new Error('host runtime unavailable');
     await runManagedAgent({ presetPath: input.presetPath, runtime,
-      builtAgent: process.env.DSH_PUBLIC_CHAT_BUILT_ROOT ? join(process.env.DSH_PUBLIC_CHAT_BUILT_ROOT, 'agent.js') : undefined,
+      builtAgent: builtRoot ? join(builtRoot, 'agent.js') : undefined,
       emitRaw: input.emitRaw,
       emitSource(id, text) {
         if (!bridgeSocket) throw new Error('source socket unavailable');

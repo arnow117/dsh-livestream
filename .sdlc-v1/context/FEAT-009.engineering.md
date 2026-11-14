@@ -71,7 +71,13 @@ Node 同步撤业务权限/禁止新 invocation 与私值交付，向已启动�
 
 原 T001 全部未完项继续：真实 SDK authority、shared artifact 解包/两个独立私有 consumer、严格矩阵、共同受管写协调、可信原操作 receipt/failed/unknown、照片移除替换/下载/原图、旧 v1/Visits、匹配 typecheck/格式/构建/全部必要 suite。受管 SQL/设置/新映射不能清 unknown；同 UID 非受管恶意删除不在反回滚保证内，原失败证据保留且不记 PASS。
 
-当前真实业务预算仍 0；真实身份/DPoP/Keychain/Base/photo 均 NOT_RUN。主 Sol 后续安排具体有限身份窗口；实现者无真实凭据读取/登录/请求权限。本次不会以新路径清空任何历史、重置 segment 或使用主诊断。T001 完整接受前 T002 不启动，无状态推进或 commit/push 授权。
+当前实现者真实业务预算仍 0；主 Sol 已接受的真实合成记录读取与本次单字段能力失败分别见下方 Build 证据，不能外推 DPoP、照片或产品写入通过。后续真实窗口仍由主 Sol 具体安排，实现者无真实凭据读取/登录/请求权限。本次不会以新路径清空任何历史、重置 segment 或使用主诊断。T001 完整接受前 T002 不启动；实现者无状态推进或 commit/push 授权。
+
+**受限 native 失败诊断增量（2026-11-14，主 Sol 处置）。** Root 对唯一合成行的四次实际 native 窗口已关闭：身份及两次原记录读取成功，唯一 PUT exit 1、无合格记录 ACK，回读未匹配目标新值；其他三列不变。不能据此确认原意向值未变或副作用不存在，不重试、回滚、删除一次性标记或换路由。原报告 W/main-field-id-window-57/，同版源码追踪 W/main-field-id-source-trace-60/source-trace.json。已确认生产 reportFailure 丢弃具体错误而 boundedProcess 不保留 stderr；实际拒绝层与平台码仍未知，不猜字段/权限/路由原因。
+
+只补充 private native 失败 stdout 的最小脱敏诊断：复用固定源已有 errs.ProblemOf，输出固定失败标记、严格允许集合中的分类和安全整数数字码；非 typed/不合格值使用固定 unknown/null。不得输出 Message、Hint、Cause、URL、LogID、Troubleshooter、凭据、原配置或资料值，不序列化原错误对象。成功信封、exit 非零、严格绑定、请求/响应/连接预算、原认证/DPoP及最多一次资源写保持；诊断分类/数字码不是无副作用或原操作结算证明，不能自动解除 unknown。仅在新的自有 native 候选中实现并验证，不替换 L 已交付读取资产或当前 staging 的固定发行身份，不新增动作、路径、字段名 fallback、查询或业务权限。
+
+为上述新定位的诊断增量，主 Sol 仅追加一次 20 分钟离线固定源构建及受影响验证窗口，累计授权 205 分钟（12300 秒）；旧 185 分钟窗口仍已结束，全部旧超限/失败保留。首次 native/Go 命令前记录唯一 start/deadline，单并发，不获取新源/依赖。合并 W/feat009-t001 与 feat009-read-increment-40 普通文件同时上限调整为 4.5 GiB（4831838208 字节），依据现有约 4.27 GB 输入、两份约 58 MB 新可复现候选及本次自有编译余量；不复制旧 native、node_modules、历史输出或缓存，不移动目录逃限，仅允许构建必需固定源输入及确切可再生私有缓存。只做 typed 诊断/脱敏、成功信封兼容、实际候选与自有 TLS 错误线路及两次重建一致性等受影响检查；不借此重跑全部旧故障或声称完整核心匹配通过。真实配置/Keychain/平台/照片/模型预算仍 0；无第二 PUT、L/Q 发布、状态转换或 Git 权限。到限停止该部分，不能拆批续额；原 segment、全部失败和主诊断未用保持。
 
 
 **决定2：Q私有host由L现有产品入口直接挂载。** 独立builder产core/host/consumer/原图验证及规范Skill清单；L apply实际加载并mount，不修改Q旧package/exports/index/runtime，不只挂fixture。Q新目录和派生Task条件许可见coordination-10/owner-response.json。原OnsiteRobotAgent保持唯一robot_effect_execute；公共Live Agent保留原受限可信工具，资料不进入其参数/结果/assistant消息。
