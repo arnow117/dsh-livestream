@@ -104,7 +104,8 @@ export class SenderService {
           rejectListen(new Error('allocated shared port is forbidden'));
           return;
         }
-        this.boundOrigin = `http://127.0.0.1:${address.port}`;
+        const boundHost = address.family === 'IPv6' ? `[${address.address}]` : address.address;
+        this.boundOrigin = `http://${boundHost}:${address.port}`;
         resolveListen(this.boundOrigin);
       });
     });

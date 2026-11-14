@@ -85,7 +85,7 @@ export function createPublicChatReplyTool(deps: AgentReplyToolDeps): PublicChatR
         sourceKey,
         text: typeof args.text === 'string' ? args.text : '',
         autoEvent: { event: context.sourceEvent, rawId: context.rawId, rawType: context.rawType },
-      });
+      }, 'reply');
       if (result.status === 'accepted') {
         usedTurnKeys.add(onceKey);
         return { status: 'submitted', requestId: result.requestId };

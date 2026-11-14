@@ -15,6 +15,7 @@ export class PublicChatAutomaticEvents {
   private readonly sources = new Map<string, Pending>();
   private readonly raw = new Map<string, RawObservation>();
   private readonly seen = new Map<string, number>();
+  private readonly disabledOverflowUntil = { welcome: 0, thanks: 0 };
   private readonly gifts = new Map<string, { items: Paired[]; dueAt: number }>();
   private timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -27,14 +28,25 @@ export class PublicChatAutomaticEvents {
 
   original(event: LiveEvent): void {
     const kind = event.kind === 'enter' ? 'welcome' : event.kind === 'gift' ? 'thanks' : null;
-    if (!kind || !this.enabled(kind)) return;
+    if (!kind) return;
     const reference = this.sender.input.reference(event);
     if (!reference || !event.user.id) return;
     const now = Date.now();
     this.prune(now);
     const identity = JSON.stringify([reference.liveEpoch, reference.inputConnectionGeneration, reference.rawType, reference.rawId]);
-    if (this.seen.has(identity) || this.seen.size >= 1024 || this.sources.size >= 512) return;
-    this.seen.set(identity, now + RAW_PROOF_WINDOW_MS + RAW_FUTURE_DRIFT_MS);
+    const enabled = this.enabled(kind);
+    const until = now + RAW_PROOF_WINDOW_MS + RAW_FUTURE_DRIFT_MS;
+    if (this.seen.has(identity)) return;
+    if (now <= this.disabledOverflowUntil[kind]) {
+      if (!enabled) this.disabledOverflowUntil[kind] = Math.max(this.disabledOverflowUntil[kind], until);
+      return;
+    }
+    if (this.seen.size >= 1024) {
+      if (!enabled) this.disabledOverflowUntil[kind] = Math.max(this.disabledOverflowUntil[kind], until);
+      return;
+    }
+    this.seen.set(identity, until);
+    if (!enabled || this.sources.size >= 512) return;
     const key = this.key(reference.rawType, reference.rawId, reference.grantId);
     this.sources.set(key, { event, reference, receivedAt: now });
     this.pair(key);
@@ -43,6 +55,20 @@ export class PublicChatAutomaticEvents {
   observed(proof: RawObservation): void {
     const now = Date.now();
     this.prune(now);
+    const kind = proof.rawType === 'WebcastMemberMessage' ? 'welcome'
+      : proof.rawType === 'WebcastGiftMessage' ? 'thanks' : null;
+    if (kind && !this.enabled(kind)) {
+      const grant = this.sender.controller.currentFrozenGrant();
+      if (grant && proof.grantId === grant.grantId && proof.liveEpoch === grant.liveEpoch
+        && proof.roomId === grant.roomId && proof.rawSourceSessionId === grant.rawSourceSessionId
+        && proof.rawSourceConnectionGeneration === grant.rawSourceConnectionGeneration) {
+        const until = now + RAW_PROOF_WINDOW_MS + RAW_FUTURE_DRIFT_MS;
+        if (this.seen.size >= 1024) this.disabledOverflowUntil[kind] = Math.max(this.disabledOverflowUntil[kind], until);
+        else this.seen.set(JSON.stringify([grant.liveEpoch, grant.inputConnectionGeneration, proof.rawType, proof.rawId]), until);
+      }
+      return;
+    }
+    if (kind && now <= this.disabledOverflowUntil[kind]) return;
     if (this.raw.size >= 512) return;
     const key = this.key(proof.rawType, proof.rawId, proof.grantId);
     this.raw.set(key, proof);
@@ -96,8 +122,9 @@ export class PublicChatAutomaticEvents {
     if (!this.valid(pair, Date.now())) return;
     const ref = pair.reference;
     const id = createHash('sha256').update(JSON.stringify([ref.liveEpoch, ref.inputConnectionGeneration, ref.rawType, ref.rawId])).digest('hex');
+    const channel = pair.event.kind === 'enter' ? 'welcome' : 'thanks';
     void this.sender.controller.submit({ requestId: `auto:${id}`, sourceKey: null, text,
-      autoEvent: { event: ref.sourceEvent, rawId: ref.rawId, rawType: ref.rawType } });
+      autoEvent: { event: ref.sourceEvent, rawId: ref.rawId, rawType: ref.rawType } }, channel);
   }
 
   private flush(now: number): void {
@@ -123,15 +150,21 @@ export class PublicChatAutomaticEvents {
     for (const [key, value] of this.raw) if (now - value.receivedAt > RAW_PROOF_WINDOW_MS) this.raw.delete(key);
   }
 
-  clear(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    this.sources.clear();
-    this.raw.clear();
-    for (const batch of this.gifts.values()) {
-      const first = batch.items[0];
-      if (first) this.policy.resetForScope(first.reference.liveEpoch, first.reference.grantId);
+  clear(kind?: 'welcome' | 'thanks'): void {
+    for (const [key, source] of this.sources) {
+      if (!kind || source.event.kind === (kind === 'welcome' ? 'enter' : 'gift')) this.sources.delete(key);
     }
-    this.gifts.clear();
+    for (const [key, proof] of this.raw) {
+      if (!kind || proof.rawType === (kind === 'welcome' ? 'WebcastMemberMessage' : 'WebcastGiftMessage')) this.raw.delete(key);
+    }
+    if (!kind || kind === 'thanks') {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      for (const batch of this.gifts.values()) {
+        const first = batch.items[0];
+        if (first) this.policy.resetForScope(first.reference.liveEpoch, first.reference.grantId);
+      }
+      this.gifts.clear();
+    }
   }
 }

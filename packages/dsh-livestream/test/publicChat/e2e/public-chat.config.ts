@@ -12,6 +12,7 @@ const app = {
       DSH_HOME: `${root}/home`, DSH_LIVESTREAM_PACKAGE_DIR: packageRoot,
       DSH_PUBLIC_CHAT_BUILT_ROOT: process.env.DSH_PUBLIC_CHAT_BUILT_ROOT ?? '',
       DSH_PUBLIC_CHAT_BUILT_RUNTIME: process.env.DSH_PUBLIC_CHAT_BUILT_RUNTIME ?? '',
+      DSH_PUBLIC_CHAT_PROCESS_LOG: process.env.DSH_PUBLIC_CHAT_PROCESS_LOG ?? '',
       DSH_PUBLIC_CHAT_E2E_SDK_ROOT: process.env.DSH_PUBLIC_CHAT_E2E_SDK_ROOT ?? '',
       NODE_OPTIONS: `--require=${packageRoot}/test/publicChat/e2e/network-guard.cjs` },
     log: '.task-e2e/settings-fixture-05.log',

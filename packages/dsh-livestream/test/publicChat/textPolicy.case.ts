@@ -27,6 +27,10 @@ describe('validatePublicText', () => {
     expect(validatePublicText('去 www.foo.bar 看看').ok).toBe(false);
     expect(validatePublicText('直播间 live.douyin.com/12345 一样的内容').ok).toBe(false);
     expect(validatePublicText('短链 v.douyin.com/abcd').ok).toBe(false);
+    expect(validatePublicText('//example.invalid/a').ok).toBe(false);
+    expect(validatePublicText('看这里//example.invalid/a').ok).toBe(false);
+    expect(validatePublicText('//[::1]/a').ok).toBe(false);
+    expect(validatePublicText('单独的 / 与 / 不是链接').ok).toBe(true);
   });
 
   it('拒绝邮箱与电话', () => {
@@ -53,6 +57,23 @@ describe('validatePublicText', () => {
     expect(validatePublicText('换行\r\n注入').ok).toBe(false);
   });
 
+  it('拒绝原文首尾的控制字符，不因 trim 而放行', () => {
+    for (const control of ['\n', '\r', '\t', '\ufeff']) {
+      expect(validatePublicText(`${control}欢迎光临`).ok).toBe(false);
+      expect(validatePublicText(`欢迎光临${control}`).ok).toBe(false);
+    }
+    expect(validatePublicText('  欢迎光临  ').ok).toBe(true);
+  });
+
+  it('与 helper 一致处理嵌入的 www、Unicode 空白和非 ASCII 大小写', () => {
+    for (const text of ['mywww.example/a', '123\u3000456789', 'vx\u00a0name', 'Kx://文字', 'ſmtp://文字', 'HTTP://example.invalid']) {
+      expect(validatePublicText(text).ok, text).toBe(false);
+    }
+    for (const text of ['微信\u00a0好', '//\u3000提示', 'douyin.com/uſer']) {
+      expect(validatePublicText(text).ok, text).toBe(true);
+    }
+  });
+
   it('拒绝超长文字；整条拒发，不截断', () => {
     const longText = '好'.repeat(201);
     const result = validatePublicText(longText);
@@ -61,6 +82,9 @@ describe('validatePublicText', () => {
       // 拒绝原因指向超长，而不是产出可用的替代文本。
       expect(result.reason).toContain('长度上限');
     }
+    // 原文也必须符合发送协议上限，不能在入队后才由 sender 拒绝。
+    expect(validatePublicText(' '.repeat(4095) + '好').ok).toBe(true);
+    expect(validatePublicText(' '.repeat(4096) + '好').ok).toBe(false);
   });
 });
 
@@ -77,6 +101,9 @@ describe('sanitizeTemplateVariable', () => {
     expect(sanitizeTemplateVariable(42)).toBeNull();
     // 部分剥离也绝不回显：未处理的名字不能出现在模板里。
     expect(sanitizeTemplateVariable('小明 http://x')).toBeNull();
+    expect(sanitizeTemplateVariable('//example.invalid/a')).toBeNull();
+    expect(sanitizeTemplateVariable('\n小明')).toBeNull();
+    expect(sanitizeTemplateVariable('小明\ufeff')).toBeNull();
   });
 });
 
@@ -97,5 +124,9 @@ describe('模板渲染', () => {
   it('每条模板产物同样过完整文字校验', () => {
     expect(validateTemplateOutput(renderWelcome('小明')).ok).toBe(true);
     // renderWelcome 只接受已 sanitize 的名字，模板层是最后防线。
+    expect(validateTemplateOutput(renderWelcome('//example.invalid/a')).ok).toBe(false);
+    expect(validateTemplateOutput(renderGiftThanks('小明', '//example.invalid/a')).ok).toBe(false);
+    expect(renderWelcome(sanitizeTemplateVariable('//example.invalid/a'))).toBe('欢迎来到直播间');
+    expect(renderGiftThanks('小明', sanitizeTemplateVariable('//example.invalid/a'))).toBe('谢谢礼物');
   });
 });

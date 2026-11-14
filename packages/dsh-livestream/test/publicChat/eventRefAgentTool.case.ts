@@ -6,7 +6,7 @@ import {
 import { createPublicChatReplyTool, type AgentReplyTurnContext } from '../../src/publicChat/agentReplyTool';
 import { PublicChatSendController } from '../../src/publicChat/controller';
 import { FrozenPublicChatOperationJournal } from '../../src/publicChat/frozenJournal';
-import { makeFrozenTestGateway } from './frozenTestGateway';
+import { makeFrozenTestGateway, successfulOperation } from './frozenTestGateway';
 import { makeTempDir, TEST_BUILD_DIGEST, TEST_INSTANCE_ID, TEST_ROOM_ID, TEST_ACCOUNT_RECORD_ID, TEST_PRINCIPAL_UID, TEST_LIVE_EPOCH, waitFor } from './test-helpers';
 
 const DEPLOYMENT = {
@@ -160,5 +160,31 @@ describe('受限 Agent 回复工具', () => {
     const result = await tool.execute({ text: '加我微信 abc123' });
     expect(result.status).toBe('rejected');
     if (result.status === 'rejected') expect(result.reason).toContain('text-invalid');
+  });
+
+  it('宿主关闭回复后，实际工具已入队的回复不会在在途消息结束后发送', async () => {
+    const gw = makeFrozenTestGateway(Date.now() - 1000);
+    const controller = await readyController(gw);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    gw.setSend(async (request) => {
+      if (request.requestId === 'manual-before-reply') await pending;
+      return { ok: true, value: successfulOperation(request) };
+    });
+    expect((await controller.submit({ requestId: 'manual-before-reply', sourceKey: null, text: '普通文字' })).status).toBe('accepted');
+    const event = {};
+    registerSourceEventMetadata(event, {
+      rawId: 'raw-1', rawType: 'chat', rawFrameTsUntrusted: null, receivedAt: Date.now(),
+      sourceConnectionToken: 'token-current', roomId: TEST_ROOM_ID, liveEpoch: TEST_LIVE_EPOCH,
+    });
+    const tool = createPublicChatReplyTool({ controller, getTurnContext: () => makeContext(event),
+      liveEpoch: () => TEST_LIVE_EPOCH, sourceConnectionToken: () => 'token-current' });
+    const submitted = await tool.execute({ text: '自动回复' });
+    expect(submitted.status).toBe('submitted');
+    if (submitted.status !== 'submitted') throw new Error('reply was not queued');
+    controller.invalidateChannel('reply');
+    release();
+    await waitFor(() => controller.frozenOperationView(submitted.requestId)?.state === 'cancelled_before_dispatch');
+    expect(gw.calls.sends.map((request) => request.requestId)).toEqual(['manual-before-reply']);
   });
 });

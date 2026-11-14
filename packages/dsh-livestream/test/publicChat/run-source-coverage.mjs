@@ -1,6 +1,6 @@
 /** Run a source coverage command while binding its report to unchanged input bytes. */
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -35,7 +35,11 @@ function verifySources() {
 }
 const before = verifySources();
 const startedAt = new Date().toISOString();
-const result = spawnSync(command[0], command.slice(1), { stdio: 'inherit', env: process.env });
+const result = await new Promise((resolveResult) => {
+  const child = spawn(command[0], command.slice(1), { stdio: 'inherit', env: process.env });
+  child.once('error', (error) => resolveResult({ error }));
+  child.once('close', (status, signal) => resolveResult({ status, signal }));
+});
 if (result.error || result.signal || result.status !== 0) {
   throw new Error(`Coverage command failed: ${result.error?.message ?? result.signal ?? result.status}`);
 }

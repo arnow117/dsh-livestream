@@ -27,7 +27,7 @@ const DEPLOYMENT: SenderDeploymentFile = { schemaVersion: 1, listenUrl: 'http://
 const runtimeDeployment = { buildDigest: TEST_BUILD_DIGEST, instanceId: TEST_INSTANCE_ID,
   expectedPrincipalUid: TEST_PRINCIPAL_UID, roomId: TEST_ROOM_ID, accountRecordId: TEST_ACCOUNT_RECORD_ID };
 
-async function makeService(rejectProfile = false) {
+async function makeService(rejectProfile = false, listenUrl = DEPLOYMENT.listenUrl) {
   const mock = makeFrozenTestHelper(TEST_PRINCIPAL_UID);
   if (rejectProfile) mock.rejectProfile();
   const startedAt = Date.now() - 1000;
@@ -41,12 +41,13 @@ async function makeService(rejectProfile = false) {
   const maintenance = await runtime.beginAuthenticationMaintenance({ manifestPath: '/fixture', manifestSha256: 'a'.repeat(64),
     sourceDirectory: '/fixture', materialPath: '/fixture', deploymentPath: '/fixture', deploymentSha256: 'a'.repeat(64), dataDirectory: '/fixture' });
   if (!maintenance.ok) throw new Error('fixture helper unavailable');
-  const service = new SenderService({ runtime, deployment: DEPLOYMENT, token: DEPLOYMENT.token });
+  const service = new SenderService({ runtime, deployment: { ...DEPLOYMENT, listenUrl }, token: DEPLOYMENT.token });
   return { runtime, service, observer, mock, startedAt };
 }
 
-async function withService(run: (origin: string, fixture: Awaited<ReturnType<typeof makeService>>) => Promise<void>, rejectProfile = false) {
-  const fixture = await makeService(rejectProfile);
+async function withService(run: (origin: string, fixture: Awaited<ReturnType<typeof makeService>>) => Promise<void>,
+  rejectProfile = false, listenUrl = DEPLOYMENT.listenUrl) {
+  const fixture = await makeService(rejectProfile, listenUrl);
   const origin = await fixture.service.start();
   console.info(`owned-http-listener pid=${process.pid} port=${new URL(origin).port}`);
   try { await run(origin, fixture); } finally { await fixture.service.close(); }
@@ -70,6 +71,38 @@ async function authorizedController(origin: string, startedAt: number) {
 }
 
 describe('routing and credentials over actual HTTP', () => {
+  it('returns the bound IPv6 origin and qualifies through the same listener', async () => {
+    await withService(async (origin, fixture) => {
+      expect(new URL(origin).hostname).toBe('[::1]');
+      expect(fixture.service.origin).toBe(origin);
+      const { controller } = await authorizedController(origin, fixture.startedAt);
+      expect(controller.currentFrozenGrant()?.principalUid).toBe(TEST_PRINCIPAL_UID);
+      expect(fixture.mock.calls.filter((kind) => kind === 'send')).toHaveLength(0);
+    }, false, 'http://[::1]:0');
+  });
+
+  it('rejects invalid original text before journaling or helper dispatch and permits a later safe send', async () => {
+    await withService(async (origin, fixture) => {
+      const { controller } = await authorizedController(origin, fixture.startedAt);
+      const invalid = ['\n问候', '问候\n', '\r问候', '问候\r', '\t问候', '问候\t',
+        '\ufeff问候', '问候\ufeff', '//example.invalid/a'];
+      for (const [index, text] of invalid.entries()) {
+        const requestId = `invalid-text-${index}`;
+        expect(await controller.submit({ requestId, sourceKey: null, text })).toEqual({
+          status: 'rejected', reason: 'text-invalid',
+        });
+        expect(controller.frozenOperationView(requestId)).toBeNull();
+        expect(fixture.runtime.operation(requestId)).toBeNull();
+      }
+      expect(fixture.mock.calls.filter((kind) => kind === 'send')).toHaveLength(0);
+      expect(controller.hold).toBe(false);
+      expect((await controller.submit({ requestId: 'safe-after-invalid', sourceKey: null,
+        text: '  欢迎光临  ' })).status).toBe('accepted');
+      await waitFor(() => controller.frozenOperationView('safe-after-invalid')?.state === 'api_reported_success');
+      expect(fixture.mock.calls.filter((kind) => kind === 'send')).toHaveLength(1);
+    });
+  });
+
   it('returns the fixed sender instance, build and nonce to an authorized client', async () => {
     await withService(async (origin) => {
       const result = await client(origin).frozenState();

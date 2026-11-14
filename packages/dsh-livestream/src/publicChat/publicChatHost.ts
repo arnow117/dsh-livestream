@@ -89,8 +89,17 @@ export class PublicChatHost {
     this.sender?.controller.suspendFrozenLocally();
   }
 
-  invalidateReplies(): void { if (!this.closed) this.turns.invalidate(); }
-  invalidateAutomatic(): void { if (!this.closed) this.automatic?.clear(); }
+  invalidateReplies(): void {
+    if (this.closed) return;
+    this.turns.invalidate();
+    (this.history?.controller ?? this.sender?.controller)?.invalidateChannel('reply');
+  }
+
+  invalidateAutomatic(kind: 'welcome' | 'thanks'): void {
+    if (this.closed) return;
+    this.automatic?.clear(kind);
+    (this.history?.controller ?? this.sender?.controller)?.invalidateChannel(kind);
+  }
 
   rememberReply(messageId: string, agent: object, event: object): boolean {
     if (this.closed || !this.enabled() || !this.replyEnabled() || !this.sender) return false;

@@ -14,8 +14,9 @@ import (
 	"unicode/utf8"
 )
 
-var forbiddenPublicText = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]{1,31}://|www\.|live\.douyin\.com|douyin\.com/user|v\.douyin\.com|\b(data|file|blob):|\battachment\b|附件\s*[:：]|记录\s*[:：]\s*\S+/\S+|[^\s@]+@[^\s@]+\.[^\s@]{2,}|(微信|weixin|wx|vx)\s*(号|id|:|：)?\s*[:：]?\s*\S{2,})`)
-var phoneText = regexp.MustCompile(`(^|[^0-9])\+?[0-9][0-9\s-]{5,18}[0-9]($|[^0-9])`)
+// JavaScript \s includes Unicode separators. C0/C1 and FEFF are rejected below.
+var forbiddenPublicText = regexp.MustCompile(`([a-z][a-z0-9+.-]{1,31}://|//[^\p{Z}\s/]|www\.|live\.douyin\.com|douyin\.com/user|v\.douyin\.com|\b(data|file|blob):|\battachment\b|附件[\p{Z}\s]*[:：]|记录[\p{Z}\s]*[:：][\p{Z}\s]*[^\p{Z}\s]+/[^\p{Z}\s]+|[^\p{Z}\s@]+@[^\p{Z}\s@]+\.[^\p{Z}\s@]{2,}|(微信|weixin|wx|vx)[\p{Z}\s]*(号|id|:|：)?[\p{Z}\s]*[:：]?[\p{Z}\s]*[^\p{Z}\s]{2,})`)
+var phoneText = regexp.MustCompile(`(^|[^0-9])\+?[0-9][0-9\p{Z}\s-]{5,18}[0-9]($|[^0-9])`)
 
 func validPublicText(text string) bool {
 	if !utf8.ValidString(text) || strings.TrimSpace(text) == "" || len(utf16.Encode([]rune(strings.TrimSpace(text)))) > 200 {
@@ -27,7 +28,14 @@ func validPublicText(text string) bool {
 			return false
 		}
 	}
-	return !forbiddenPublicText.MatchString(text) && !phoneText.MatchString(text)
+	// Match JavaScript /i without /u: ASCII literals must not fold Kelvin or long-s.
+	caseText := strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, text)
+	return !forbiddenPublicText.MatchString(caseText) && !phoneText.MatchString(text)
 }
 
 type privateSend struct {

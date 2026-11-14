@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -111,17 +112,32 @@ func TestPrivateServerGrantAndTLSFixture(t *testing.T) {
 		t.Fatal("grant commit or pre-ACK boundary failed")
 	}
 	send := privateSend{RequestID: "message", SourceKey: "source", RequestHash: strings.Repeat("d", 64), SourceKind: "manual", Grant: bindResult.Grant, Text: "fixture"}
-	sendReply := fixtureExchange(t, inputWriter, outputReader, authority, 3, "send", send.RequestID, send)
+	sequence := uint64(3)
+	for index, text := range []string{"//example.invalid/a", "看这里//example.invalid/a", "//[::1]/a", "\n问候", "问候\t", "\ufeff问候"} {
+		invalid := send
+		invalid.RequestID = "unsafe-message-" + strconv.Itoa(index)
+		invalid.SourceKey = "unsafe-source-" + strconv.Itoa(index)
+		invalid.Text = text
+		reply := fixtureExchange(t, inputWriter, outputReader, authority, sequence, "send", invalid.RequestID, invalid)
+		sequence++
+		if reply.Status != "unavailable" || chats.Load() != 0 {
+			t.Fatalf("unsafe text %q reached the chat target", text)
+		}
+	}
+	send.Text = "  微信\u00a0好  "
+	sendReply := fixtureExchange(t, inputWriter, outputReader, authority, sequence, "send", send.RequestID, send)
+	sequence++
 	if sendReply.Status != "api_reported_success" || chats.Load() != 1 {
 		t.Fatal("fixture send did not report the verified response")
 	}
 	revoke := helperRevoke{ID: "revoke", HelperNonce: proposal.HelperProcessNonce, Kind: "authorization",
 		TargetID: proposal.AuthorizationID, GrantID: bindResult.Grant.GrantID}
-	if reply := fixtureExchange(t, inputWriter, outputReader, authority, 4, "revoke", revoke.ID, revoke); reply.Status != "revoked" {
+	if reply := fixtureExchange(t, inputWriter, outputReader, authority, sequence, "revoke", revoke.ID, revoke); reply.Status != "revoked" {
 		t.Fatal("revoke did not acknowledge")
 	}
+	sequence++
 	send.RequestID, send.SourceKey = "message-2", "source-2"
-	if reply := fixtureExchange(t, inputWriter, outputReader, authority, 5, "send", send.RequestID, send); reply.Status != "unavailable" || chats.Load() != 1 {
+	if reply := fixtureExchange(t, inputWriter, outputReader, authority, sequence, "send", send.RequestID, send); reply.Status != "unavailable" || chats.Load() != 1 {
 		t.Fatal("revoked grant reached fixture")
 	}
 	inputWriter.Close()
@@ -131,12 +147,22 @@ func TestPrivateServerGrantAndTLSFixture(t *testing.T) {
 }
 
 func TestPublicTextPolicyRejectsObviousSecrets(t *testing.T) {
-	for _, value := range []string{"", "https://example.com", "123456789", "a@example.com", "微信:abc", "abc\nxyz", strings.Repeat("x", 201)} {
+	for _, value := range []string{"", "https://example.com", "//example.invalid/a", "//[::1]/a", "123456789", "a@example.com", "微信:abc", "abc\nxyz", "\n问候", "问候\r", "\t问候", "问候\ufeff", strings.Repeat("x", 201)} {
 		if validPublicText(value) {
 			t.Fatal("unsafe fixture text accepted")
 		}
 	}
 	if !validPublicText("欢迎来到直播间") {
 		t.Fatal("ordinary fixture text rejected")
+	}
+	for _, value := range []string{"微信\u00a0好", "//\u3000提示", "douyin.com/uſer"} {
+		if !validPublicText(value) {
+			t.Errorf("ordinary Unicode fixture text %q rejected", value)
+		}
+	}
+	for _, value := range []string{"mywww.example/a", "123\u3000456789", "vx\u00a0name", "Kx://文字", "ſmtp://文字", "HTTP://example.invalid"} {
+		if validPublicText(value) {
+			t.Errorf("unsafe Unicode fixture text %q accepted", value)
+		}
 	}
 }

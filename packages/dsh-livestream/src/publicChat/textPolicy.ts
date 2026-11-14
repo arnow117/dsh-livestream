@@ -10,11 +10,13 @@
 /** 本地长度限制：不是平台字数限制，平台限制未验证。 */
 export const MAX_PUBLIC_TEXT_LENGTH = 200;
 export const MAX_TEMPLATE_NAME_LENGTH = 24;
+/** sender v1 的原文传输上限；必须在入队前检查，不能只限制 trim 后正文。 */
+const MAX_PUBLIC_TEXT_INPUT_LENGTH = 4096;
 
 /** 控制字符：C0 全部 + C1 常见 + 零宽/Bidi/替换字符。公开文字没有合理用途。 */
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f​‎‏‪-‮﻿�]/;
 /** URL：显式 scheme、常见协议相对写法或 www. 前缀。 */
-const URL_PATTERN = /(?:[a-z][a-z0-9+.-]{1,31}:\/\/|(?<![\w@.])www\.)/i;
+const URL_PATTERN = /(?:[a-z][a-z0-9+.-]{1,31}:\/\/|\/\/[^\s/]|www\.)/i;
 /** 链接/附件/记录引用语法（ASCII 前缀用 \b；CJK 前缀不能带 \b——中文字符不是 \w）。 */
 const ATTACHMENT_PATTERN = /(?:\bdata:|\bfile:|\bblob:|\battachment\b|附件\s*[:：]|记录\s*[:：]\s*\S+\/\S+)/i;
 /** 邮箱地址。 */
@@ -43,11 +45,12 @@ export function isWellFormedUnicode(value: string): boolean {
 
 export function validatePublicText(raw: unknown): TextPolicyResult {
   if (typeof raw !== 'string') return { ok: false, reason: '文字必须是字符串' };
+  if (raw.length > MAX_PUBLIC_TEXT_INPUT_LENGTH) return { ok: false, reason: '原文超过本地传输长度上限 4096' };
   if (!isWellFormedUnicode(raw)) return { ok: false, reason: '文字编码无效' };
   const value = raw.trim();
   if (value.length === 0) return { ok: false, reason: '文字不能为空' };
   if (value.length > MAX_PUBLIC_TEXT_LENGTH) return { ok: false, reason: `文字超过本地长度上限 ${MAX_PUBLIC_TEXT_LENGTH}` };
-  if (CONTROL_CHARS.test(value)) return { ok: false, reason: '文字包含控制字符' };
+  if (CONTROL_CHARS.test(raw)) return { ok: false, reason: '文字包含控制字符' };
   if (URL_PATTERN.test(value) || MAINPAGE_PATTERN.test(value)) return { ok: false, reason: '文字包含链接语法' };
   if (ATTACHMENT_PATTERN.test(value)) return { ok: false, reason: '文字包含附件/文件/记录引用语法' };
   if (EMAIL_PATTERN.test(value)) return { ok: false, reason: '文字包含邮箱联系方式' };
@@ -65,7 +68,7 @@ export function sanitizeTemplateVariable(raw: unknown, maxLength = MAX_TEMPLATE_
   if (!isWellFormedUnicode(raw)) return null;
   const value = raw.trim();
   if (value.length === 0 || value.length > maxLength) return null;
-  if (CONTROL_CHARS.test(value)) return null;
+  if (CONTROL_CHARS.test(raw)) return null;
   if (URL_PATTERN.test(value) || MAINPAGE_PATTERN.test(value)) return null;
   if (ATTACHMENT_PATTERN.test(value)) return null;
   if (EMAIL_PATTERN.test(value)) return null;

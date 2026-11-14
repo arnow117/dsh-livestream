@@ -15,11 +15,19 @@ import type { FrozenRecoveryControl } from './frozenRecovery';
 import { validateFrozenRecoveryControl } from './senderClient';
 import { validControlEvidence } from './frozenControlEvidence';
 import { isHttpResponseEvidence } from './httpResponse';
+import type { PublicChatChannel } from './controller';
 
 type Gateway = Pick<SenderClient, 'frozenState' | 'frozenCapture' | 'frozenAuthorize' | 'frozenRevoke' | 'frozenControlOperation' |
   'frozenSend' | 'frozenOperation' | 'frozenReconcileMessage' | 'frozenRecoveryOperation'>;
 interface Deployment { buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string; roomId: string }
-interface QueueItem { request: FrozenSendInput; revision: string; deadline: number; event: object | null }
+interface QueueItem {
+  request: FrozenSendInput;
+  revision: string;
+  deadline: number;
+  event: object | null;
+  channel: PublicChatChannel | null;
+  channelGeneration: number | null;
+}
 type SubmitResult = { status: 'accepted'; requestId: string } | { status: 'rejected'; reason: string } |
   { status: 'duplicate'; requestId: string; outcome: string | null };
 
@@ -37,6 +45,7 @@ export class FrozenControllerCore {
   private inputGeneration = 0;
   private sourceConnectionToken = '';
   private queue: QueueItem[] = [];
+  private readonly channelGeneration: Record<PublicChatChannel, number> = { reply: 0, welcome: 0, thanks: 0 };
   private pumping = false;
   private lastDispatch = -Infinity;
   private degraded = false;
@@ -670,8 +679,12 @@ export class FrozenControllerCore {
     return this.reconcileControl(id);
   }
 
+  invalidateChannel(channel: PublicChatChannel): void {
+    this.channelGeneration[channel]++;
+  }
+
   async submit(input: { requestId: string; sourceKey: string | null; text: string;
-    autoEvent?: { event: object; rawId: string; rawType: string } }): Promise<SubmitResult> {
+    autoEvent?: { event: object; rawId: string; rawType: string } }, channel?: PublicChatChannel): Promise<SubmitResult> {
     if (!/^[!-~]{1,128}$/.test(input.requestId)) return { status: 'rejected', reason: 'invalid-request-id' };
     const existing = this.deps.journal.records.find((record) => record.requestId === input.requestId);
     if (existing) return { status: 'duplicate', requestId: existing.requestId, outcome: existing.state };
@@ -708,7 +721,9 @@ export class FrozenControllerCore {
       recovery: { state: 'blocked', factsRevision: 0, factsDigest: controlPayloadHash([]), controlId: null, receipt: null } };
     this.deps.journal.records.push(record);
     if (!this.persist()) return { status: 'rejected', reason: 'journal-write-failed' };
-    this.queue.push({ request, revision: this.revision, deadline: this.clock.wall() + (this.deps.queueWaitMs ?? 30_000), event: input.autoEvent?.event ?? null });
+    this.queue.push({ request, revision: this.revision, deadline: this.clock.wall() + (this.deps.queueWaitMs ?? 30_000),
+      event: input.autoEvent?.event ?? null, channel: channel ?? null,
+      channelGeneration: channel ? this.channelGeneration[channel] : null });
     void this.pump();
     return { status: 'accepted', requestId: request.requestId };
   }
@@ -723,7 +738,8 @@ export class FrozenControllerCore {
         if (!record || record.state !== 'queued') continue;
         const delay = Math.max(0, this.lastDispatch + (this.deps.dispatchIntervalMs ?? 3000) - this.clock.wall());
         if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
-        if (this.hold || this.revision !== item.revision || this.active !== item.request.grant || this.clock.wall() > item.deadline) {
+        if (this.hold || this.revision !== item.revision || this.active !== item.request.grant || this.clock.wall() > item.deadline
+          || (item.channel !== null && this.channelGeneration[item.channel] !== item.channelGeneration)) {
           record.state = 'cancelled_before_dispatch';
           this.persist();
           continue;

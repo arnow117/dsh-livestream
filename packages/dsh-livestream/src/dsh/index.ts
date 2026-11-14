@@ -564,7 +564,8 @@ export function apply(ctx: HostContext): void {
     if (sessionContextRecord !== undefined) next.sessionContext = sessionContextRecord;
     if (robotLiveConfig !== undefined && robotLiveConfig.ok) next.robotLive = robotLiveConfig.config;
     if (next.publicChat && !next.publicChat.reply) publicChat.invalidateReplies();
-    if (next.publicChat && (!next.publicChat.welcome || !next.publicChat.thanks)) publicChat.invalidateAutomatic();
+    if (next.publicChat && !next.publicChat.welcome) publicChat.invalidateAutomatic('welcome');
+    if (next.publicChat && !next.publicChat.thanks) publicChat.invalidateAutomatic('thanks');
     if (targetChanged) publicChat.invalidateForSettings();
     else if (next.publicChat && !next.publicChat.enabled) publicChat.suspendForSettings();
     try {

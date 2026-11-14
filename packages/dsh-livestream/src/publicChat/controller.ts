@@ -75,6 +75,9 @@ export interface SubmitInput {
   autoEvent?: { event: object; rawId: string; rawType: string };
 }
 
+/** 仅进程内的受信生产者使用；不属于发送协议或用户设置。 */
+export type PublicChatChannel = 'reply' | 'welcome' | 'thanks';
+
 export type SubmitResult =
   | { status: 'accepted'; requestId: string }
   | { status: 'rejected'; reason: string }
@@ -438,8 +441,13 @@ export class PublicChatSendController {
 
   /** ---------- 提交与派发 ---------- */
 
-  async submit(input: SubmitInput): Promise<SubmitResult> {
-    if (this.frozenCore) return this.frozenCore.submit(input);
+  invalidateChannel(channel: PublicChatChannel): void {
+    this.frozenCore?.invalidateChannel(channel);
+  }
+
+  async submit(input: SubmitInput, channel?: PublicChatChannel): Promise<SubmitResult> {
+    if (channel && !input.autoEvent) return { status: 'rejected', reason: 'channel-requires-event' };
+    if (this.frozenCore) return this.frozenCore.submit(input, channel);
     if (!boundedString(input.requestId, 128)) return { status: 'rejected', reason: 'requestId 无效' };
     if (input.sourceKey !== null && !boundedString(input.sourceKey, 200)) return { status: 'rejected', reason: 'sourceKey 无效' };
     // 重复请求只查原操作，不再派发。

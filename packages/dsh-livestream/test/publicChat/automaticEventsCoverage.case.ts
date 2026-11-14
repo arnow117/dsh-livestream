@@ -8,9 +8,10 @@ import { PublicChatAutomaticEvents } from '../../src/publicChat/automaticEvents'
 const NOW = 1_800_000_000_000;
 function setup() {
   let grant: any = { grantId: 'grant', roomId: '101', liveEpoch: 'live', rawSourceSessionId: 'raw-session',
-    rawSourceConnectionGeneration: 1, authorizedAtMs: NOW - 1000, liveEpochStartedAtMs: NOW - 2000 };
+    rawSourceConnectionGeneration: 1, inputConnectionGeneration: 1,
+    authorizedAtMs: NOW - 1000, liveEpochStartedAtMs: NOW - 2000 };
   const references = new WeakMap<object, any>();
-  const submit = vi.fn(async (_input: SubmitInput) => ({ status: 'accepted' }));
+  const submit = vi.fn(async (_input: SubmitInput, _channel?: 'welcome' | 'thanks') => ({ status: 'accepted' }));
   const enabled = { welcome: true, thanks: true };
   const sender = { input: { reference: (event: object) => references.get(event) ?? null },
     controller: { currentFrozenGrant: () => grant, submit } } as unknown as TrustedSender;
@@ -114,6 +115,31 @@ describe('automatic event association and cancellation', () => {
     f.replace();
     vi.advanceTimersByTime(8_000);
     expect(f.submit).not.toHaveBeenCalled();
+    f.automatic.clear();
+  });
+
+  it('keeps a pending gift when welcome is disabled and does not retain disabled raw observations', () => {
+    const f = setup();
+    const gift = f.event('gift-kept', 'gift');
+    f.automatic.original(gift.value);
+    f.automatic.observed(gift.proof);
+    f.enabled.welcome = false;
+    f.automatic.clear('welcome');
+    const disabled = f.event('welcome-disabled', 'enter');
+    const disabledSource = f.event('source-disabled', 'enter');
+    f.automatic.observed(disabled.proof);
+    f.automatic.original(disabledSource.value);
+    f.enabled.welcome = true;
+    f.automatic.original(disabled.value);
+    f.automatic.observed(disabled.proof);
+    f.automatic.original(disabledSource.value);
+    f.automatic.observed(disabledSource.proof);
+    const fresh = f.event('fresh-welcome', 'enter');
+    f.automatic.original(fresh.value);
+    f.automatic.observed(fresh.proof);
+    vi.advanceTimersByTime(8_000);
+    expect(f.submit).toHaveBeenCalledTimes(2);
+    expect(f.submit.mock.calls.map((call) => call[1])).toEqual(['welcome', 'thanks']);
     f.automatic.clear();
   });
 });
