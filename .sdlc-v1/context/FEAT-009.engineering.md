@@ -331,3 +331,11 @@ T001 保持 build / incomplete，T002 不启动。本地观察无法枚举 provi
 同一原Terra按W/main-source-issuer-fix-134/SUPERSEDES.md集中完成修正、针对性反例、原L非空正向及匹配标准构建/解包：新伪fiber后换真实fiber、record后换值/getter、Context descendant和先占claim均不得签发未知tool来源，未知handler执行和patch均0；不得靠同时插入另一个拒绝route掩盖tool表面。既有关闭状态、SDK/provider/撤销与普通注册语义保持。只写原130六项源模块及任务自有必要测试/工件，主线程独占SDLC；旧v9及预修正日志/manifest/快照保留。标准构建沿131同一任务输出替换唯一可再生native副本并先保存非native历史字节，不另存58MB副本，不执行native/Go。
 
 run17原90分钟窗口已结束，实际12:36:59至13:51:30约74.5分钟及更早累计全部保留。基于MSR133-01明确的新因果链，主线程在原内部软件授权内增补最多60分钟实现及必要检查，不是诊断或历史清零；run17及本修正输出合计目标仍128MiB、T001+read-increment普通文件仍≤4831838208 bytes，末采样4591310395。任何两个连续无条件满足且无新因果定位的尝试仍按原非收敛规则停止，唯一主诊断不新增。真实配置/账号/平台/照片/模型/TTS/Robot/浏览器及native/Go执行均0。当前修正不消除部署选择、可信metadata、匹配native/receipt或T002余项。
+
+### 2026-11-15 平台执行限制与防御性修正范围（135）
+
+134委托ordinal5被provider以possible cybersecurity risk终止，未取得实现结果。主线程核8项源/构建输入全部未变、activeRunId=null/pending0；活动记录仅有只读准备及R/correction-133/start.json创建，无源码修改或业务执行。该平台拒绝与原P1一起保留，不绕过、换provider/线程或扩权。
+
+134的防御性封装设计保持，但撤回旧版本的绕过复现及其动态变体生成/执行要求，不把该部分以改写措辞继续发送。当前完整单元仅做自有源码的封装修正与正常功能回归：原entry私有ledger、只读导出、固定canonical origin、生命周期撤销；以实际构建导出面检查、不可变身份/只读快照单测、正常非空L注册/私有协调与设置保存前撤权、类型/受影响兼容/标准构建及解包验证取证。已确认P1的旧运行期复现仍NOT_RUN，新来源设计的安全接受须由后续独立静态检查判断，不虚称补跑了旧动态反例。若正常防御性工作也被平台拒绝，停止此实现操作并报告，不轮换入口重试。
+
+当前start记14:17:20Z、deadline15:17:20Z，135不重置时间；原输出/资源上限和六项源写范围保持。完整安全范围brief为W/main-defensive-source-maintenance-135/SUPERSEDES.md；主线程只更新方案/既有Plan指纹，未接受或提交四项业务dirty。无新诊断、lifecycle状态或T002推进。
