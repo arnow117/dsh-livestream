@@ -939,3 +939,11 @@ root 的实际命令、时间、exit、启动入口、PID/PGID 和监听见 `W/f
 回滚未执行；root 保留服务和明确的回滚命令 `python3 W/feat008-local-ship-97/root-install-start.py --rollback`（执行时将 W 展开为该目录绝对路径）。本次浏览器及其临时 profile 已关闭清理；为使后续 owner 能从当前进程的正常入口登录，root 创建的 `W/feat008-local-ship-97/private/startup.raw.log` 暂留于 0700 目录且文件 0600，含敏感启动材料，不在结果展示；服务仍持有日志文件。产品观察计划见 [REQ-011.product.md](REQ-011.product.md#发布后观察计划)，真实账号、房间、平台受理/发送、另一观众与 gift 等均延后直播联合验收。建议最迟 2026-11-15T19:10:00Z 由 root 复查本机进程、私有日志保留需要和用户反馈；本次没有建立持续观测或安排自动任务。
 
 主 Sol 最终接受本机软件交付：`W/main-local-release-acceptance-98/acceptance-audit.json` 核当前 54 项安装 hash/文件及目录权限、19 个客户端源 hash、原完整 HTTP 字节比较、相同 fresh PID/PGID/监听和入口；另经正常 303 Cookie 流程实际只读核公屏返回 `ok=true`、publicChat 对象、available=false、无 grant，未认证为 401。UI smoke 的保存按钮因草稿未变化禁用，符合当前组件；其请求限制只支持已经记录的只读界面观察，不冒称其它交互通过。保留私有启动日志的权限/用途已核，不在 Git/对话中保存认证值；未执行回滚或发送。97 只追加发布证据，没有改变产品、有效方案或实现，原独立 Validate/Review 仍适用；root 先显式重绑这两个接受点，再按 97 的原 canonical 参数登记本机 release。这里的 released 是当前本机软件交付状态，发送服务尚未装配、发送仍关闭；真实账号/房间装配与资格、有限发送和另一观众等联合验收仍未完成，活动 Goal 不标 complete。其它需求继续排队。
+
+## 2026-11-15 生产 sender 离线资产的主线程接受（99 / 123）
+
+主 Sol 接受 `W/feat008-sender-production-readiness-99` 的 readiness-only 交付，canonical 主验收在 `W/main-sender-readiness-acceptance-123/acceptance.json`，逐文件审计在同目录 `input-audit.json`。272 次文件字节/元数据核对无差异，覆盖既有安装 lib 54 项、helper 源码 27 项、封存依赖 140 项及 sender 输入、支持文件和资产；原 build、仅加载模块定义的 loader 命令均 exit 0，同输入复用，本次不重跑。sender buildDigest 仍为 `f8dc5975292404b6f6eeebb4a5e14538d52176fc4888c79075de995d8a63f54d`，helper SHA256 仍为 `18e3e3eb42904c328a4f4b4465384210d737a0b6cc90864602d0fba3dce3a136`。
+
+补齐 playwright-core 1.64.1 归档字节核对：只读本地 npm cache 中与原 lock SHA512 完全一致的 3,172,161 字节 tgz，115 个归档文件逐字节匹配原安装。首次“整个目录必须等于归档成员”断言 exit 1，定位为额外的 `node_modules/.bin/playwright-core` 包装脚本，原失败保留于 `attempts.json`；安装目录精确相等的断言仍不成立。该脚本另记大小、SHA256 和指向已验证 `cli.js` 的目标，生成过程未知；它不是归档成员，也未被执行。sender 使用 `import { chromium } from 'playwright-core'`，包 exports 指向归档内入口；不以该脚本取代模块。调整为分别核对归档和此唯一额外文件后，审计 exit 0，见 `playwright-archive-check.json` 与 `installed-membership.json`。没有联网、安装、执行包代码、helper、Go、浏览器或业务调用。
+
+此次接受不装配或启用发送服务，不改 lifecycle 状态，也不代表当前后续实现已同版发布。外部依赖链接仍可变，实际装配前须重新核对；真实房间、账号引用/可信 UID/材料、运行期部署和原 journal/instance 绑定仍缺，`DSH_PUBLIC_CHAT_DEPLOYMENT_FILE`、`DSH_PUBLIC_CHAT_MATERIAL_FILE`、`DSH_PUBLIC_CHAT_HELPER_DATA_DIR` 继续未指定。原 unknown 与历史不得用新实例或空目录替代。真实发送及另一观众验收仍延后。
