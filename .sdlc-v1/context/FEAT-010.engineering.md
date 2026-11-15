@@ -105,3 +105,20 @@ codex-111 的同宿主合成发送、断连/恢复、unknown、多段音频、SS
 原课程③④真实能力证据仅按原输入范围复用；002键盘段已用诊断与失败保持，009原真实PUT unknown、原marker/receipt与未完义务保持，011所有历史失败不重置。本次内部组合是新业务输入的交付单元，不接管这些原段或获得额外诊断机会。
 
 实现、独立验证、正式Review与Ship均尚未由本规划证明。全项目Goal继续active，真实直播条件缺失不得替代其他未完软件或可信来源条件。
+
+## Validation — 2026-11-15 independent execution
+
+被测 commit `74d2a953509cf975ec3517934ae1139e53313ad9`，基线 `47f88fa4b5cf6d454016a04e6b83c29e78c37a0f`；执行前、证据追加前 HEAD/branch 与计划指纹匹配，业务工作树干净。宿主披露 codex / gpt-6.1-terra / xhigh；独立 `executedModel` 元数据未披露（`NOT_VERIFIED`）。本次命令、整数退出码、时间、环境、报告、源/产物摘要及收尾的 canonical 交接见 [result.json](/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat010-internal-integration-103/codex-114-independent-validate/result.json)。
+
+| 检查 / 判据 | 结果 | 证据与限制 |
+|---|---|---|
+| 类型、语法、差异、受影响测试与构建 | PASS | 独立运行 9 文件 65 passed、1 按真实课件条件跳过；该用例随后以授权只读课件路径单独运行通过。两处生产变更合计行 `7/7`、分支 `12/12`；[覆盖率及来源](/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat010-internal-integration-103/codex-114-independent-validate/coverage-receipt.json)。标准构建固定 native 摘要匹配、权限 `0500`，未执行。 |
+| S1–S5 适用内部旅程 | PARTIAL / INCONCLUSIVE | tester-army/e2e 19 个选择器、22 个目标全部通过且无重试，含双视口源码及标准产物、实际 Stage/静音预览、课程/断连/结束、合成 sender；详见 [框架报告索引](/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat/feat010-internal-integration-103/codex-114-independent-validate/e2e-summary.json)。六条 `/course/report` 400 出现在若干轨迹，后续业务终态断言通过，但轨迹无请求体和拒绝原因，影响尚不能确定，未据此断言实现缺陷。断连测试中的流中断/连接拒绝及拒绝路径 401、守卫负例分别保留在索引。 |
+| S6 私有隔离 | PARTIAL | 合成标记的公开观察断言与日志扫描通过；T003 原浏览器测试中保存/授权无读取动作，撤权期间迟到读取未重新显示；该测试未独立记录迟到 HTTP 响应体，且不证明 REQ-012 完整写入。 |
+| S7 真实远端联合 | ENV_BLOCKED / NOT_RUN / DEFERRED | 真实开播、独立观众、生产 sender 与获准真实发送由用户另行安排，合成测试不能抵扣。 |
+
+权限检查分别为 owner HTTP 200、未登记/匿名 HTTP 401、SDK 创建的 guest 经原路由 403；该 SDK 无受支持的已认证浏览器 guest 发布路径，未写 SDK 私有 peers 表。22 个 fixture 收尾均记录正式共享/外网请求为零；任务自有进程和监听端口的有限采样已退出，非绝对峰值或全部瞬时后代证明。浏览器报告的 VCS 字段来自 R 所在外层仓库，不代表被测仓库版本。
+
+内部软件总体 `INCONCLUSIVE`（上述网络告警与迟到 HTTP 证据缺口）；完整 Feature `fail`，S7 的外部条件尚未具备。无本轮已定位的实现缺陷；请求主 Sol 在验收后执行 `record-validation --feature-id FEAT-010 --result fail --commit 74d2a953509cf975ec3517934ae1139e53313ad9`，代表性实际命令及完整授权参数见 canonical 结果；本执行者未修改 lifecycle state，未启动 Review/Ship。
+
+追加本验证证据后再运行只读 `verify-acceptance --point plan`，工程上下文指纹显示 `content-drift`、产品上下文仍匹配；本 CLI 的 `context-v1` 会计入证据正文。追加前计划指纹匹配，本次仅追加 Validation 证据，未改方案语义；由主线程按上下文证据适用性协议判断，不擅自更新计划快照。

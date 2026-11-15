@@ -365,12 +365,12 @@
           "updated_at": "2026-11-15T06:17:45Z"
         }
       },
-      "updated_at": "2026-11-15T06:17:45Z",
+      "updated_at": "2026-11-15T08:53:33Z",
       "validation": {
-        "at": null,
-        "command": null,
-        "commit": null,
-        "result": "pending"
+        "at": "2026-11-15T08:53:33Z",
+        "command": "node test/acceptance/run.mjs --grep 'host and course' --action-timeout 5000 --workers 1 --retries 0 --strict-cache",
+        "commit": "74d2a953509cf975ec3517934ae1139e53313ad9",
+        "result": "fail"
       }
     }
   },
@@ -580,7 +580,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-013.product.md",
       "status": "in_delivery",
       "title": "专用屏幕全屏直播播出与组合验收",
-      "updated_at": "2026-11-15T06:17:45Z"
+      "updated_at": "2026-11-15T08:53:33Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",
