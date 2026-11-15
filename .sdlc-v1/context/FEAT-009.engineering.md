@@ -27,6 +27,24 @@ L=`/Users/mac/hansen_agent_team/workspace/20261109-deepseek-harness/dsh-livestre
 - `attachmentAdapter.ts` 先用同一原CLI上下文确认exact record/field/token及extra，再通过固定官方临时下载URL元数据接口取得该token的短期链接。只在私有执行端接受经验证的平台HTTPS来源，Node流式读取按C的原字节硬限制取消；不把CLI不限大小落盘下载当受限stream。Q/photoVerifier复用sharp核原图metadata、完整解码/字节摘要，重新核原记录/附件版本。Covers SCN-06/08/16。接口可用性/必要权限必须在真实窗口证明；失败保留具体状态，正向照片仍是完整交付必要条件。
 - `RegistrationSettingsPanel.tsx` 在原Drawer显示草稿/保存/明确原记录授权/两侧消费/readiness/审阅patch/原operation恢复。资料仅在原获准Peer的私有响应/局部内存显示，普通settings、/state、SSE、模型history、日志不带资料或可读引用；切主体/撤权清除原值。Covers SCN-01/19。
 
+#### 2026-11-15 受管部署与可信来源的接续决定
+
+用户已将本Goal扩大到全部未取消需求，并在Claude额度耗尽后明确“用codex吧”：实现/自测改用codex/gpt-6.1-terra，options={reasoningEffort:xhigh}；规划、复杂分析、独立评审和最终验收继续由Sol承担。不修改cc-switch或Claude全局配置。原GLM错误、Opus请求实际路由至MiniMax及其限额失败保留；Codex只读路由核验通过，独立executedModel未披露，记录NOT_VERIFIED。原T001仍未完成，T002依赖保持。以下收敛现有组件的宿主适配，不新增协议、账本格式、资料库或全机扫描系统，也不把缺失的生产事实改成布尔配置。
+
+**受管边界。** 原C要求共同受管profile写者使用同一原记录协调，管理员绕开流程属于external_conflict边界，不要求证明全机任意进程或同UID任意SQL不可写。原反例/失败不删除，不能扩大或缩小这些原保证。继续复用原OperationStore/schema2、lane、permit及原operation恢复；不重写协调器或增加新全局状态机。
+
+当前SDK新核事实：P/node_modules/@deepseek-ai/cordis/lib/index.js:1309–1314的ReflectService.store按isolation label保存该Context root的服务实现；:1383–1407提供实际name/value/ctx/isolate并登记/卸载，:1423–1438通知服务变化。ToolsService.layers.scoped是实际已存在的scope集合；仅chainLayers当前scope不能覆盖兄弟scope。ToolsService.execute可直接委托所选provider，单service guard也不构成其他service/provider的派发约束。以上只补足同root可观察来源，不外推其他root/进程/直接旧writer的覆盖。
+
+接续实现应由实际受信host composition提供有限入口清单、实际SDK服务/注册和派发绑定的内部依据：绑定同Base/table/字段、同journal身份及generation，相关旧/新writer在真实派发点统一使用原coordinator。来源必须来自受信宿主实际装配，不能接受请求JSON、owner勾选、writerComplete或一段恒真callback来声明覆盖。注册/卸载/替换/配置失效及每次await后、permit/派发前应重核；不得只依赖事件通知或静态名称。课程、公屏、明确只读工具或只写另一Visits表的固定entry，不能因非空tool layer一概阻止资料功能，但其无profile写能力的分类必须有实际registration/provider/固定目标依据；未知能力仍拒写。新writer不得在未接原协调之前启用。
+
+没有真实部署总入口来源时，只完成可核的软件适配与拒绝语义，保留生产覆盖STOP；同root发现能力不是全部署证明。Q旧v1是否在实际deployment使用、是否存在可写同一profile的其他入口，由固定启动/装配事实确认；不读Q当前WIP、不假称新fixed Visits入口覆盖旧v1。需要Q写窗时由主线程给精确依赖，不借历史registration局部许可扩大范围。
+
+**可信元数据。** 现有recordAdapter.getTrustedEvidence消费port和shared projectRecord(record/mapping/readEvidenceRef)绑定继续复用，贯通private/managed factory到实际受权来源适配。宿主真实owner用途动作、受控原提交/采集或可核平台事实才可提供对应proof；模型/请求DTO、任意引用文本、当前now不能产生历史collection/submission或照片用途。没有来源的分项保持unverified/record-only，不能用填列或回显配置升级readiness。已有existingPhotoAuthority真实owner专用动作、原source/target/read/operation句柄和一次性证据应继续复用，不再要求已接受的首次照片版本决定。
+
+生产仍须实际原行和已核系统字段映射/版本、可信用途/collection与原提交关联、确切受权附件来源。软件可以验证这些事实，但不能凭空生成；不得偷偷建列、上传或读取真实资料。原真实PUT仍unknown，原ID/marker/receipt不动、不重试。现有两个native身份154145…与056597…不能互换，当前不授新native/Go或真实业务窗口。
+
+**接手与验证边界。** 原Terra执行者已terminal completed、activeRunId=null、无pending；其run14保留原18PID/组/端口收尾证据。后继Opus请求已取消并为interrupted、activeRunId=null、无pending，八个关键staging输入保持原字节；其失败历史保留。按用户最新Codex选择，用完整交接接续同一T001，只写W/feat009-t001/staging及自有run15输出，不写L/Q源码、共享Skill、安装lib或其他证据。原90分钟Node-only预算计入旧轮，本次最多85分钟，新输出目标不超过64MiB，原合并4.5GiB上限及关闭的205分钟native窗口保持。必要Node/SDK/隔离子进程替身检查由同一执行者完成；原完整native匹配和生产事实未满足前仍不能请求T001 done或提前启动T002。所有原失败、窗口和未用主诊断状态继续，不因换执行者/Plan刷新清零。
+
 #### 关键设计决定
 
 **决定1：固定配置引用，保留原 native 凭据体系。** 固定 v1.0.99 公共源证明本地UAT会重读account；直接profile+前后status不能单独绑定原业务身份。选择本次调用私有0700目录中的只读config.json（0600→只读），只包含明确选中且校验过的app/user/brand/原DPoP策略和keychain SecretInput引用；禁止复制明文appSecret/token/private key或将其放进env/argv。原文件只读、只解析确切已选profile，不扫描账号/用户数据。原值为plaintext或不支持引用时停止该方法，不隐式导出/迁移/降级。
@@ -266,3 +284,9 @@ T003已串行合入实际L，主Sol接受原Drawer→真实SDK私有路由→Liv
 root 已审阅原 run12 准备并亲自执行一次固定真实 native 的有界读取窗口：Live/Robot 两个原私有组件各自 user_info→record_get，恰四个进程均 exit/close 0，原 app/user 摘要匹配；同一合成记录三个文本比对 true、照片 absent、metadata pending、submission unverified。保存/授权零 spawn；从开始后 21.05 秒内已观察到全部结束，五个所属 PID/四进程组无残留、私有临时目录已空。当前 SDK14包/1116文件执行前后匹配，原固定 native 与 profile artifact 摘要未变。准确 argv/CWD/env、结果、资源与 root 最终接受报告见 W/main-real-read-acceptance-51/。
 
 这是任务内真实 SDK owner 和两个私有组件到真实账号/飞书的读取证据，不等于共享 Harness 已安装、实际 Robot Agent 对话消费、原访客提交或照片用途已核实。平台物理请求次数/DPoP细节未观测，认证可能正常刷新原存储；仅此次 root 操作，执行者真实预算仍0、原185分钟fixture窗口不恢复。T001全部署受管writer覆盖、照片专用动作真实入口、系统元数据来源、完整发布及最终匹配，T002和正式Validate/Review/Ship仍未完成。当前有效方案/范围/Task状态不改；本段仅接受新Build证据，并由root显式刷新已有Plan指纹，不补FEAT008的missing历史。
+
+### 2026-11-15 主 Sol 接受 run15 的有限 staging 增量
+
+依据 W/main-run15-staging-acceptance-110/acceptance.json，主 Sol 已读五项源码变化及相关断言，核十项当前源码摘要匹配、七条实际命令 exit 0 及对应日志存在。原九十一项清单中仅三个允许文件变化、新增两个内部模块，无意外变化或缺项。此次接受仅限 factory-owned owner 专用用途动作、原记录内容绑定的可信来源贯通、独立照片用途授权及验证后重新核读，以及明确局限的同 root SDK 变化观察；真实 SDK 的 owner 策略、Node 子进程和图片下载均为合成替身。收集时间和原提交关联仍 unverified，生产 factory 的 record_patch 计数为零。
+
+T001 保持 build / incomplete，T002 不启动。本地观察无法枚举 provider-only scope，也不覆盖其他 root、进程及直接旧 writer；当前 boundaryCurrent 仍最终返回 false，不构成原 factory→coordinator→permit→写入→receipt 正向交付。下一依赖是实际受管宿主 composition 对相关 writer 的注册、生命周期和原派发点的明确装配依据，以及可信元数据来源、当前 native 匹配和串行发布；不以新布尔配置、重复 fixture 或恒拒写结算。当前没有给执行者新增 native、Go、真实业务或 L/Q 写窗，旧 PUT unknown、失败、资源累计和诊断状态保持。本次主线程只读验收未重跑测试，不是独立 Validate 或 Review；执行配置 codex/gpt-6.1-terra/xhigh，独立 executedModel 仍 NOT_VERIFIED。

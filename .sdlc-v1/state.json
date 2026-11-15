@@ -271,9 +271,9 @@
       "acceptance": {
         "plan": {
           "algorithm": "sha256",
-          "at": "2026-11-14T09:58:50Z",
+          "at": "2026-11-15T04:00:32Z",
           "documents": {
-            ".sdlc-v1/context/FEAT-009.engineering.md": "e5dd485ea60a050ed17d813da93595733727dfacafac3a01ad1ac9b3169ffeeb",
+            ".sdlc-v1/context/FEAT-009.engineering.md": "c87a091be702d0d06a8dd898b1ef65edf7fc0ad5c8e427eda7417955d76510e3",
             ".sdlc-v1/context/REQ-012.product.md": "9a74072f02084305687fb0018d704479e991c41feb36693e50718c1c765a7dfc"
           },
           "normalization": "context-v1"
@@ -301,7 +301,7 @@
           "id": "FEAT-009-T001",
           "status": "in_progress",
           "title": "受控资料执行核心、共享artifact与独立Robot私有host",
-          "updated_at": "2026-11-13T16:34:39Z"
+          "updated_at": "2026-11-15T03:30:24Z"
         },
         "FEAT-009-T002": {
           "depends_on": [
@@ -320,7 +320,52 @@
           "updated_at": "2026-11-14T04:41:19Z"
         }
       },
-      "updated_at": "2026-11-14T09:58:50Z",
+      "updated_at": "2026-11-15T04:00:32Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
+      }
+    },
+    "FEAT-010": {
+      "acceptance": {
+        "plan": {
+          "algorithm": "sha256",
+          "at": "2026-11-15T06:17:45Z",
+          "documents": {
+            ".sdlc-v1/context/FEAT-010.engineering.md": "0284f244a83802bed4850891ef11bb4779078e12f13c5f03c7a22bd7bcb95e1d",
+            ".sdlc-v1/context/REQ-013.product.md": "475d50feb2db89cf15df34a3188b4b91e94f84247f622ea3b766f59646b0fec5"
+          },
+          "normalization": "context-v1"
+        }
+      },
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-15T02:38:35Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-010.engineering.md",
+      "id": "FEAT-010",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-013",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "FEAT-010-T001": {
+          "depends_on": [],
+          "id": "FEAT-010-T001",
+          "status": "done",
+          "title": "专用全屏播出的同版内部组合、恢复与结束支持",
+          "updated_at": "2026-11-15T06:17:45Z"
+        }
+      },
+      "updated_at": "2026-11-15T06:17:45Z",
       "validation": {
         "at": null,
         "command": null,
@@ -374,7 +419,7 @@
     "REQ-004": {
       "created_at": "2026-11-10T06:11:54Z",
       "depends_on": [],
-      "description": "保留真实获准抖音私聊收取与正确回复；登记独立于私信和T1，用户名和联系方式必填，照片和意向商品可选，两Agent以同版受权Skill直读写唯一共享飞书Base。公屏回复由REQ-011独立承接；本需求的获准可达入口、真实私信、扩展映射与executor、私有宿主及两侧共享消费仍待齐，保持captured，不以Demo或接口存在宣称完成。",
+      "description": "保留获准独立登记入口、原提交到确切记录关联、API优先及条件UI备用公开引导、真实抖音私信与最终父验收；公屏内部软件由REQ-011、同Base资料消费修改由REQ-012承接，除冻结修复外的全屏播出与组合验收由REQ-013承接。私信准入、入口资格和真实可信来源未具备时分别保留缺口，不重复子需求实现。",
       "domain": "douyin-private-messaging",
       "feature_id": null,
       "id": "REQ-004",
@@ -382,7 +427,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-004.product.md",
       "status": "captured",
       "title": "抖音私信互动与访客登记",
-      "updated_at": "2026-11-13T12:22:32Z"
+      "updated_at": "2026-11-15T02:59:23Z"
     },
     "REQ-005": {
       "created_at": "2026-11-10T06:27:24Z",
@@ -393,9 +438,9 @@
       "id": "REQ-005",
       "priority": "P0",
       "product_context_ref": ".sdlc-v1/context/REQ-005.product.md",
-      "status": "ready",
+      "status": "cancelled",
       "title": "真实抖音直播的观众端播出与验收",
-      "updated_at": "2026-11-10T10:40:33Z"
+      "updated_at": "2026-11-15T02:25:15Z"
     },
     "REQ-006": {
       "created_at": "2026-11-10T07:51:01Z",
@@ -512,7 +557,30 @@
       "product_context_ref": ".sdlc-v1/context/REQ-012.product.md",
       "status": "in_delivery",
       "title": "同一 Base 四字段私有资料消费与受管修改",
-      "updated_at": "2026-11-14T04:41:19Z"
+      "updated_at": "2026-11-15T03:30:24Z"
+    },
+    "REQ-013": {
+      "acceptance": {
+        "spec_ready": {
+          "algorithm": "sha256",
+          "at": "2026-11-15T02:38:35Z",
+          "documents": {
+            ".sdlc-v1/context/REQ-013.product.md": "475d50feb2db89cf15df34a3188b4b91e94f84247f622ea3b766f59646b0fec5"
+          },
+          "normalization": "context-v1"
+        }
+      },
+      "created_at": "2026-11-15T02:25:15Z",
+      "depends_on": [],
+      "description": "承接REQ-005除画面冻结/失焦修复之外的播出、恢复和结束目标；各项内部自测后，通过同版DSH plugin完成课程、公屏与播出组合联调，真实直播与独立观众验收另行安排。",
+      "domain": "douyin-audience-output",
+      "feature_id": "FEAT-010",
+      "id": "REQ-013",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-013.product.md",
+      "status": "in_delivery",
+      "title": "专用屏幕全屏直播播出与组合验收",
+      "updated_at": "2026-11-15T06:17:45Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

@@ -1030,7 +1030,8 @@ export class LiveShow {
     const text = speakable(raw);
     if (!text) return '';
     const generation = this.sessionGeneration;
-    const current = () => !owned || (owned.valid() && !owned.signal.aborted && this.onAir && !this.ending && this.stage.outputEpoch === owned.owner.epoch);
+    const current = () => generation === this.sessionGeneration && this.onAir
+      && (!owned || (owned.valid() && !owned.signal.aborted && !this.ending && this.stage.outputEpoch === owned.owner.epoch));
     // 嘴两条线共用、按先后念：游戏线的话一句不丢（死了、危险、拿到装备都在这里说）；直播线推下一件事时不等游戏线的话
     const game = line === 'game';
     const preparedCourse = this.course?.prepareSpeech().then(

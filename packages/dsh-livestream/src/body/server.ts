@@ -71,7 +71,11 @@ export class StageServer {
   }
 
   get url(): string {
-    return `http://127.0.0.1:${this.options.port}/?token=${this.options.token}`;
+    const address = this.server?.address();
+    const port = address && typeof address !== 'string' && address.port > 0
+      ? address.port
+      : this.options.port;
+    return `http://127.0.0.1:${port}/?token=${this.options.token}`;
   }
 
   start(): Promise<void> {
