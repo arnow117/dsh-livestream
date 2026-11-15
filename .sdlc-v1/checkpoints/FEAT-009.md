@@ -40,5 +40,6 @@
 - W/main-defensive-source-maintenance-135/{SUPERSEDES.md,dispatch-receipt.json,platform-restriction.json,plan-refresh.json}；baseline=W/main-source-issuer-fix-134/input-baseline.json。
 - W/managed-source-security-review-133/{findings.md,result.json}；W/feat009-t001/run17-l-source-integration/{result-final.json,source-artifact-manifest-final.json,correction-133/start.json}；后续135结果路径按原brief为R/result-defensive-maintenance.json，尚未确认生成。
 - W/main-interrupted-source-audit-136/audit.json记录本次终态、现有内容/日志核对、资源采样和缺项；它不替代执行者最终交付、独立接受或用户恢复决定。
+- 独立REQ004表单检查137子任务已completed但未访问页面；root补有限Incognito DOM观察，详情W/req004-form-readonly-137/main-observation.json及REQ004产品OPEN表。无提交/记录/权限验收，不改变资料线程停止或范围待确认。
 - 读取先行接受W/main-t003-acceptance-42、main-real-read-acceptance-51；共享profile子artifact固定manifest cff638ff461fab35b082e93d62c28c768472688d03888b69864700f89abb8fcb，不是完整writer核心。
 - SDLC CLI=/Users/mac/hansen_agent_team/external/sdlc-pilot/scripts/lifecycle_state.py；Plan最后已核match，工程digest bc2086de27740610893b496b2773a949ff54537b8859cf97d30270f78779ab03；引用前重核。
