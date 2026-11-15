@@ -317,3 +317,17 @@ T001 保持 build / incomplete，T002 不启动。本地观察无法枚举 provi
 **串行源码所有权。** 主线程明确开放同一原Terra在P/src/dsh/index.ts的上述helper/apply/dispose/内部导出、runtime.ts的pre-change局部、agent.ts的注册/释放接线、新registration/managedLivestreamHost.ts及test/registration必要测试；S的原模块和W/feat009-t001/run17-l-source-integration为同一执行者范围。build.mjs现有shared chunks足用，未开放改动；Console/T002、现有authority/coordinator/store/native、Q/H/D/upstream、已安装lib/备份不写。主线程独占工程正文与state。部署选择、跨root/Q/legacy覆盖、可信collection/原提交与当前native/receipt仍按原条件逐项处理，不把软件正向fixture算作真实部署闭合。
 
 **完成与资源。** 同一完整单元必须实际加载原L非空HTTP注册并连通source module→SDK/boot/Loader→carrier/factory/coordinator→合成受限资源→receipt/回读，检验真实updateSettings/注册/释放的先撤销后变更、伪同名/path/跨root/module/provider及晚到拒绝、受影响类型/格式/兼容、隔离标准构建和新解包精确成员消费；复用不变run16证据，不重复全套。具体接口、边界、必要命令与交接依 `W/main-managed-l-source-130/SUPERSEDES.md`，输入依input-baseline.json。run16实际约61.6分钟及原90+85/native205分钟历史保留；因上述源内因果定位和新开放范围增补最多90分钟Node软件窗口，新输出目标128MiB、合并上限仍4831838208 bytes。不执行/构建/获取native或Go；仅允许标准隔离build复制原固定58MB资产一次并核摘要，不推导其与新writer匹配。真实业务、账号/凭据、平台/照片、模型/TTS/Robot、浏览器均0。全部原失败、unknown、非收敛和唯一主诊断状态保留；本段不是新诊断机会、正式Validate/Review或T001完成。
+
+### 2026-11-15 run17 标准构建核对与 MSR133-01 修正方案（134）
+
+主线程已核修正后标准构建54项及carrier v9的5个普通文件成员无差异，8个host JS与已测host-v3逐字节一致；原51个非native产物已移动保存，原native唯一任务输出副本经未改build.mjs校验/替换，未执行。相同源码与宿主字节支持原49项相关测试的有限复用。证据W/main-run17-final-acceptance-132/build-content-audit.json及run17/result-final.json；其read-only Git观察不改变index/源码/state，按已有branch/worktree核对要求处置，不作为产品故障或重跑理由。以上完整性通过不构成来源权限正确。
+
+主Sol接受独立W/managed-source-security-review-133的MSR133-01（High/P1，changes_requested）：公开mountLivestreamAgent接受可伪造context/fiber，取得registrar后修改origin.fiber即可使未知真实工具满足后续Loader与registration匹配。一次WeakSet与冻结外层record不足；实例类型检查也不解决Context.extend或getter。该变体尚无运行证据，独立结论为有条件静态执行链成立；原重复真实fiber反例不能反证。本次源码增量及v9完整软件交付暂不接受，不推进T001/T002、正式Review或生产激活。
+
+**替代130中来源状态所有权的当前有效实现方案。** 可追加记录的私有ledger和registrar仅保留在index/agent两个原entry模块的词法闭包中，只有原有限route/tool注册代码能写；对外（含可直接导入的shared chunks）只提供读取，不保留通用mount/append/publish/setter或可返回signer的工厂。公共apply是原固定功能入口，不能接收外部handler/ledger，重复/先占调用不能返回签发能力。原managedLivestreamHost模块可保留类型和只会使既有快照失效的变更通知，不持有可被外部通用函数追加的信任记录。index与agent各持有实际创建的记录，carrier从实际Loader加载的两个namespace分别读取；index不得静态导入整个agent来形成第二运行时/打包所有tools。现有shared chunks继续只用于共享runtime/撤销状态，不能以未写在package exports中就称通用mint不可达。
+
+每次原apply捕获不可变origin tuple：真实origin Context、原fiber、root、实际apply callback；owner Context/fiber/scope在原实际注册点另行捕获，合法session/course descendant owner与preset origin分开。原ctx的属性变化/getter不能重新定义该tuple。bind/current必须核同一Loader entry的fiber.ctx严格等于所捕获origin，且entry/fiber/module callback、原owner/service/definition/handler仍匹配；不冻结SDK Context、不使用仅brand/instanceof的替代证明。记录追加与设置/注销继续先撤销，未知实际入口拒绝；私有factory/coordinator/schema2/permit/unknown/原ID恢复不改。
+
+同一原Terra按W/main-source-issuer-fix-134/SUPERSEDES.md集中完成修正、针对性反例、原L非空正向及匹配标准构建/解包：新伪fiber后换真实fiber、record后换值/getter、Context descendant和先占claim均不得签发未知tool来源，未知handler执行和patch均0；不得靠同时插入另一个拒绝route掩盖tool表面。既有关闭状态、SDK/provider/撤销与普通注册语义保持。只写原130六项源模块及任务自有必要测试/工件，主线程独占SDLC；旧v9及预修正日志/manifest/快照保留。标准构建沿131同一任务输出替换唯一可再生native副本并先保存非native历史字节，不另存58MB副本，不执行native/Go。
+
+run17原90分钟窗口已结束，实际12:36:59至13:51:30约74.5分钟及更早累计全部保留。基于MSR133-01明确的新因果链，主线程在原内部软件授权内增补最多60分钟实现及必要检查，不是诊断或历史清零；run17及本修正输出合计目标仍128MiB、T001+read-increment普通文件仍≤4831838208 bytes，末采样4591310395。任何两个连续无条件满足且无新因果定位的尝试仍按原非收敛规则停止，唯一主诊断不新增。真实配置/账号/平台/照片/模型/TTS/Robot/浏览器及native/Go执行均0。当前修正不消除部署选择、可信metadata、匹配native/receipt或T002余项。
