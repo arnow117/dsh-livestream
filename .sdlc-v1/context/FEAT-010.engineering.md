@@ -122,3 +122,16 @@ codex-111 的同宿主合成发送、断连/恢复、unknown、多段音频、SS
 内部软件总体 `INCONCLUSIVE`（上述网络告警与迟到 HTTP 证据缺口）；完整 Feature `fail`，S7 的外部条件尚未具备。无本轮已定位的实现缺陷；请求主 Sol 在验收后执行 `record-validation --feature-id FEAT-010 --result fail --commit 74d2a953509cf975ec3517934ae1139e53313ad9`，代表性实际命令及完整授权参数见 canonical 结果；本执行者未修改 lifecycle state，未启动 Review/Ship。
 
 追加本验证证据后再运行只读 `verify-acceptance --point plan`，工程上下文指纹显示 `content-drift`、产品上下文仍匹配；本 CLI 的 `context-v1` 会计入证据正文。追加前计划指纹匹配，本次仅追加 Validation 证据，未改方案语义；由主线程按上下文证据适用性协议判断，不擅自更新计划快照。
+
+### 2026-11-15 独立补证与主 Sol 有限验收
+
+固定产品源码仍为 `74d2a953509cf975ec3517934ae1139e53313ad9`。独立补证仅在 W/feat010-internal-integration-103/codex-118-evidence-completion 写测试观察副本和证据；L 业务源码、原测试断言和标准产物未改。主线程验收见 W/main-feat010-evidence-acceptance-120/{acceptance.json,audit.json}；原执行命令、整数退出码、观察版本及失败见 codex-118-evidence-completion/{result.json,commands.jsonl,course-summary.json}。主线程实核三十六项输入及九十六项既有标准产物摘要零差异，十二份原测试副本摘要一致，十二次选择运行各一项 desktop 目标、一轮且通过；其它套件和双视口证据按原未变输入复用。
+
+| 补证项 | 已接受事实 | 保留限制 |
+|---|---|---|
+| S6 / T003 撤权后迟到读取 | 原浏览器请求记录为 `ERR_ABORTED`；另一个经同一实际 SDK 私有路由的未取消 owner HTTP 请求在 read-entered→revoke 后完整收到 `409 revoked`，正文无 result、fields 或合成私有标记。原 UI 不再显示旧值，重新授权后的正向读取通过。 | 浏览器取消与完整 HTTP 接收分别归因；合成进程/owner 策略，不证明完整 REQ-012 写入或实际部署。 |
+| S2/S4 课程拒绝条件 | 最终 segments 运行唯一 400 直接关联两条可发声舞台连接，未进入 Controller；最终 stage-reload 运行唯一 400 关联同 epoch 已 markUnknown、尚未重新加载，Controller 拒绝原报告。对应恢复和业务终态断言通过。host、真实只读课件、stage-playing 及两次未改写标准产物运行没有新 400。 | 新观测的 400 正文实际均为零字节；原六条及补证早期四条记录缺足够逐请求拒因，不能事后还原或套用本轮原因。尚无据此确认的实现缺陷。 |
+
+主线程接受上述有限新证据，关闭该组合下 T003 迟到 HTTP 正文缺口；不将独立执行者的 `incomplete / INCONCLUSIVE` 改写成完整 Feature 通过。原 Validate114 的 fail、初次浏览器等待响应超时和早期 observer 局限全部保留。不得为恢复不可追回的历史请求而反复重跑同输入产品套件；下一次业务输入实际改变后的整体验证复用本轮最终有界观察方法，新的未解释拒绝须记录其原输入和条件。
+
+资源目录与端口/进程结论只限补证报告披露的采样口径，不声称全峰值或所有瞬时后代。宿主 T3 的实际运行起止界定总时长不超过 1167.089 秒，小于该单元四十分钟上限，涵盖本地首次时间戳之前的指令读取。独立 executedModel 仍为 `NOT_VERIFIED`。本次追加仅为工程证据，不改变 Plan/产品语义，不调用生命周期变更；完整 Feature validation 保持 fail/incomplete，S7、Review 和 Ship 未推进。
