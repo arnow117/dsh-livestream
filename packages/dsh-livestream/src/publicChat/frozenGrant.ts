@@ -3,7 +3,7 @@ import { boundedString, hexDigest64, isObject, safeInteger, PUBLIC_CHAT_PROTOCOL
 
 export interface FrozenGrantProposal {
   version: string;
-  transportKind: 'frozen_http';
+  transportKind: 'frozen_http' | 'session_http';
   buildDigest: string;
   instanceId: string;
   senderProcessNonce: string;
@@ -50,7 +50,7 @@ function canonicalUint64(value: unknown): value is string {
 
 export function validateFrozenProposal(value: unknown): value is FrozenGrantProposal {
   if (!isObject(value) || Object.keys(value).length !== proposalKeys.length || proposalKeys.some((key) => !Object.hasOwn(value, key))) return false;
-  if (value.version !== PUBLIC_CHAT_PROTOCOL || value.transportKind !== 'frozen_http') return false;
+  if (value.version !== PUBLIC_CHAT_PROTOCOL || value.transportKind !== 'frozen_http' && value.transportKind !== 'session_http') return false;
   for (const key of ['buildDigest', 'qualificationDigest', 'materialDigest', 'roomBindingProofDigest']) {
     if (!hexDigest64(value[key])) return false;
   }

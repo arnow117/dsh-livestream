@@ -48,6 +48,7 @@ type privateSend struct {
 }
 
 type privateServer struct {
+	session         *sessionAuth
 	authority       *helperGrants
 	profileTarget   *tlsTarget
 	queryTarget     *tlsTarget
@@ -107,12 +108,23 @@ func recordView(record grantRecord) map[string]any {
 	return view
 }
 
+func (s *privateServer) protocol() string {
+	if s.session != nil {
+		return sessionPrivateProtocol
+	}
+	return privateProtocol
+}
+
 func (s *privateServer) reply(writer io.Writer, frame privateFrame, status string, payload any) {
+	s.authority.mu.Lock()
 	context := s.authority.context
-	response := map[string]any{"protocol": privateProtocol, "seq": frame.Seq, "kind": frame.Kind,
+	revision := s.authority.revision
+	helperNonce, contextID, digest := context.processNonce, context.contextID, context.materialDigest
+	s.authority.mu.Unlock()
+	response := map[string]any{"protocol": s.protocol(), "seq": frame.Seq, "kind": frame.Kind,
 		"operationId": frame.OperationID, "payloadHash": frame.PayloadHash,
-		"helperNonce": context.processNonce, "authContextId": context.contextID,
-		"authContextRevision": s.authority.revision, "materialDigest": context.materialDigest,
+		"helperNonce": helperNonce, "authContextId": contextID,
+		"authContextRevision": revision, "materialDigest": digest,
 		"status": status, "payload": payload}
 	s.outputMu.Lock()
 	defer s.outputMu.Unlock()
@@ -120,6 +132,8 @@ func (s *privateServer) reply(writer io.Writer, frame privateFrame, status strin
 }
 
 func (s *privateServer) validReferences(frame privateFrame) bool {
+	s.authority.mu.Lock()
+	defer s.authority.mu.Unlock()
 	context := s.authority.context
 	return context != nil && frame.ExpectedHelperNonce == context.processNonce && frame.AuthContextID == context.contextID &&
 		frame.AuthContextRevision == s.authority.revision && frame.MaterialDigest == context.materialDigest
@@ -203,6 +217,12 @@ func (s *privateServer) dispatch(writer io.Writer, frame privateFrame) {
 			s.reply(writer, frame, "unavailable", nil)
 			return
 		}
+		if s.session != nil {
+			s.reply(writer, frame, "available", map[string]any{"capabilities": []string{
+				"private-framing-v1", "session-http-auth-v1", "no-replay-http1-v1", "unknown-recovery-v1",
+			}})
+			return
+		}
 		for _, operation := range []string{"profile_self", "query_user", "chat"} {
 			if _, err := s.target(operation); err != nil {
 				s.reply(writer, frame, "unavailable", nil)
@@ -221,6 +241,9 @@ func (s *privateServer) dispatch(writer io.Writer, frame privateFrame) {
 	hash, err := canonicalHash(frame.Payload)
 	if err != nil || hash != frame.PayloadHash {
 		s.reply(writer, frame, "unavailable", nil)
+		return
+	}
+	if s.session != nil && s.dispatchSession(writer, frame) {
 		return
 	}
 	switch frame.Kind {
@@ -295,13 +318,18 @@ func (s *privateServer) dispatch(writer io.Writer, frame privateFrame) {
 }
 
 func (s *privateServer) serve(reader io.Reader, writer io.Writer) error {
-	defer s.workers.Wait()
+	defer func() {
+		if s.session != nil {
+			s.session.shutdown()
+		}
+		s.workers.Wait()
+	}()
 	if s.authority == nil || s.authority.context == nil {
 		return errors.New("unavailable")
 	}
 	var lastSequence uint64
 	for {
-		frame, err := readPrivateFrame(reader)
+		frame, err := readPrivateFrameForProtocol(reader, s.protocol())
 		if err == io.EOF {
 			return nil
 		}
@@ -311,4 +339,55 @@ func (s *privateServer) serve(reader io.Reader, writer io.Writer) error {
 		lastSequence = frame.Seq
 		s.dispatch(writer, frame)
 	}
+}
+
+// dispatchSession handles owner-only authentication controls over the private
+// helper protocol. It never exposes a credential or arbitrary HTTP proxy.
+func (s *privateServer) dispatchSession(writer io.Writer, frame privateFrame) bool {
+	switch frame.Kind {
+	case "login-start":
+		var empty struct{}
+		if decodeFrameStrict(frame.Payload, &empty) != nil {
+			break
+		}
+		view, err := s.session.start()
+		if err == nil {
+			s.reply(writer, frame, "accepted", view)
+			return true
+		}
+	case "login-status":
+		var empty struct{}
+		if decodeFrameStrict(frame.Payload, &empty) != nil {
+			break
+		}
+		s.reply(writer, frame, "ok", s.session.view())
+		return true
+	case "login-cancel":
+		var request struct {
+			AttemptID string `json:"attemptId"`
+			Revision  uint64 `json:"revision"`
+		}
+		if decodeFrameStrict(frame.Payload, &request) != nil {
+			break
+		}
+		if s.session.cancel(request.AttemptID, request.Revision) == nil {
+			s.reply(writer, frame, "cancelled", s.session.view())
+			return true
+		}
+	case "confirm-session":
+		var request struct {
+			BindingRef string `json:"bindingRef"`
+		}
+		if decodeFrameStrict(frame.Payload, &request) != nil {
+			break
+		}
+		if s.session.confirm(request.BindingRef) == nil {
+			s.reply(writer, frame, "authenticated", s.session.view())
+			return true
+		}
+	default:
+		return false
+	}
+	s.reply(writer, frame, "unavailable", nil)
+	return true
 }

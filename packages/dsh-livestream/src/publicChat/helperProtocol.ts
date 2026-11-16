@@ -1,6 +1,7 @@
 import { TextDecoder } from 'node:util';
 
 export const HELPER_PROTOCOL = 'dsh-public-chat-http-v1';
+export const SESSION_HELPER_PROTOCOL = 'dsh-public-chat-session-http-v1';
 export const MAX_HELPER_FRAME_BYTES = 64 * 1024;
 
 /** Reject malformed Unicode, duplicate keys and non-integral/unsafe numbers. */

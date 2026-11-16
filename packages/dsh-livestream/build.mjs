@@ -213,7 +213,7 @@ const publicChatFiles = [
   'rawSenderSession.ts', 'recoveryFacts.ts', 'recoveryProtocol.ts',
   'roomBinding.ts', 'senderClient.ts', 'senderService.ts', 'textPolicy.ts',
   'dyhub/sender_entry.mjs', 'dyhub/build_raw.mjs', 'dyhub/prepare_raw.py',
-  'dyhub/raw-only.patch', 'dyhub/verified_sender_loader.mjs',
+  'dyhub/raw-only.patch', 'dyhub/verified_sender_loader.mjs', 'dyhub/prepare_session_deployment.mjs',
 ];
 
 async function readPublicChatAsset(file) {
@@ -255,7 +255,7 @@ async function verifyPublicChatClosure(assets) {
     return relative.split(path.sep).join('/');
   }).sort();
   const support = new Set(['dyhub/build_raw.mjs', 'dyhub/prepare_raw.py',
-    'dyhub/raw-only.patch', 'dyhub/verified_sender_loader.mjs']);
+    'dyhub/raw-only.patch', 'dyhub/verified_sender_loader.mjs', 'dyhub/prepare_session_deployment.mjs']);
   const expected = publicChatFiles.filter((name) => !support.has(name)).sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error('public chat source closure changed');

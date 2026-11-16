@@ -12,6 +12,8 @@ type syncHTTPResult struct {
 	contentType string
 	body        []byte
 	err         error
+	// Only a private boolean crosses the worker boundary; response credentials never do.
+	invalidateSession bool
 }
 
 // syncHTTPWork owns both the request worker and its socket-closing supervisor.

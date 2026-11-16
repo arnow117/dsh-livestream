@@ -4,7 +4,7 @@ import { controlPayloadHash } from './grantAuthority';
 import { HelperShutdownUnconfirmedError, launchHelper, type HelperLaunchOptions, type HelperProcess } from './helperLauncher';
 import { RoomBindingTracker, type RoomBindingProof } from './roomBinding';
 import { RawProofStore, toPlatformEpochMs } from './rawProof';
-import { defaultClock, boundedString, safeInteger, type Clock } from './protocol';
+import { defaultClock, boundedString, safeInteger, isObject, type Clock } from './protocol';
 import { validatePublicText } from './textPolicy';
 import type { FrozenGrantProposal, FrozenGrantSnapshot } from './frozenGrant';
 import { FrozenRecoveryAuthority } from './frozenRecovery';
@@ -15,7 +15,8 @@ export interface FrozenSenderDeployment {
   buildDigest: string;
   instanceId: string;
   accountRecordId: string;
-  expectedPrincipalUid: string;
+  expectedPrincipalUid: string | null;
+  transportKind?: 'frozen_http' | 'session_http';
   roomId: string;
 }
 
@@ -84,6 +85,31 @@ export interface RawObservation {
   receivedAt: number;
 }
 
+export interface SessionLoginView {
+  state: 'idle' | 'starting' | 'waiting' | 'confirmation_required' | 'authenticated' | 'cancelled' | 'failed' | 'expired';
+  attemptId?: string;
+  revision: number;
+  qrDataUrl?: string;
+  principalUid?: string;
+  bindingRef?: string;
+  reason?: string;
+}
+
+function sessionLoginView(value: unknown, revision: number): SessionLoginView | null {
+  if (!isObject(value) || !['idle', 'starting', 'waiting', 'confirmation_required', 'authenticated', 'cancelled', 'failed', 'expired'].includes(String(value.state)) ||
+    value.revision !== revision || Object.keys(value).some((key) => !['state', 'attemptId', 'revision', 'qrDataUrl', 'principalUid', 'bindingRef', 'reason'].includes(key))) return null;
+  if (value.attemptId !== undefined && (typeof value.attemptId !== 'string' || !/^[0-9a-f]{32}$/.test(value.attemptId))) return null;
+  if (value.qrDataUrl !== undefined && (typeof value.qrDataUrl !== 'string' || value.qrDataUrl.length > 48 * 1024 ||
+    !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value.qrDataUrl))) return null;
+  if (value.principalUid !== undefined && (typeof value.principalUid !== 'string' || !/^[1-9][0-9]{0,19}$/.test(value.principalUid) || BigInt(value.principalUid) > 0xffffffffffffffffn)) return null;
+  if (value.bindingRef !== undefined && (typeof value.bindingRef !== 'string' || !/^[0-9a-f]{32}$/.test(value.bindingRef))) return null;
+  if (value.reason !== undefined && value.reason !== 'session-unavailable' && value.reason !== 'login-expired') return null;
+  if (value.state === 'waiting' && !value.qrDataUrl) return null;
+  if (value.state === 'confirmation_required' && (!value.bindingRef || !value.principalUid)) return null;
+  if (value.state === 'authenticated' && !value.principalUid) return null;
+  return value as unknown as SessionLoginView;
+}
+
 /**
  * Sender-only owner of one immutable helper and one raw source session. The
  * caller is trusted composition code; no model or public route receives the
@@ -115,6 +141,7 @@ export class FrozenSenderRuntime {
   private maintenanceTarget: FrozenRevokeTarget | null = null;
   private maintenanceRevokeId: string | null = null;
   private activeMessage: string | null = null;
+  private invalidatedSession: { helper: HelperProcess; revision: number; contextId: string } | null = null;
 
   constructor(private readonly deps: {
     deployment: FrozenSenderDeployment;
@@ -248,6 +275,7 @@ export class FrozenSenderRuntime {
     const deployment = this.deps.deployment;
     return !!proof && !!identity && this.raw !== null && this.helperConnected && !this.maintaining &&
       proposal.buildDigest === deployment.buildDigest && proposal.instanceId === deployment.instanceId &&
+      proposal.transportKind === (deployment.transportKind ?? 'frozen_http') &&
       proposal.accountRecordId === deployment.accountRecordId && proposal.principalUid === deployment.expectedPrincipalUid &&
       proposal.roomId === deployment.roomId && proposal.platformRoomId === proof.platformRoomId &&
       proposal.senderProcessNonce === this.processNonce && proposal.senderConnectionGeneration === this.senderGeneration &&
@@ -259,16 +287,84 @@ export class FrozenSenderRuntime {
       proposal.liveEpochStartedAtMs === this.liveEpochStartedAtMs;
   }
 
-  private invalidateOriginal(context?: { recoveryControlId: string; recoveryPayloadHash: string }): void {
+  private invalidateOriginal(context?: { recoveryControlId: string; recoveryPayloadHash: string }): Promise<void> | null {
     this.deps.onInvalidated?.(context);
     this.localRevision++;
     const target = this.controls?.beginMaintenance() ?? null;
-    if (!target || !this.controls) return;
+    if (!target || !this.controls) return null;
     const controls = this.controls;
     const revokeId = randomBytes(16).toString('hex');
     this.maintenanceTarget = target;
     this.maintenanceRevokeId = revokeId;
-    void controls.revoke({ revokeId, expectedSenderProcessNonce: this.processNonce, target });
+    return controls.revoke({ revokeId, expectedSenderProcessNonce: this.processNonce, target }).then(() => undefined);
+  }
+
+  async sessionLoginStatus(): Promise<SessionLoginView | null> {
+    if (this.deps.deployment.transportKind !== 'session_http' || !this.helperConnected || !this.helper) return null;
+    const helper = this.helper;
+    const identity = helper.identity;
+    const authRevision = this.authRevision;
+    let view: SessionLoginView | null = null;
+    try {
+      const reply = await helper.request('login-status', randomBytes(16).toString('hex'), {});
+      view = reply.status === 'ok' ? sessionLoginView(reply.payload, identity.authContextRevision) : null;
+    } catch {
+      // An unavailable status cannot establish that the existing session is usable.
+    }
+    const currentIdentity = helper.identity;
+    if (this.helper !== helper || !this.helperConnected || this.authRevision !== authRevision ||
+      currentIdentity.authContextRevision !== identity.authContextRevision ||
+      currentIdentity.authContextId !== identity.authContextId) return null;
+    if (!view || view.state === 'failed' || view.state === 'expired' || view.state === 'cancelled') {
+      const alreadyInvalidated = this.invalidatedSession?.helper === helper &&
+        this.invalidatedSession.revision === identity.authContextRevision &&
+        this.invalidatedSession.contextId === identity.authContextId;
+      if (!alreadyInvalidated && (this.deps.deployment.expectedPrincipalUid !== null ||
+        this.controls?.active || this.controls?.currentQualification)) {
+        this.invalidatedSession = { helper, revision: identity.authContextRevision, contextId: identity.authContextId };
+        const pending = this.invalidateOriginal();
+        if (pending) void pending.catch(() => { /* original control remains held */ });
+      }
+    }
+    return view;
+  }
+
+  async sessionLoginStart(): Promise<{ ok: boolean; reason: string }> {
+    if (this.deps.deployment.transportKind !== 'session_http' || !this.helperConnected || !this.helper || this.maintaining) return { ok: false, reason: 'session-unavailable' };
+    const current = await this.sessionLoginStatus();
+    if (current && ['starting', 'waiting', 'confirmation_required', 'authenticated'].includes(current.state)) return { ok: true, reason: 'existing-attempt' };
+    this.invalidateOriginal();
+    this.deps.deployment.expectedPrincipalUid = null;
+    if (this.activeMessage || this.messageHold || this.controls?.hasHold) return { ok: false, reason: 'original-operation-held' };
+    try {
+      const reply = await this.helper.request('login-start', randomBytes(16).toString('hex'), {});
+      const view = sessionLoginView(reply.payload, this.helper.identity.authContextRevision);
+      return reply.status === 'accepted' && !!view ? { ok: true, reason: 'started' } : { ok: false, reason: 'session-unavailable' };
+    } catch { return { ok: false, reason: 'session-unavailable' }; }
+  }
+
+  async sessionLoginCancel(attemptId: string, revision: number): Promise<{ ok: boolean; reason: string }> {
+    if (this.deps.deployment.transportKind !== 'session_http' || !this.helperConnected || !this.helper) return { ok: false, reason: 'session-unavailable' };
+    const pendingRevoke = this.invalidateOriginal();
+    this.deps.deployment.expectedPrincipalUid = null;
+    try {
+      if (pendingRevoke) await pendingRevoke;
+      const reply = await this.helper.request('login-cancel', randomBytes(16).toString('hex'), { attemptId, revision });
+      const view = sessionLoginView(reply.payload, this.helper.identity.authContextRevision);
+      return reply.status === 'cancelled' && !!view ? { ok: true, reason: 'cancelled' } : { ok: false, reason: 'session-unavailable' };
+    } catch { return { ok: false, reason: 'session-unavailable' }; }
+  }
+
+  async sessionConfirm(bindingRef: string): Promise<{ ok: boolean; reason: string }> {
+    if (this.deps.deployment.transportKind !== 'session_http' || !this.helperConnected || !this.helper || this.activeMessage || this.messageHold || this.controls?.hasHold) return { ok: false, reason: 'session-unavailable' };
+    this.invalidateOriginal();
+    try {
+      const reply = await this.helper.request('confirm-session', randomBytes(16).toString('hex'), { bindingRef });
+      const view = sessionLoginView(reply.payload, this.helper.identity.authContextRevision);
+      if (reply.status !== 'authenticated' || !view?.principalUid) return { ok: false, reason: 'session-unavailable' };
+      this.deps.deployment.expectedPrincipalUid = view.principalUid;
+      return { ok: true, reason: 'confirmed' };
+    } catch { return { ok: false, reason: 'session-unavailable' }; }
   }
 
   setInputAndLive(inputGeneration: number, liveEpoch: string | null, startedAtMs: number): void {
@@ -352,6 +448,7 @@ export class FrozenSenderRuntime {
     const previous = this.controls.captureOperation(captureId);
     if (previous) return previous;
     if (this.operations.size + this.recovery.size + this.controls.size >= 1024) return null;
+    if (!this.deps.deployment.expectedPrincipalUid) return null;
     return this.controls.capture(captureId, expectedNonce, this.deps.deployment.expectedPrincipalUid,
       ++this.qualificationRevision, ++this.identityEpoch);
   }
@@ -359,13 +456,13 @@ export class FrozenSenderRuntime {
   state() {
     return {
       protocol: 'dsh-public-chat-v1',
-      privateProtocol: 'dsh-public-chat-http-v1',
+      privateProtocol: this.deps.deployment.transportKind === 'session_http' ? 'dsh-public-chat-session-http-v1' : 'dsh-public-chat-http-v1',
       buildDigest: this.deps.deployment.buildDigest,
       instanceId: this.deps.deployment.instanceId,
       processNonce: this.processNonce,
       senderConnectionGeneration: this.senderGeneration,
       capabilities: this.helperConnected && this.helper && this.controls && !this.maintaining
-        ? ['explicit-grant-snapshot-v1', 'frozen-http-auth-v1', 'no-replay-http1-v1', 'unknown-recovery-v1'] : [],
+        ? ['explicit-grant-snapshot-v1', this.deps.deployment.transportKind === 'session_http' ? 'session-http-auth-v1' : 'frozen-http-auth-v1', 'no-replay-http1-v1', 'unknown-recovery-v1'] : [],
       helper: this.helper?.identity ?? null,
       qualification: this.controls?.currentQualification ?? null,
       activeAuthorizationId: this.controls?.active?.authorizationId ?? null,
@@ -487,6 +584,7 @@ export class FrozenSenderRuntime {
     this.activeMessage = request.requestId;
     const revision = this.localRevision;
     const helper = this.helper;
+    let updated: RuntimeOperation;
     try {
       const reply = await helper.request('send', request.requestId, payload,
         () => this.localRevision === revision && this.helper === helper && this.controls?.active === active && this.proposalCurrent(active));
@@ -511,18 +609,32 @@ export class FrozenSenderRuntime {
       }
       let state: RuntimeOperationState = 'unknown';
       if (reply.status === 'api_reported_success' && httpResponse?.status === 200) state = 'api_reported_success';
-      const updated: RuntimeOperation = { ...original, state, executionEnded: fields.executionEnded, writeAttempted: fields.writeAttempted,
+      updated = { ...original, state, executionEnded: fields.executionEnded, writeAttempted: fields.writeAttempted,
         acceptedAtMs: fields.acceptedAtMs, firstWriteAttemptAtMs: fields.firstWriteAttemptAtMs as number | null,
         joinedWitnessId: fields.executionEnded ? fields.joinedWitnessId as string : null,
         joinedAtMs: fields.executionEnded ? fields.joinedAtMs as number : null, httpResponse };
       this.operations.set(request.requestId, updated);
-      if (fields.executionEnded) this.activeMessage = null;
-      return structuredClone(updated);
     } catch {
       const unknown: RuntimeOperation = { ...original, state: 'unknown' };
       this.operations.set(request.requestId, unknown);
       return structuredClone(unknown);
     }
+    // The original result is committed before this separate status check. A
+    // failed check cannot change that result to unknown or release the slot
+    // until the old local authority and queued work have been invalidated.
+    let safeToRelease = true;
+    if (updated.executionEnded && updated.state === 'api_reported_success' &&
+      this.deps.deployment.transportKind === 'session_http' && this.helper === helper) {
+      try {
+        await this.sessionLoginStatus();
+      } catch {
+        // Preserve the verified result and keep the slot held if local
+        // invalidation itself could not complete.
+        safeToRelease = false;
+      }
+    }
+    if (safeToRelease && updated.executionEnded && this.activeMessage === request.requestId) this.activeMessage = null;
+    return structuredClone(updated);
   }
 }
 

@@ -30,7 +30,7 @@ import { isHttpResponseEvidence } from './httpResponse';
 export interface SenderClientDeps {
   url: string;
   token: string;
-  expected: { buildDigest: string; instanceId: string };
+  expected: { buildDigest: string; instanceId: string; transportKind?: 'frozen_http' | 'session_http' };
   timeoutMs?: number;
   clock?: Clock;
   fetcher?: typeof fetch;
@@ -173,9 +173,12 @@ export class SenderClient {
   frozenState(): Promise<SenderCallResult<FrozenSenderState>> {
     return this.call('/v1/state', 'GET', undefined, (value) => {
       const capabilities = isObject(value) ? value.capabilities : null;
+      const session = this.deps.expected.transportKind === 'session_http';
+      const protocol = session ? 'dsh-public-chat-session-http-v1' : 'dsh-public-chat-http-v1';
+      const auth = session ? 'session-http-auth-v1' : 'frozen-http-auth-v1';
       if (!isObject(value) || !boundedString(value.processNonce, 128) || !safeInteger(value.senderConnectionGeneration) ||
-        value.privateProtocol !== 'dsh-public-chat-http-v1' || !Array.isArray(capabilities) ||
-        !['explicit-grant-snapshot-v1', 'frozen-http-auth-v1', 'no-replay-http1-v1', 'unknown-recovery-v1'].every((capability) => capabilities.includes(capability)) ||
+        value.privateProtocol !== protocol || !Array.isArray(capabilities) ||
+        !['explicit-grant-snapshot-v1', auth, 'no-replay-http1-v1', 'unknown-recovery-v1'].every((capability) => capabilities.includes(capability)) ||
         typeof value.hold !== 'boolean' || !validHelperIdentity(value.helper) || !validRawState(value.raw)) {
         return { ok: false, error: '冻结 sender 状态无效' };
       }
@@ -387,18 +390,7 @@ function validateControlResponse(value: unknown, kind: 'authorize' | 'revoke', i
   return { ok: true, value: record as unknown as ControlRecord };
 }
 
-export interface SenderDeploymentConfig {
-  listenUrl: string;
-  token: string;
-  expectedPrincipalUid: string;
-  roomId: string;
-  accountRecordId: string;
-  buildDigest: string;
-  instanceId: string;
-  profileOrigin: string;
-  dataDir: string;
-  sourcePath: string;
-}
+export type SenderDeploymentConfig = import('./protocol').SenderDeploymentFile & { sourcePath: string };
 
 /**
  * 读取 0600 部署文件。要求：常规文件、非 symlink、硬链接数为 1、

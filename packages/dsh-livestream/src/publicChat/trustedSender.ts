@@ -1,4 +1,6 @@
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { lstatSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PublicChatSendController } from './controller';
 import type { FrozenPublicChatOperationJournal } from './frozenJournal';
 import type { FrozenSenderRuntime, RawObservation } from './frozenSenderRuntime';
@@ -14,7 +16,7 @@ type LoadedSender = {
   buildDigest: string;
   readSenderDeploymentFile: typeof readSenderDeploymentFile;
   FrozenSenderRuntime: new (options: { deployment: {
-    buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string; roomId: string;
+    buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string | null; transportKind?: 'frozen_http' | 'session_http'; roomId: string;
   }; launch: (options: HelperLaunchOptions) => Promise<HelperProcess>;
     onInvalidated: (context?: { recoveryControlId: string; recoveryPayloadHash: string }) => void;
     onRawObserved: (observation: RawObservation) => void }) => FrozenSenderRuntime;
@@ -36,7 +38,7 @@ export interface TrustedSenderReferences {
   senderDeploymentFile: string;
   browserExecutable: string;
   helperReferences(senderProcessNonce: string, authContextRevision: number, identity: {
-    buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string; roomId: string;
+    buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string | null; transportKind?: 'frozen_http' | 'session_http'; roomId: string;
   }): Promise<MaintenanceReferences>;
   releaseReferences?(): void;
 }
@@ -47,12 +49,25 @@ export class TrustedHistory {
   private readonly pending = new Set<Promise<unknown>>();
   readonly controller: PublicChatSendController;
   readonly journal: FrozenPublicChatOperationJournal;
+  private readonly currentIdentity: import('./controller').ControllerDeployment;
 
   constructor(readonly references: TrustedHistoryReferences, readonly loaded: LoadedSender,
-    readonly deployment: ReturnType<typeof readSenderDeploymentFile>) {
-    const identity = this.identity();
+    readonly deployment: ReturnType<typeof readSenderDeploymentFile>,
+    sharedIdentity?: import('./controller').ControllerDeployment) {
+    const identity = { buildDigest: loaded.buildDigest, instanceId: deployment.instanceId,
+      accountRecordId: deployment.accountRecordId, roomId: deployment.roomId,
+      expectedPrincipalUid: deployment.schemaVersion === 1 ? deployment.expectedPrincipalUid : null,
+      transportKind: deployment.schemaVersion === 1 ? 'frozen_http' as const : 'session_http' as const };
+    if (sharedIdentity && (sharedIdentity.buildDigest !== identity.buildDigest || sharedIdentity.instanceId !== identity.instanceId ||
+      sharedIdentity.accountRecordId !== identity.accountRecordId || sharedIdentity.roomId !== identity.roomId ||
+      sharedIdentity.transportKind !== identity.transportKind)) throw new Error('session deployment changed');
+    this.currentIdentity = sharedIdentity ?? identity;
+    const journalPath = join(deployment.dataDir, 'public-chat-operations.json');
+    const before = lstatSync(journalPath);
     this.journal = new loaded.FrozenPublicChatOperationJournal(deployment.dataDir);
-    if (this.journal.corrupt) throw new Error('公屏操作日志不可用');
+    const after = lstatSync(journalPath);
+    if (this.journal.corrupt || !before.isFile() || before.isSymbolicLink() || before.nlink !== 1 ||
+      before.dev !== after.dev || before.ino !== after.ino) throw new Error('公屏操作日志不可用');
     const gateway = new Proxy(Object.create(null), {
       get: (_target, property) => {
         if (typeof property !== 'string' || property === 'then') return undefined;
@@ -69,12 +84,11 @@ export class TrustedHistory {
         };
       },
     }) as ConstructorParameters<typeof PublicChatSendController>[0]['gateway'];
-    this.controller = new loaded.PublicChatSendController({ deployment: identity, gateway, journal: this.journal });
+    this.controller = new loaded.PublicChatSendController({ deployment: this.currentIdentity, gateway, journal: this.journal });
   }
 
   identity() {
-    const { instanceId, accountRecordId, expectedPrincipalUid, roomId } = this.deployment;
-    return { buildDigest: this.loaded.buildDigest, instanceId, accountRecordId, expectedPrincipalUid, roomId };
+    return this.currentIdentity;
   }
 
   attach(client: SenderClient): void {
@@ -105,6 +119,129 @@ export async function openTrustedHistory(refs: TrustedHistoryReferences, isCurre
   return new TrustedHistory(refs, loaded, deployment);
 }
 
+/** Verified session preparation owns the same runtime until it is attached to history. */
+export class TrustedSessionAuthentication {
+  private readonly identity: import('./controller').ControllerDeployment;
+  private readonly helpers = new Set<HelperProcess>();
+  private readonly rawObserver: { current: ((observation: RawObservation) => void) | null } = { current: null };
+  private readonly lifecycle: { invalidated: (() => void) | null; needsRawRestart: boolean } = { invalidated: null, needsRawRestart: false };
+  private readonly runtime: FrozenSenderRuntime;
+  private service: SenderService | null = null;
+  private client: SenderClient | null = null;
+  private controller: PublicChatSendController | null = null;
+  private started = false;
+  private transferred = false;
+  private closed = false;
+
+  constructor(readonly references: TrustedSenderReferences, private readonly loaded: LoadedSender,
+    readonly deployment: ReturnType<typeof readSenderDeploymentFile>, private readonly isCurrent: () => boolean,
+    sharedIdentity?: import('./controller').ControllerDeployment) {
+    this.identity = sharedIdentity ?? { buildDigest: loaded.buildDigest, instanceId: deployment.instanceId, accountRecordId: deployment.accountRecordId,
+      roomId: deployment.roomId, expectedPrincipalUid: null, transportKind: 'session_http' };
+    this.runtime = new loaded.FrozenSenderRuntime({ deployment: this.identity,
+      onInvalidated: (context) => {
+        this.lifecycle.needsRawRestart = true;
+        const controller = this.controller;
+        if (controller && (!context || !controller.ownsPendingRecoveryInvalidation(context.recoveryControlId, context.recoveryPayloadHash)) &&
+          controller.hasCurrentFrozenAuthority()) controller.revokeGrant('sender-connection-change');
+        this.lifecycle.invalidated?.();
+      },
+      onRawObserved: (observation) => this.rawObserver.current?.(observation),
+      launch: async (options) => {
+        if (this.closed || !this.isCurrent()) throw new Error('session target changed');
+        const helper = await loaded.launchHelper(options);
+        this.helpers.add(helper);
+        if (this.closed || !this.isCurrent()) throw new Error('session target changed');
+        return helper;
+      } });
+  }
+
+  openHistory(): TrustedHistory {
+    if (this.closed || !this.isCurrent()) throw new Error('session target changed');
+    const current = this.loaded.readSenderDeploymentFile(this.references.senderDeploymentFile);
+    if (JSON.stringify(current) !== JSON.stringify(this.deployment)) throw new Error('session deployment changed');
+    return new TrustedHistory(this.references, this.loaded, this.deployment, this.identity);
+  }
+
+  async start(): Promise<void> {
+    if (this.started || this.closed || !this.isCurrent()) throw new Error('session unavailable');
+    try {
+      // Reserve the existing fixed sender endpoint before starting a helper.
+      // A previous holder therefore prevents another authentication instance.
+      this.service = new this.loaded.SenderService({ runtime: this.runtime, deployment: this.deployment,
+        token: this.deployment.token, allowSessionPreparation: true });
+      const origin = await this.service.start();
+      if (this.closed || !this.isCurrent()) throw new Error('session target changed');
+      this.client = new this.loaded.SenderClient({ url: origin, token: this.deployment.token,
+        expected: { buildDigest: this.loaded.buildDigest, instanceId: this.deployment.instanceId, transportKind: 'session_http' } });
+      let maintained: { ok: boolean; reason: string };
+      try {
+        maintained = await this.runtime.beginAuthenticationMaintenance(async (revision) => {
+          if (this.closed || !this.isCurrent()) throw new Error('session target changed');
+          return this.references.helperReferences(this.runtime.processNonce, revision, this.identity);
+        });
+      } finally {
+        this.references.releaseReferences?.();
+      }
+      if (!maintained.ok || this.closed || !this.isCurrent()) throw new Error('session unavailable');
+      this.started = true;
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
+  }
+
+  loginStatus() { return this.runtime.sessionLoginStatus(); }
+  loginStart() { return this.runtime.sessionLoginStart(); }
+  loginCancel(id: string, revision: number) { return this.runtime.sessionLoginCancel(id, revision); }
+  confirm(bindingRef: string) { return this.runtime.sessionConfirm(bindingRef); }
+
+  attach(history: TrustedHistory): TrustedSender {
+    if (!this.started || this.closed || this.transferred || !this.isCurrent() || !this.service || !this.client ||
+      history.loaded !== this.loaded || history.identity() !== this.identity ||
+      JSON.stringify(this.loaded.readSenderDeploymentFile(this.references.senderDeploymentFile)) !== JSON.stringify(this.deployment)) {
+      throw new Error('session attachment unavailable');
+    }
+    const raw = this.loaded.createFixedRawSession({ roomId: this.deployment.roomId, runtime: this.runtime,
+      executablePath: this.references.browserExecutable });
+    const input = new this.loaded.PublicChatInputBinding(history.controller, this.runtime);
+    history.attach(this.client);
+    this.controller = history.controller;
+    this.transferred = true;
+    return new TrustedSender(this.references, this.identity, this.runtime, this.service, raw, history.controller,
+      history.journal, this.helpers, input, this.loaded.createPublicChatReplyTool, this.rawObserver, this.lifecycle, history, this.client);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed || this.transferred) return;
+    this.closed = true;
+    this.runtime.cancelAuthenticationMaintenance();
+    try {
+      for (const helper of this.helpers) await helper.close();
+    } finally {
+      if (this.service) await this.service.close();
+    }
+  }
+}
+
+export async function inspectTrustedSession(refs: TrustedSenderReferences, room: string,
+  isCurrent: () => boolean, history?: TrustedHistory): Promise<TrustedSessionAuthentication> {
+  const loaderPath = fileURLToPath(new URL('./dyhub/verified_sender_loader.mjs', import.meta.url));
+  const loader = await import(/* @vite-ignore */ pathToFileURL(loaderPath).href) as {
+    loadVerifiedSender(path: string): Promise<LoadedSender>;
+  };
+  if (history && (history.references.senderBuildDeploymentFile !== refs.senderBuildDeploymentFile ||
+    history.references.senderDeploymentFile !== refs.senderDeploymentFile)) throw new Error('session deployment changed');
+  const loaded = history?.loaded ?? await loader.loadVerifiedSender(refs.senderBuildDeploymentFile);
+  if (!isCurrent()) throw new Error('session target changed');
+  const deployment = loaded.readSenderDeploymentFile(refs.senderDeploymentFile);
+  if (deployment.schemaVersion !== 2 || deployment.buildDigest !== loaded.buildDigest || deployment.roomId !== room) {
+    throw new Error('session deployment unavailable');
+  }
+  if (history && JSON.stringify(history.deployment) !== JSON.stringify(deployment)) throw new Error('session deployment changed');
+  return new TrustedSessionAuthentication(refs, loaded, deployment, isCurrent, history?.identity());
+}
+
 /** 仅显式主人维护操作调用；复用历史控制器，再启动 helper 和 Service。 */
 export async function startTrustedSender(refs: TrustedSenderReferences, currentRoomId: string,
   existingHistory?: TrustedHistory, isCurrent: () => boolean = () => true,
@@ -127,8 +264,9 @@ export async function startTrustedSender(refs: TrustedSenderReferences, currentR
   const runtime = new loaded.FrozenSenderRuntime({ deployment: identity,
     onInvalidated: (context) => {
       lifecycle.needsRawRestart = true;
-      if (!context || !controller?.ownsPendingRecoveryInvalidation(context.recoveryControlId, context.recoveryPayloadHash)) {
-        controller?.revokeGrant('sender-connection-change');
+      if ((!context || !controller?.ownsPendingRecoveryInvalidation(context.recoveryControlId, context.recoveryPayloadHash)) &&
+        (identity.transportKind !== 'session_http' || controller.hasCurrentFrozenAuthority())) {
+        controller.revokeGrant('sender-connection-change');
       }
       lifecycle.invalidated?.();
     },
@@ -155,10 +293,10 @@ export async function startTrustedSender(refs: TrustedSenderReferences, currentR
       refs.releaseReferences?.();
     }
     if (!maintained.ok || !isCurrent()) throw new Error('sender maintenance unavailable');
-    service = new loaded.SenderService({ runtime, deployment: { ...deployment, schemaVersion: 1 }, token: deployment.token });
+    service = new loaded.SenderService({ runtime, deployment, token: deployment.token });
     const origin = await service.start();
     client = new loaded.SenderClient({ url: origin, token: deployment.token,
-      expected: { buildDigest: loaded.buildDigest, instanceId: deployment.instanceId } });
+      expected: { buildDigest: loaded.buildDigest, instanceId: deployment.instanceId, transportKind: identity.transportKind } });
     if (!isCurrent()) throw new Error('host closed');
     history.attach(client);
     raw = loaded.createFixedRawSession({ roomId: deployment.roomId, runtime, executablePath: refs.browserExecutable });
@@ -186,7 +324,7 @@ export class TrustedSender {
   private rawStarted = false;
 
   constructor(private readonly refs: TrustedSenderReferences, private readonly identity: {
-    buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string; roomId: string;
+    buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string | null; transportKind?: 'frozen_http' | 'session_http'; roomId: string;
   }, private readonly runtime: FrozenSenderRuntime,
     private readonly service: SenderService, private readonly raw: { start(): Promise<void>; stop(): Promise<void> },
     readonly controller: PublicChatSendController, readonly journal: FrozenPublicChatOperationJournal,
@@ -212,6 +350,11 @@ export class TrustedSender {
       qualified: state.qualification !== null,
     };
   }
+
+  sessionLoginStatus() { return this.runtime.sessionLoginStatus(); }
+  sessionLoginStart() { return this.runtime.sessionLoginStart(); }
+  sessionLoginCancel(attemptId: string, revision: number) { return this.runtime.sessionLoginCancel(attemptId, revision); }
+  sessionConfirm(bindingRef: string) { return this.runtime.sessionConfirm(bindingRef); }
 
   async reply(context: AgentReplyTurnContext & { valid(): boolean }, text: unknown) {
     const reference = this.input.reference(context.sourceEvent);
@@ -242,6 +385,15 @@ export class TrustedSender {
   /** 显式维护才启动 raw source 与认证 helper。 */
   async maintain(): Promise<{ ok: boolean; reason: string }> {
     if (this.stopped || this.starting) return { ok: false, reason: 'sender-unavailable' };
+    if (this.identity.transportKind === 'session_http') {
+      const login = await this.runtime.sessionLoginStatus();
+      if (login?.state !== 'authenticated') return { ok: false, reason: 'session-unavailable' };
+      try {
+        if (this.rawStarted && this.lifecycle.needsRawRestart) { await this.raw.stop(); this.rawStarted = false; }
+        if (!this.rawStarted) await this.startRaw();
+        return { ok: true, reason: 'ready' };
+      } catch { return { ok: false, reason: 'sender-unavailable' }; }
+    }
     this.controller.revokeGrant('login-maintenance-start');
     const maintenance = this.runtime.beginAuthenticationMaintenance((revision) =>
       this.refs.helperReferences(this.runtime.processNonce, revision, this.identity));

@@ -44,7 +44,8 @@ export interface SenderGateway {
 }
 
 export interface ControllerDeployment {
-  expectedPrincipalUid: string;
+  expectedPrincipalUid: string | null;
+  transportKind?: 'frozen_http' | 'session_http';
   roomId: string;
   accountRecordId: string;
   buildDigest: string;
@@ -137,7 +138,7 @@ export class PublicChatSendController {
   private currentSourceConnectionToken = '';
 
   constructor(deps: ControllerDeps) {
-    if (!isValidPrincipalUid(deps.deployment.expectedPrincipalUid)) throw new Error('预期主体 UID 无效');
+    if (!isValidPrincipalUid(deps.deployment.expectedPrincipalUid) && !(deps.deployment.transportKind === 'session_http' && deps.deployment.expectedPrincipalUid === null)) throw new Error('预期主体 UID 无效');
     if (!/^[0-9]{1,64}$/.test(deps.deployment.roomId)) throw new Error('固定房间号无效');
     this.deployment = deps.deployment;
     this.gateway = deps.gateway;
@@ -179,6 +180,10 @@ export class PublicChatSendController {
   /** 仅供受信宿主连接原事件；不从持久记录构造可用授权。 */
   currentFrozenGrant(): Readonly<FrozenGrantSnapshot> | null {
     return this.frozenCore?.currentGrant() ?? null;
+  }
+
+  hasCurrentFrozenAuthority(): boolean {
+    return this.frozenCore?.hasCurrentAuthority() ?? false;
   }
 
   /** Only the matching sender recovery notification was already invalidated locally. */

@@ -49,6 +49,14 @@ func platformParameters(material materialInput) *Params {
 }
 
 func buildFixedRequest(context *authContext, operation string, grant *committedGrant, text string, now time.Time) (*http.Request, error) {
+	if context != nil && context.session != nil {
+		if operation != "chat" || grant == nil || !context.validAt(now) || grant.TransportKind != "session_http" ||
+			grant.HelperProcessNonce != context.processNonce || grant.AuthContextID != context.contextID ||
+			grant.MaterialDigest != context.materialDigest || !validPublicText(text) {
+			return nil, errors.New("session request unavailable")
+		}
+		return context.session.client.BuildSessionChat(context.session.snapshot, grant.RoomID, grant.PlatformRoomID, text)
+	}
 	target, err := productionTarget(operation)
 	if err != nil {
 		return nil, err

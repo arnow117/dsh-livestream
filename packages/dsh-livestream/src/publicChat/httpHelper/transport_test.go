@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -36,7 +37,14 @@ func fixtureTarget(server *httptest.Server) tlsTarget {
 		panic(err)
 	}
 	return tlsTarget{address: server.Listener.Addr().String(), serverName: "example.com",
-		config: &tls.Config{RootCAs: roots}, originHost: origin.Host, path: "/chat"}
+		config: &tls.Config{RootCAs: roots}, originHost: origin.Host, path: "/chat",
+		dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if err := fixtureDialGuard(network, address); err != nil {
+				return nil, err
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+	}
 }
 
 func runFixtureRequest(t *testing.T, target tlsTarget, request *http.Request, boundary *writeBoundary) syncHTTPResult {

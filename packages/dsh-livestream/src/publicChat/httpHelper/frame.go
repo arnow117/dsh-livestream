@@ -10,6 +10,7 @@ import (
 )
 
 const privateProtocol = "dsh-public-chat-http-v1"
+const sessionPrivateProtocol = "dsh-public-chat-session-http-v1"
 const maxFrameBytes = 64 << 10
 
 type privateFrame struct {
@@ -48,6 +49,10 @@ func decodeFrameStrict(data []byte, target any) error {
 // A four-byte big-endian length precedes each UTF-8 JSON frame. Material is
 // never carried here; it arrives only through the inherited material FD.
 func readPrivateFrame(reader io.Reader) (privateFrame, error) {
+	return readPrivateFrameForProtocol(reader, privateProtocol)
+}
+
+func readPrivateFrameForProtocol(reader io.Reader, protocol string) (privateFrame, error) {
 	var prefix [4]byte
 	if _, err := io.ReadFull(reader, prefix[:]); err != nil {
 		return privateFrame{}, err
@@ -64,7 +69,7 @@ func readPrivateFrame(reader io.Reader) (privateFrame, error) {
 	if err := decodeFrameStrict(data, &frame); err != nil {
 		return privateFrame{}, err
 	}
-	if frame.Protocol != privateProtocol || frame.Seq == 0 || frame.Seq > 1<<53-1 || !validIdentifier(frame.Kind) ||
+	if frame.Protocol != protocol || frame.Seq == 0 || frame.Seq > 1<<53-1 || !validIdentifier(frame.Kind) ||
 		!validIdentifier(frame.OperationID) || len(frame.Payload) == 0 {
 		return privateFrame{}, errors.New("invalid frame envelope")
 	}

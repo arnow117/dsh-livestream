@@ -6,6 +6,8 @@ import { RawSenderSession } from '../rawSenderSession.ts';
 export { FrozenSenderRuntime } from '../frozenSenderRuntime.ts';
 export { SenderService } from '../senderService.ts';
 export { SenderClient, readSenderDeploymentFile } from '../senderClient.ts';
+export { validateSenderDeploymentFile } from '../protocol.ts';
+export { parseStrictJSON } from '../helperProtocol.ts';
 export { PublicChatSendController } from '../controller.ts';
 export { FrozenPublicChatOperationJournal } from '../frozenJournal.ts';
 export { launchHelper } from '../helperLauncher.ts';

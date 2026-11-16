@@ -19,7 +19,7 @@ import type { PublicChatChannel } from './controller';
 
 type Gateway = Pick<SenderClient, 'frozenState' | 'frozenCapture' | 'frozenAuthorize' | 'frozenRevoke' | 'frozenControlOperation' |
   'frozenSend' | 'frozenOperation' | 'frozenReconcileMessage' | 'frozenRecoveryOperation'>;
-interface Deployment { buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string; roomId: string }
+interface Deployment { buildDigest: string; instanceId: string; accountRecordId: string; expectedPrincipalUid: string | null; transportKind?: 'frozen_http' | 'session_http'; roomId: string }
 interface QueueItem {
   request: FrozenSendInput;
   revision: string;
@@ -58,6 +58,10 @@ export class FrozenControllerCore {
   }
 
   get revision(): string { return `${this.processId}:${this.counter}`; }
+
+  hasCurrentAuthority(): boolean {
+    return !!this.active || !!this.qualification || !!this.capture || this.queue.length > 0;
+  }
 
   /** 内部接线只读取当前实例已发布的授权；不会从 journal 恢复。 */
   currentGrant(): Readonly<FrozenGrantSnapshot> | null {
@@ -219,7 +223,8 @@ export class FrozenControllerCore {
     if (referenced.kind === 'authorize' && (referenced.target.buildDigest !== this.deps.deployment.buildDigest ||
       referenced.target.instanceId !== this.deps.deployment.instanceId ||
       referenced.target.accountRecordId !== this.deps.deployment.accountRecordId ||
-      referenced.target.principalUid !== this.deps.deployment.expectedPrincipalUid ||
+      (!(this.deps.deployment.transportKind === 'session_http' && referenced.target.transportKind === 'session_http') &&
+        referenced.target.principalUid !== this.deps.deployment.expectedPrincipalUid) ||
       referenced.target.roomId !== this.deps.deployment.roomId)) return null;
     return controlPayloadHash({ processId: this.processId, id: control.id, kind: control.kind,
       payloadHash: control.payloadHash, acknowledgement: control.ack, holder: referenced });
@@ -371,7 +376,7 @@ export class FrozenControllerCore {
     if (!raw?.proof || !helper) return { ok: false, reason: 'raw-proof-missing' };
     const authorizationId = randomBytes(16).toString('hex');
     const revision = this.revision;
-    const target: FrozenGrantProposal = { version: 'dsh-public-chat-v1', transportKind: 'frozen_http',
+    const target: FrozenGrantProposal = { version: 'dsh-public-chat-v1', transportKind: this.deps.deployment.transportKind ?? 'frozen_http',
       buildDigest: this.deps.deployment.buildDigest, instanceId: this.deps.deployment.instanceId,
       senderProcessNonce: state.processNonce, senderConnectionGeneration: state.senderConnectionGeneration,
       authorizationId, captureId: this.capture.id, qualificationDigest: qualification.qualificationDigest,

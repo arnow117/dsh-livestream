@@ -1,6 +1,6 @@
 import type { LiveConnectionState, LiveEvent } from '../core/live';
 import type { SourceIngress } from './sourceIngress';
-import type { TrustedHistory, TrustedSender } from './trustedSender';
+import type { TrustedHistory, TrustedSender, TrustedSessionAuthentication } from './trustedSender';
 import type { PublicChatOwnerActions } from './ownerActions';
 import { trustedHistoryReferencesFromEnvironment, trustedReferencesFromEnvironment } from './trustedReferences';
 import { PublicChatAgentTurns } from './agentTurns';
@@ -17,6 +17,10 @@ export class PublicChatHost {
   private sender: TrustedSender | null = null;
   private history: TrustedHistory | null = null;
   private historyStart: Promise<TrustedHistory | null> | null = null;
+  private session: TrustedSessionAuthentication | null = null;
+  private sessionPreparation: Promise<TrustedSessionAuthentication | null> | null = null;
+  private sessionRetirement: Promise<void> = Promise.resolve();
+  private sessionEpoch = 0;
   private closed = false;
   private closing: Promise<void> | null = null;
   private readonly activeOperations = new Set<Promise<unknown>>();
@@ -31,7 +35,8 @@ export class PublicChatHost {
 
   constructor(private readonly enabled: () => boolean, private readonly replyEnabled: () => boolean,
     private readonly currentSession: () => string | null,
-    private readonly automaticEnabled: (kind: 'welcome' | 'thanks') => boolean) {}
+    private readonly automaticEnabled: (kind: 'welcome' | 'thanks') => boolean,
+    private readonly savedRoom: () => string | null = () => null) {}
 
   setLive(scope: LiveScope | null): void {
     if (this.closed) return;
@@ -87,6 +92,14 @@ export class PublicChatHost {
     this.automatic?.clear();
     this.scope = null;
     this.sender?.controller.suspendFrozenLocally();
+    this.retireSession();
+  }
+
+  private retireSession(): void {
+    this.sessionEpoch++;
+    const session = this.session;
+    this.session = null;
+    if (session) this.sessionRetirement = this.sessionRetirement.then(() => session.close());
   }
 
   invalidateReplies(): void {
@@ -142,7 +155,8 @@ export class PublicChatHost {
           import('./trustedSender'), import('./ownerActions'),
         ]);
         if (this.closed) return null;
-        const history = await openTrustedHistory(refs, () => !this.closed);
+        if (this.sessionPreparation) await this.sessionPreparation;
+        const history = this.session ? this.session.openHistory() : await openTrustedHistory(refs, () => !this.closed);
         if (this.closed) return null;
         this.history = history;
         this.actions = new PublicChatOwnerActions(history.controller, () => this.enabled() && !!this.sender
@@ -154,6 +168,30 @@ export class PublicChatHost {
     })();
     this.historyStart = pending;
     try { return await pending; } finally { if (this.historyStart === pending) this.historyStart = null; }
+  }
+
+  private async inspectSession(): Promise<TrustedSessionAuthentication | null> {
+    if (this.closed) return null;
+    if (this.session) return this.session;
+    if (this.sessionPreparation) return this.sessionPreparation;
+    const refs = trustedReferencesFromEnvironment(process.env, 'session_http');
+    const room = this.savedRoom();
+    if (!refs || !room) return null;
+    const epoch = this.sessionEpoch;
+    const current = () => !this.closed && this.sessionEpoch === epoch && this.savedRoom() === room;
+    const pending = (async () => {
+      try {
+        await this.sessionRetirement;
+        if (!current()) return null;
+        const { inspectTrustedSession } = await import('./trustedSender');
+        const session = await inspectTrustedSession(refs, room, current, this.history ?? undefined);
+        if (!current()) { await session.close(); return null; }
+        this.session = session;
+        return session;
+      } catch { return null; }
+    })();
+    this.sessionPreparation = pending;
+    try { return await pending; } finally { if (this.sessionPreparation === pending) this.sessionPreparation = null; }
   }
 
   private async operation<T>(run: () => Promise<T>, unavailable: T): Promise<T> {
@@ -169,11 +207,26 @@ export class PublicChatHost {
   async view() {
     const history = await this.ensureHistory();
     if (!history || !this.actions || this.closed) {
-      return { available: false, historyAvailable: false, starting: this.starting, identity: null,
+      const inspected = await this.inspectSession();
+      const session = inspected && inspected.deployment.roomId === this.savedRoom() ? inspected : null;
+      return { available: false, historyAvailable: false, starting: this.starting,
+        identity: session ? { accountRecordId: session.deployment.accountRecordId, roomId: session.deployment.roomId,
+          principalUid: null, platformRoomId: null, qualified: false } : null,
+        transportKind: session ? 'session_http' as const : undefined,
+        login: session ? (await session.loginStatus()) ?? { state: 'idle' as const, revision: 0 } : null,
         hold: true, grant: null, messages: [], controls: [] };
     }
+    const sessionMode = history.deployment?.schemaVersion === 2;
+    const login = sessionMode ? (await (this.sender?.sessionLoginStatus() ?? this.session?.loginStatus())) ?? { state: 'idle', revision: 0 } : null;
+    const savedRoom = this.savedRoom();
+    const target = sessionMode && savedRoom && history.deployment.roomId === savedRoom
+      ? { accountRecordId: history.deployment.accountRecordId, roomId: history.deployment.roomId,
+        principalUid: null, platformRoomId: null, qualified: false }
+      : null;
     return { available: !!this.sender, historyAvailable: true, starting: this.starting,
-      identity: this.sender?.publicView() ?? null, ...this.actions.view() };
+      transportKind: sessionMode ? 'session_http' as const : 'frozen_http' as const, login,
+      liveConnected: this.connected && !!this.scope && this.scope.roomId === this.savedRoom(),
+      identity: this.sender?.publicView() ?? target, ...this.actions.view() };
   }
 
   async maintain(): Promise<{ ok: boolean; reason: string }> {
@@ -184,6 +237,17 @@ export class PublicChatHost {
       if (this.sender.publicView().roomId !== this.scope.roomId) return { ok: false, reason: 'fixed-target-mismatch' };
       this.automatic?.clear();
       return this.sender.maintain();
+    }
+    if (this.session) {
+      const history = await this.ensureHistory();
+      if (!history) return { ok: false, reason: 'history-unavailable' };
+      try {
+        const sender = this.session.attach(history);
+        sender.input.setLive(this.scope);
+        sender.input.inputStateChanged('connected', 'idle');
+        this.attachSender(sender);
+        return await sender.maintain();
+      } catch { return { ok: false, reason: 'session-unavailable' }; }
     }
     const refs = trustedReferencesFromEnvironment(process.env);
     if (!refs) return { ok: false, reason: 'deployment-unavailable' };
@@ -209,15 +273,7 @@ export class PublicChatHost {
       if (this.closed || revision !== this.revision || !this.enabled() || !this.connected || this.scope !== scope) {
         return { ok: false, reason: 'live-changed' };
       }
-      this.sender = sender;
-      this.automatic = new PublicChatAutomaticEvents(sender, (kind) => this.enabled() && this.automaticEnabled(kind));
-      const automatic = this.automatic;
-      sender.observeRaw((observation) => automatic.observed(observation));
-      sender.observeInvalidation(() => {
-        this.revision++;
-        this.turns.invalidate();
-        automatic.clear();
-      });
+      this.attachSender(sender);
       sender = null;
       return { ok: true, reason: 'ready' };
     } catch {
@@ -231,6 +287,61 @@ export class PublicChatHost {
         this.startDone = null;
       }
     }
+  }
+
+  private attachSender(sender: TrustedSender): void {
+    this.sender = sender;
+    this.automatic = new PublicChatAutomaticEvents(sender, (kind) => this.enabled() && this.automaticEnabled(kind));
+    const automatic = this.automatic;
+    sender.observeRaw((observation) => automatic.observed(observation));
+    sender.observeInvalidation(() => {
+      this.revision++;
+      this.turns.invalidate();
+      automatic.clear();
+    });
+  }
+
+  async loginStart() {
+    if (this.closed) return { ok: false, reason: 'session-unavailable' };
+    const pending = (async () => {
+      if (this.sender) return this.sender.sessionLoginStart();
+      if (this.starting) return { ok: false, reason: 'sender-busy' };
+      this.starting = true;
+      let finishStart!: () => void;
+      this.startDone = new Promise<void>((resolve) => { finishStart = resolve; });
+      try {
+        await this.ensureHistory();
+        const session = await this.inspectSession();
+        if (!session || this.closed) return { ok: false, reason: 'session-unavailable' };
+        const existing = await session.loginStatus();
+        if (!existing) await session.start();
+        return await session.loginStart();
+      } catch {
+        this.retireSession();
+        return { ok: false, reason: 'session-unavailable' };
+      } finally {
+        this.starting = false;
+        finishStart();
+        this.startDone = null;
+      }
+    })();
+    this.activeOperations.add(pending);
+    try { return await pending; } finally { this.activeOperations.delete(pending); }
+  }
+
+  async loginCancel(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).sort().join(',') !== 'attemptId,revision') return { ok: false, reason: 'invalid-input' };
+    const value = input as { attemptId?: unknown; revision?: unknown };
+    if (typeof value.attemptId !== 'string' || typeof value.revision !== 'number' || !Number.isSafeInteger(value.revision)) return { ok: false, reason: 'invalid-input' };
+    return this.sender?.sessionLoginCancel(value.attemptId, value.revision) ?? this.session?.loginCancel(value.attemptId, value.revision) ?? { ok: false, reason: 'session-unavailable' };
+  }
+
+  async confirmSession(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).join(',') !== 'bindingRef') return { ok: false, reason: 'invalid-input' };
+    const value = input as { bindingRef?: unknown };
+    const room = this.sender?.publicView().roomId ?? this.session?.deployment.roomId;
+    if (typeof value.bindingRef !== 'string' || !room || room !== this.savedRoom()) return { ok: false, reason: 'saved-room-mismatch' };
+    return this.sender?.sessionConfirm(value.bindingRef) ?? this.session?.confirm(value.bindingRef) ?? { ok: false, reason: 'session-unavailable' };
   }
 
   async qualify() { return this.operation(() => this.actions!.qualify(), { ok: false, reason: 'history-unavailable' }); }
@@ -264,11 +375,14 @@ export class PublicChatHost {
       if (this.historyStart) await this.historyStart;
       await Promise.allSettled([...this.activeOperations]);
       if (this.startDone) await this.startDone;
+      if (this.sessionPreparation) await this.sessionPreparation;
       const sender = this.sender;
       this.sender = null;
       this.actions = null;
       this.automatic = null;
       if (sender) await sender.close();
+      this.retireSession();
+      await this.sessionRetirement;
     })();
     this.closing = closing;
     return closing;

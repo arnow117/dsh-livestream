@@ -70,7 +70,7 @@ export function parseSenderListenUrl(value: unknown): ValidationResult<{ origin:
 }
 
 /** 部署参数只来自受信环境/凭据，不接受普通 settings 或模型参数。 */
-export interface SenderDeploymentFile {
+export interface FrozenSenderDeploymentFile {
   schemaVersion: 1;
   listenUrl: string;
   token: string;
@@ -83,27 +83,42 @@ export interface SenderDeploymentFile {
   dataDir: string;
 }
 
+export interface SessionSenderDeploymentFile {
+  schemaVersion: 2;
+  transportKind: 'session_http';
+  listenUrl: string;
+  token: string;
+  roomId: string;
+  accountRecordId: string;
+  buildDigest: string;
+  instanceId: string;
+  dataDir: string;
+}
+
+export type SenderDeploymentFile = FrozenSenderDeploymentFile | SessionSenderDeploymentFile;
+
 export function validateSenderDeploymentFile(value: unknown): ValidationResult<SenderDeploymentFile> {
   if (!isObject(value)) return { ok: false, error: '部署配置必须是对象' };
-  const keys = ['schemaVersion', 'listenUrl', 'token', 'expectedPrincipalUid', 'roomId', 'accountRecordId', 'buildDigest', 'instanceId', 'profileOrigin', 'dataDir'];
-  if (Object.keys(value).length !== keys.length || keys.some((key) => !(key in value))) {
+  const legacyKeys = ['schemaVersion', 'listenUrl', 'token', 'expectedPrincipalUid', 'roomId', 'accountRecordId', 'buildDigest', 'instanceId', 'profileOrigin', 'dataDir'];
+  const sessionKeys = ['schemaVersion', 'transportKind', 'listenUrl', 'token', 'roomId', 'accountRecordId', 'buildDigest', 'instanceId', 'dataDir'];
+  const session = value.schemaVersion === 2 && value.transportKind === 'session_http';
+  const keys = session ? sessionKeys : legacyKeys;
+  if (Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key))) {
     return { ok: false, error: '部署配置字段不完整或不认识多余字段' };
   }
-  if (value.schemaVersion !== 1) return { ok: false, error: '部署配置版本不支持' };
+  if (!session && value.schemaVersion !== 1) return { ok: false, error: '部署配置版本不支持' };
   const listen = parseSenderListenUrl(value.listenUrl);
   if (!listen.ok) return { ok: false, error: listen.error };
   if (listen.value.port === 0) return { ok: false, error: '部署监听端口必须是指定数字，不能是 0' };
   if (!boundedString(value.token, 256)) return { ok: false, error: 'sender token 缺失或超出长度限制' };
-  if (typeof value.expectedPrincipalUid !== 'string' || !/^[0-9]{1,32}$/.test(value.expectedPrincipalUid)) {
+  if (!session && (typeof value.expectedPrincipalUid !== 'string' || !/^[0-9]{1,32}$/.test(value.expectedPrincipalUid))) {
     return { ok: false, error: '预期真实主体 UID 必须是无损数字字符串' };
   }
-  if (typeof value.roomId !== 'string' || !/^[0-9]{1,64}$/.test(value.roomId)) {
-    return { ok: false, error: '固定房间号必须是数字字符串' };
-  }
+  if (typeof value.roomId !== 'string' || !/^[0-9]{1,64}$/.test(value.roomId)) return { ok: false, error: '固定房间号必须是数字字符串' };
   if (!boundedString(value.accountRecordId, 128)) return { ok: false, error: 'accountRecordId 无效' };
   if (!hexDigest64(value.buildDigest)) return { ok: false, error: 'buildDigest 必须是 64 位十六进制摘要' };
   if (!boundedString(value.instanceId, 128)) return { ok: false, error: 'instanceId 无效' };
-  if (!boundedString(value.profileOrigin, 100) || !/^https:\/\/(www\.)?douyin\.com$/.test(value.profileOrigin)) {
+  if (!session && (!boundedString(value.profileOrigin, 100) || !/^https:\/\/(www\.)?douyin\.com$/.test(value.profileOrigin))) {
     return { ok: false, error: 'profileOrigin 必须是受支持的抖音 HTTPS 站点源' };
   }
   if (!boundedString(value.dataDir, 400)) return { ok: false, error: 'dataDir 无效' };

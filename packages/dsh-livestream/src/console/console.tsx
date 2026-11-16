@@ -145,7 +145,7 @@ async function api<T = HostState>(path: string, body?: unknown, signal?: AbortSi
 
 const readPublicChat = async () => (await api<{ publicChat: PublicChatView }>('public-chat')).publicChat;
 const publicChatAction = async (input: Record<string, unknown>) =>
-  api<{ result?: { status: string; reason?: string } }>('public-chat', input);
+  api<{ ok?: boolean; reason?: string; result?: { status: string; reason?: string } }>('public-chat', input);
 const publicChatTarget = (state: HostState) => state.settings.livePlatform === 'douyin'
   ? `douyin:${state.settings.douyinRoomId}` : `bilibili:${state.settings.roomId ?? ''}`;
 
@@ -1678,6 +1678,7 @@ export const CONSOLE_CSS = `
 .dl-registration :focus-visible{outline:2px solid var(--dl-accent, #3fa3ff);outline-offset:2px}
 .dl-registration p{overflow-wrap:anywhere}
 .dl-public-chat{min-width:0;max-width:100%}
+.dl-public-chat img{display:block;width:min(256px,100%);height:auto}
 .dl-public-chat .dl-row{flex-wrap:wrap}
 .dl-public-chat input:not([type="checkbox"]),.dl-public-chat textarea,.dl-public-chat select{box-sizing:border-box;min-width:0;max-width:100%}
 .dl-public-chat p,.dl-public-chat h4,.dl-public-chat dt,.dl-public-chat dd{min-width:0;overflow-wrap:anywhere}

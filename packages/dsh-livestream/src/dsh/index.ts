@@ -288,7 +288,8 @@ function cancelNativeQueryTurn(lease: QueryTurn): void {
 export function apply(ctx: HostContext): void {
   const publicChat = new PublicChatHost(() => settings.publicChat.enabled && settings.livePlatform === 'douyin' && !localRehearsal,
     () => settings.publicChat.reply, () => show.currentSession,
-    (kind) => kind === 'welcome' ? settings.publicChat.welcome : settings.publicChat.thanks);
+    (kind) => kind === 'welcome' ? settings.publicChat.welcome : settings.publicChat.thanks,
+    () => settings.douyinRoomId || null);
   const syncPublicChatLive = () => {
     const config = show.hub.currentConfig;
     const startedAtMs = show.liveEpochStartedAtMs;
@@ -600,6 +601,9 @@ export function apply(ctx: HostContext): void {
     if (!input || typeof input.action !== 'string') return fail('公屏操作无效');
     const { action, ...args } = input;
     const empty = Object.keys(args).length === 0;
+    if (action === 'login-start' && empty) return json(await publicChat.loginStart());
+    if (action === 'login-cancel') return json(await publicChat.loginCancel(args));
+    if (action === 'confirm-session') return json(await publicChat.confirmSession(args));
     if (action === 'maintain' && empty) return json(await publicChat.maintain());
     if (action === 'qualify' && empty) return json(await publicChat.qualify());
     if (action === 'authorize' && empty) return json(await publicChat.authorize());

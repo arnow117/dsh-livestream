@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/netip"
+	"strings"
 	"time"
 )
 
@@ -82,7 +83,10 @@ func (r *httpBudgetReader) Read(p []byte) (int, error) {
 }
 
 func (w *syncHTTPWork) perform(target tlsTarget, request *http.Request, budget time.Duration, hooks *syncHTTPHooks) syncHTTPResult {
-	fail := func(err error) syncHTTPResult { return syncHTTPResult{err: err} }
+	invalidateSession := false
+	fail := func(err error) syncHTTPResult {
+		return syncHTTPResult{err: err, invalidateSession: invalidateSession || w.boundary.wasAttempted()}
+	}
 	if request == nil || request.URL == nil || request.Method != http.MethodGet || request.Body != nil ||
 		request.ContentLength != 0 || len(request.TransferEncoding) != 0 || len(request.Trailer) != 0 ||
 		httptrace.ContextClientTrace(request.Context()) != nil || request.URL.Scheme != "https" ||
@@ -150,6 +154,16 @@ func (w *syncHTTPWork) perform(target tlsTarget, request *http.Request, budget t
 	if err != nil {
 		return fail(err)
 	}
+	// Any cookie update can alter the snapshot's scoped Cookie header. Treat
+	// ticket/CSRF response headers as uncertain authentication changes too.
+	// Never retain these values in a result, private frame, journal or log.
+	for name := range response.Header {
+		name = strings.ToLower(name)
+		if name == "set-cookie" || strings.HasPrefix(name, "bd-ticket-guard-") ||
+			name == "x-tt-token" || name == "x-tt-session-dtrait" || name == "x-secsdk-csrf-token" {
+			invalidateSession = true
+		}
+	}
 	limited.readingHeaders = false
 	defer response.Body.Close()
 	if response.ProtoMajor != 1 || response.ProtoMinor > 1 || response.StatusCode < 200 || response.StatusCode == 101 {
@@ -159,5 +173,5 @@ func (w *syncHTTPWork) perform(target tlsTarget, request *http.Request, budget t
 	if err != nil || len(body) > maxResponseBytes {
 		return fail(errors.New("HTTP response body unavailable"))
 	}
-	return syncHTTPResult{status: response.StatusCode, contentType: response.Header.Get("Content-Type"), body: body}
+	return syncHTTPResult{status: response.StatusCode, contentType: response.Header.Get("Content-Type"), body: body, invalidateSession: invalidateSession}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -119,6 +120,7 @@ type helperGrants struct {
 	captureGeneration uint64
 	captureBusy       bool
 	captureWork       *syncHTTPWork
+	captureCancel     context.CancelFunc
 }
 
 func newHelperGrants(context *authContext, deployment helperFixedDeployment, revision uint64, now func() time.Time, capacity int) *helperGrants {
@@ -174,7 +176,7 @@ func validWebRoomID(value string) bool {
 
 func (a *helperGrants) validProposal(p grantProposal) bool {
 	if a.context == nil || a.now == nil || a.qualification == nil || !a.context.validAt(a.now()) || p.Version != "dsh-public-chat-v1" ||
-		p.TransportKind != "frozen_http" || p.HelperProcessNonce != a.context.processNonce ||
+		p.TransportKind != a.context.transportKind() || p.HelperProcessNonce != a.context.processNonce ||
 		p.AuthContextID != a.context.contextID || p.AuthContextRevision != a.revision || p.MaterialDigest != a.context.materialDigest ||
 		p.BuildDigest != a.deployment.buildDigest || p.InstanceID != a.deployment.instanceID ||
 		p.SenderProcessNonce != a.deployment.senderNonce || p.AccountRecordID != a.deployment.accountRecordID ||
@@ -332,6 +334,21 @@ func (a *helperGrants) finishSendWithResponse(requestID string, boundary *writeB
 		record.message.responseLength = response.length
 		record.message.responseDigest = response.digest
 	}
+	// The original reply keeps its original context and result. Before the
+	// in-flight slot can be released, prevent any later write on an uncertain
+	// or changed session and revoke its existing qualification and grant.
+	if work.result.invalidateSession && a.context != nil && a.context.session != nil {
+		a.context.session.invalidated.Store(true)
+		if a.active != nil {
+			a.cancelledAuth[a.active.AuthorizationID] = true
+			original := a.records[a.active.AuthorizationID]
+			original.state = "revoked"
+			a.records[a.active.AuthorizationID] = original
+			a.active = nil
+		}
+		a.qualification = nil
+		a.captureGeneration++
+	}
 	if !clockValid || witnessErr != nil {
 		record.state = "unknown"
 		record.message.unknownObserved = true
@@ -475,6 +492,9 @@ func (a *helperGrants) revoke(request helperRevoke) (grantRecord, error) {
 		a.cancelledCaptures[request.TargetID] = true
 		if a.captureID == request.TargetID && a.captureWork != nil {
 			a.captureWork.sealLocked()
+		}
+		if a.captureID == request.TargetID && a.captureCancel != nil {
+			a.captureCancel()
 		}
 		if original, ok := a.records[request.TargetID]; ok && original.kind == "profile" && original.state != "revoked" {
 			original.state = "revoked"

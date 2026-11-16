@@ -26,6 +26,8 @@ export interface SenderServiceDeps {
   deployment: SenderDeploymentFile;
   /** sender token：只来自 0600 部署文件，绝不回显。 */
   token: string;
+  /** Reserve the existing sender endpoint before the session helper starts. */
+  allowSessionPreparation?: boolean;
 }
 
 const ROUTES = {
@@ -61,8 +63,12 @@ export class SenderService {
     // 缺部署装配拒启动：runtime/token/listen 配置缺一即抛错。
     if (!(deps.runtime instanceof FrozenSenderRuntime)) throw new Error('缺少冻结 HTTP sender 运行时装配，拒绝启动');
     const initialState = deps.runtime.state();
-    if (initialState.privateProtocol !== 'dsh-public-chat-http-v1' ||
-      !['explicit-grant-snapshot-v1', 'frozen-http-auth-v1', 'no-replay-http1-v1', 'unknown-recovery-v1'].every((capability) => initialState.capabilities?.includes(capability))) {
+    const session = deps.deployment.schemaVersion === 2;
+    const protocol = session ? 'dsh-public-chat-session-http-v1' : 'dsh-public-chat-http-v1';
+    const auth = session ? 'session-http-auth-v1' : 'frozen-http-auth-v1';
+    const preparingSession = session && deps.allowSessionPreparation === true && initialState.helper === null;
+    if (initialState.privateProtocol !== protocol || (!preparingSession &&
+      !['explicit-grant-snapshot-v1', auth, 'no-replay-http1-v1', 'unknown-recovery-v1'].every((capability) => initialState.capabilities?.includes(capability)))) {
       throw new Error('sender 不支持冻结 HTTP 授权，拒绝启动');
     }
     if (typeof deps.token !== 'string' || deps.token.length === 0 || deps.token.length > 256) {

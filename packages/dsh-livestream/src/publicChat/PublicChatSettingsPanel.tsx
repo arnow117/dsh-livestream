@@ -8,13 +8,17 @@ interface Props {
   targetKey: string;
   onSave(settings: PublicChatSettings): Promise<void>;
   onView(): Promise<PublicChatView>;
-  onAction(input: Record<string, unknown>): Promise<{ result?: { status: string; reason?: string } }>;
+  onAction(input: Record<string, unknown>): Promise<{ ok?: boolean; reason?: string; result?: { status: string; reason?: string } }>;
 }
 
 export interface PublicChatView {
   available: boolean;
   historyAvailable?: boolean;
   starting: boolean;
+  transportKind?: 'frozen_http' | 'session_http';
+  liveConnected?: boolean;
+  login?: { state: 'idle' | 'starting' | 'waiting' | 'confirmation_required' | 'authenticated' | 'cancelled' | 'failed' | 'expired';
+    attemptId?: string; revision: number; qrDataUrl?: string; principalUid?: string; bindingRef?: string; reason?: string } | null;
   hold: boolean;
   grant: { grantId: string } | null;
   identity: { accountRecordId: string; roomId: string; principalUid: string | null; platformRoomId: string | null; qualified: boolean } | null;
@@ -93,10 +97,52 @@ export function PublicChatSettingsPanel({ saved, targetKey, onSave, onView, onAc
       const next = await onView();
       if (target !== currentTarget.current) return;
       setView(next);
-      setMessage(result.result?.status === 'rejected' ? `发送未受理：${result.result.reason ?? '不可用'}`
+      setMessage(result.ok === false ? `操作未完成：${result.reason ?? '暂不可用'}`
+        : result.result?.status === 'rejected' ? `发送未受理：${result.result.reason ?? '不可用'}`
         : action === 'send' ? '已提交，等待实际请求结果' : '操作已完成，请核对状态');
     } catch {
       if (target === currentTarget.current) setMessage('操作未完成，请核对状态；草稿仍保留');
+    } finally {
+      actionPending.current = false;
+      setPending(false);
+    }
+  }
+
+  async function enableReplies() {
+    if (actionPending.current || pending) return;
+    actionPending.current = true;
+    ++viewSequence.current;
+    const target = currentTarget.current;
+    setPending(true);
+    try {
+      const attached = await onAction({ action: 'maintain' });
+      if (attached.ok === false) {
+        if (target === currentTarget.current) setMessage(`直播房间尚未就绪：${attached.reason ?? '暂不可用'}`);
+        return;
+      }
+      let connected: PublicChatView | null = null;
+      for (let attempt = 0; attempt < 20 && target === currentTarget.current; attempt++) {
+        connected = await onView();
+        if (connected.identity?.platformRoomId) break;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+      }
+      if (target !== currentTarget.current) return;
+      if (!connected?.identity?.platformRoomId) {
+        setMessage('等待直播房间证明，请稍后重试');
+        return;
+      }
+      const checked = await onAction({ action: 'qualify' });
+      if (checked.ok === false) {
+        if (target === currentTarget.current) setMessage(`账号核查未完成：${checked.reason ?? '暂不可用'}`);
+        return;
+      }
+      const authorized = await onAction({ action: 'authorize' });
+      const next = await onView();
+      if (target !== currentTarget.current) return;
+      setView(next);
+      setMessage(authorized.ok === false ? `未开启回复：${authorized.reason ?? '暂不可用'}` : '本次公屏回复已开启');
+    } catch {
+      if (target === currentTarget.current) setMessage('未能开启回复，请核对状态');
     } finally {
       actionPending.current = false;
       setPending(false);
@@ -161,13 +207,35 @@ export function PublicChatSettingsPanel({ saved, targetKey, onSave, onView, onAc
       <button type="button" disabled={pending || !dirty} onClick={() => void save()}>保存公屏设置</button>
       <p>发送服务：{view?.available ? '已装配' : '不可用'}</p>
       <p>历史：{view?.historyAvailable ? '可读取' : '不可用'}</p>
-      <p>本地账号记录：{view?.identity?.accountRecordId ?? '未配置'}</p>
-      <p>真实 UID：{view?.identity?.principalUid ?? '未核实'}；固定房间：{view?.identity?.roomId ?? '未核实'}；内部房间：{view?.identity?.platformRoomId ?? '未核实'}</p>
+      {view?.transportKind === 'session_http' ? <>
+        <p>发送账号：{view.login?.principalUid ?? '尚未登录'}；房间：{view.identity?.roomId ?? '等待读取'}</p>
+        <p>登录状态：{view.login?.state === 'waiting' ? '请使用本人手机扫码' : view.login?.state === 'confirmation_required' ? '请核对账号和房间' :
+          view.login?.state === 'authenticated' ? (view.identity?.platformRoomId ? '已确认，直播连接已就绪' : '账号已确认，等待直播连接') :
+          view.login?.state === 'starting' ? '正在准备二维码' : view.login?.state === 'failed' || view.login?.state === 'expired' ? '登录未完成，请重试' : '尚未登录'}</p>
+        {view.login?.state === 'waiting' && view.login.qrDataUrl && <img src={view.login.qrDataUrl} alt="使用本人手机扫描登录二维码" />}
+        <div className="dl-row">
+          <button type="button" disabled={pending || view.starting || ['starting', 'waiting', 'confirmation_required', 'authenticated'].includes(view.login?.state ?? '')}
+            onClick={() => void act('login-start')}>登录发送账号</button>
+          {view.login?.attemptId && ['starting', 'waiting', 'confirmation_required', 'authenticated'].includes(view.login.state) &&
+            <button type="button" disabled={pending} onClick={() => void act('login-cancel', { attemptId: view.login!.attemptId, revision: view.login!.revision })}>
+              {view.login.state === 'authenticated' ? '退出发送账号' : '取消登录'}
+            </button>}
+          {view.login?.state === 'confirmation_required' && view.login.bindingRef &&
+            <button type="button" disabled={pending} onClick={() => void act('confirm-session', { bindingRef: view.login!.bindingRef })}>确认账号和房间</button>}
+          <button type="button" disabled={pending || !saved.enabled || view.login?.state !== 'authenticated' || !view.liveConnected || !!view.hold}
+            onClick={() => void enableReplies()}>开启本次公屏回复</button>
+        </div>
+      </> : <>
+        <p>本地账号记录：{view?.identity?.accountRecordId ?? '未配置'}</p>
+        <p>真实 UID：{view?.identity?.principalUid ?? '未核实'}；固定房间：{view?.identity?.roomId ?? '未核实'}；内部房间：{view?.identity?.platformRoomId ?? '未核实'}</p>
+        <div className="dl-row">
+          <button type="button" disabled={pending || !saved.enabled} onClick={() => void act('maintain')}>维护发送材料</button>
+          <button type="button" disabled={pending || !view?.available || !saved.enabled} onClick={() => void act('qualify')}>核查资格</button>
+          <button type="button" disabled={pending || !view?.identity?.qualified || !!view?.hold} onClick={() => void act('authorize')}>明确授权</button>
+        </div>
+      </>}
       <p>资格：{view?.identity?.qualified ? '已核查' : '未核查'}；授权：{view?.grant ? '已授权' : '未授权'}；暂停：{view?.hold ? '是' : '否'}</p>
       <div className="dl-row">
-        <button type="button" disabled={pending || !saved.enabled} onClick={() => void act('maintain')}>维护发送材料</button>
-        <button type="button" disabled={pending || !view?.available || !saved.enabled} onClick={() => void act('qualify')}>核查资格</button>
-        <button type="button" disabled={pending || !view?.identity?.qualified || !!view?.hold} onClick={() => void act('authorize')}>明确授权</button>
         <button type="button" disabled={pending || !view?.available} onClick={() => void act('revoke')}>撤权</button>
         <button type="button" disabled={pending || !view?.grant || !!view?.hold || !draft.drafts.manual} onClick={() => void act('send')}>发送这条文字</button>
       </div>

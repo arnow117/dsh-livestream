@@ -56,6 +56,7 @@ type materialInput struct {
 }
 
 type authContext struct {
+	session        *sessionAuthContext
 	material       materialInput
 	cookies        *frozenCookies
 	contextID      string
@@ -201,6 +202,9 @@ func freezeAuthContext(data []byte, now time.Time) (*authContext, error) {
 func (c *authContext) validAt(now time.Time) bool {
 	if c == nil {
 		return false
+	}
+	if c.session != nil {
+		return now.UnixMilli() > 0 && c.session.valid()
 	}
 	nowMs := now.UnixMilli()
 	return nowMs > 0 && nowMs < c.material.ExpiresAtMs && nowMs < c.material.CSRFExpiresMs &&

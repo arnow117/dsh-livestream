@@ -1,6 +1,7 @@
 package main
 
 import (
+	contextpkg "context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -89,58 +90,80 @@ func (a *helperGrants) captureProfile(request profileRequest, profileTarget, que
 		a.mu.Lock()
 		a.captureBusy = false
 		a.captureWork = nil
+		a.captureCancel = nil
 		a.mu.Unlock()
 	}()
 
 	var profile, query map[string]any
 	var captureErr error
-	for _, item := range []struct {
-		operation string
-		target    tlsTarget
-		output    *map[string]any
-	}{{"profile_self", profileTarget, &profile}, {"query_user", queryTarget, &query}} {
-		a.mu.Lock()
-		current := boundary.current()
-		now := a.now()
-		a.mu.Unlock()
-		if !current {
-			captureErr = errors.New("profile invalidated")
-			break
-		}
-		wire, err := buildFixedRequest(context, item.operation, nil, "", now)
-		if err != nil {
-			captureErr = err
-			break
-		}
-		work := newSyncHTTPWork(boundary)
+	if context.session != nil {
+		captureCtx, cancel := contextpkg.WithTimeout(contextpkg.Background(), 15*time.Second)
 		a.mu.Lock()
 		if !boundary.current() {
 			a.mu.Unlock()
+			cancel()
 			captureErr = errors.New("profile invalidated")
-			break
+		} else {
+			a.captureCancel = cancel
+			a.mu.Unlock()
+			uid, err := captureSessionIdentity(captureCtx, context.session.client)
+			cancel()
+			if err != nil {
+				captureErr = errors.New("profile unavailable")
+			} else {
+				profile = map[string]any{"user": map[string]any{"uid": uid}}
+				query = map[string]any{"user_uid": uid}
+			}
 		}
-		a.captureWork = work
-		a.mu.Unlock()
-		work.start(item.target, wire, 15*time.Second, nil)
-		// A timed-out or revoked dial retains capture ownership until the
-		// original worker and its supervisor have actually joined.
-		<-work.done
-		a.mu.Lock()
-		if a.captureWork == work {
-			a.captureWork = nil
+	} else {
+		for _, item := range []struct {
+			operation string
+			target    tlsTarget
+			output    *map[string]any
+		}{{"profile_self", profileTarget, &profile}, {"query_user", queryTarget, &query}} {
+			a.mu.Lock()
+			current := boundary.current()
+			now := a.now()
+			a.mu.Unlock()
+			if !current {
+				captureErr = errors.New("profile invalidated")
+				break
+			}
+			wire, err := buildFixedRequest(context, item.operation, nil, "", now)
+			if err != nil {
+				captureErr = err
+				break
+			}
+			work := newSyncHTTPWork(boundary)
+			a.mu.Lock()
+			if !boundary.current() {
+				a.mu.Unlock()
+				captureErr = errors.New("profile invalidated")
+				break
+			}
+			a.captureWork = work
+			a.mu.Unlock()
+			work.start(item.target, wire, 15*time.Second, nil)
+			// A timed-out or revoked dial retains capture ownership until the
+			// original worker and its supervisor have actually joined.
+			<-work.done
+			a.mu.Lock()
+			if a.captureWork == work {
+				a.captureWork = nil
+			}
+			stillCurrent := boundary.current()
+			a.mu.Unlock()
+			if !stillCurrent || work.result.err != nil {
+				captureErr = errors.New("profile unavailable")
+				break
+			}
+			object, ok := parseResponseObject(work.result.status, work.result.contentType, work.result.body)
+			if !ok {
+				captureErr = errors.New("profile unavailable")
+				break
+			}
+			*item.output = object
 		}
-		stillCurrent := boundary.current()
-		a.mu.Unlock()
-		if !stillCurrent || work.result.err != nil {
-			captureErr = errors.New("profile unavailable")
-			break
-		}
-		object, ok := parseResponseObject(work.result.status, work.result.contentType, work.result.body)
-		if !ok {
-			captureErr = errors.New("profile unavailable")
-			break
-		}
-		*item.output = object
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

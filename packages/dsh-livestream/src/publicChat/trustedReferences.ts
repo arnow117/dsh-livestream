@@ -21,26 +21,21 @@ export function trustedHistoryReferencesFromEnvironment(env: NodeJS.ProcessEnv):
  * 这些引用仅取自主进程的受信部署环境；普通设置和模型不接收它们。
  * 材料文件本身只由经过验证的 helper launcher 以只读 FD 打开。
  */
-export function trustedReferencesFromEnvironment(env: NodeJS.ProcessEnv): TrustedSenderReferences | null {
-  const names = [
-    'DSH_PUBLIC_CHAT_BUILD_DEPLOYMENT_FILE',
-    'DSH_PUBLIC_CHAT_DEPLOYMENT_FILE',
-    'DSH_PUBLIC_CHAT_BROWSER_EXECUTABLE',
-    'DSH_PUBLIC_CHAT_HELPER_MANIFEST',
-    'DSH_PUBLIC_CHAT_HELPER_MANIFEST_SHA256',
-    'DSH_PUBLIC_CHAT_HELPER_SOURCE_DIRECTORY',
-    'DSH_PUBLIC_CHAT_MATERIAL_FILE',
-    'DSH_PUBLIC_CHAT_HELPER_DATA_DIR',
-  ] as const;
-  const values = names.map((name) => env[name]);
-  if (values.some((value) => !value)) return null;
-  const [senderBuildDeploymentFile, senderDeploymentFile, browserExecutable, manifestPath, manifestSha256,
-    sourceDirectory, materialPath, dataDirectory] = values as string[];
-  const paths = [senderBuildDeploymentFile, senderDeploymentFile, browserExecutable, manifestPath,
-    sourceDirectory, materialPath, dataDirectory];
-  if (paths.some((path) => !isAbsolute(path) || resolve(path) !== path) || !/^[0-9a-f]{64}$/.test(manifestSha256)) {
-    return null;
-  }
+export function trustedReferencesFromEnvironment(env: NodeJS.ProcessEnv,
+  mode: 'frozen_http' | 'session_http' = 'frozen_http'): TrustedSenderReferences | null {
+  const senderBuildDeploymentFile = env.DSH_PUBLIC_CHAT_BUILD_DEPLOYMENT_FILE;
+  const senderDeploymentFile = env.DSH_PUBLIC_CHAT_DEPLOYMENT_FILE;
+  const browserExecutable = env.DSH_PUBLIC_CHAT_BROWSER_EXECUTABLE ?? '';
+  const manifestPath = env.DSH_PUBLIC_CHAT_HELPER_MANIFEST;
+  const manifestSha256 = env.DSH_PUBLIC_CHAT_HELPER_MANIFEST_SHA256;
+  const sourceDirectory = env.DSH_PUBLIC_CHAT_HELPER_SOURCE_DIRECTORY;
+  const materialPath = env.DSH_PUBLIC_CHAT_MATERIAL_FILE;
+  const dataDirectory = env.DSH_PUBLIC_CHAT_HELPER_DATA_DIR;
+  if (!senderBuildDeploymentFile || !senderDeploymentFile || !manifestPath || !manifestSha256 || !sourceDirectory || !dataDirectory ||
+    (mode === 'frozen_http' && (!browserExecutable || !materialPath))) return null;
+  const paths = [senderBuildDeploymentFile, senderDeploymentFile, manifestPath, sourceDirectory, dataDirectory,
+    ...(browserExecutable ? [browserExecutable] : []), ...(mode === 'frozen_http' && materialPath ? [materialPath] : [])];
+  if (paths.some((path) => !isAbsolute(path) || resolve(path) !== path) || !/^[0-9a-f]{64}$/.test(manifestSha256)) return null;
   const created = new Map<string, { dev: number; ino: number }>();
   return {
     senderBuildDeploymentFile, senderDeploymentFile, browserExecutable,
@@ -50,11 +45,11 @@ export function trustedReferencesFromEnvironment(env: NodeJS.ProcessEnv): Truste
         || (info.mode & 0o022) !== 0 || (typeof process.getuid === 'function' && info.uid !== process.getuid())) {
         throw new Error('unsafe helper data directory');
       }
-      const bytes = Buffer.from(JSON.stringify({
-        buildDigest: identity.buildDigest, instanceId: identity.instanceId, senderProcessNonce,
-        accountRecordId: identity.accountRecordId, principalUid: identity.expectedPrincipalUid,
-        roomId: identity.roomId, authContextRevision,
-      }));
+      const common = { buildDigest: identity.buildDigest, instanceId: identity.instanceId, senderProcessNonce,
+        accountRecordId: identity.accountRecordId, roomId: identity.roomId, authContextRevision };
+      const bytes = Buffer.from(JSON.stringify(mode === 'session_http'
+        ? { schemaVersion: 2, transportKind: 'session_http', ...common }
+        : { ...common, principalUid: identity.expectedPrincipalUid }));
       const deploymentPath = join(dataDirectory, `.public-chat-helper-${randomBytes(16).toString('hex')}.json`);
       const fd = openSync(deploymentPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       try {
@@ -65,8 +60,8 @@ export function trustedReferencesFromEnvironment(env: NodeJS.ProcessEnv): Truste
       } finally {
         closeSync(fd);
       }
-      return { manifestPath, manifestSha256, sourceDirectory, materialPath, dataDirectory, deploymentPath,
-        deploymentSha256: createHash('sha256').update(bytes).digest('hex') };
+      return { manifestPath, manifestSha256, sourceDirectory, materialPath: mode === 'frozen_http' ? materialPath : undefined,
+        transportKind: mode, dataDirectory, deploymentPath, deploymentSha256: createHash('sha256').update(bytes).digest('hex') };
     },
     releaseReferences() {
       for (const [path, expected] of created) {
