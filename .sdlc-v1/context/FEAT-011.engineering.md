@@ -37,7 +37,7 @@ L=`/Users/mac/hansen_agent_team/workspace/20261109-deepseek-harness/dsh-livestre
 
 #### 固定来源与分发决定
 
-- 候选的生产源码逐字来自 H Git 对象。未来由主线程提供宿主管理的干净隔离 checkout，基于本地 H（包含必需的已接受未远端提交），登记宿主实际返回的分支；不得默认从 origin 落到缺少读取增量的提交，也不得在 shell/task 文本创建 checkout/worktree。本准备没有创建它。
+- 候选的生产源码逐字来自 H Git 对象。实现者留在原 L 已登记分支，只写本Task新增验收/usage路径；构建和测试使用任务自有的固定Git源导出及允许路径overlay，不从dirty原树取生产代码。导出是无.git的构建输入/分发工件，不是新的checkout、clone或worktree。逐文件manifest必须证明生产源与H一致，新测试/usage与允许diff一致；不宣称原L业务工作树干净。
 - 未来实现只叠加下文明确的新验收文件/usage 变更。完整业务来源必须能映射到 H＋该 allow-list；不能仅核三个文件后从 dirty L 宽泛复制，不能借 source-map 替换吞入别的 dirty 字节。
 - 不允许 import 或接线 `managedLivestreamHost`、新 writer/coordinator；H:index.ts:425–431 的直接 read service 组合保持。readService.ts:19 固定 manifest `cff638ff461fab35b082e93d62c28c768472688d03888b69864700f89abb8fcb` 不改。
 - artifact 位置唯一沿接受证据：`W/feat009-read-increment-40/delivery/registration-profile-v1-cff638ff461fab35/`。loader 要核 manifest、全部成员、无链接/只读权限/uid、Node/ABI；本轮只核 manifest 并读取核心相关段，没有重新验证全部依赖。未来分发使用原不可变 artifact 或其完整匹配副本，不从 Q 当前树、staging 或 latest 再生成。
@@ -85,7 +85,7 @@ usage以根README新增稳定入口 `LIVE-REGISTRATION-FORM`、`LIVE-REGISTRATIO
 2. 同一实现者准备固定快照和最小验收入口，先有本地拒绝误目标/多次提交/未授权执行的检查，再接原读取。新入口默认离线，不读取真实配置、不访问分享链接；真实模式必须由主 Sol 已核的窗口显式启动，不能凭路径或本计划自动运行。测试构建配置seam只返回自有配置路径/Node子进程；标准产物不含seam。先完成保证这一步安全所需的小范围检查，不把整套课程/照片/writer基础工作排到它前面。
 3. **最早真实增量属于 T001**：未来获准窗口只完成一条带明确合成标记的原问卷有效提交，照片及意向商品空；在该次原提交响应或平台原生关联中取得exact record，由本人确认和授权，再让两私有组件分别真实原读并比对。立即向主 Sol 交付原问卷入口、固定候选、实际结果/未定项；不能等writer、T1、直播入口/私信、全屏S1或照片闭环。该增量不要求开播。没有可信record关系时保留“提交确认/结果未知＋单行读取”分项，不称本期通过。
 4. 同一实现者继续当前有效ACL、匿名拒绝、撤权迟到/私有与公开隔离、严格失败分支及usage/构建/解包/可操作性检查，收齐 Task 自测和修正。已通过且输入/环境未变的历史检查按证据适用性复用，不为了格式重跑所有T003或FEAT-010套件。实际新失败按原归因保留。
-5. 主线程接受任务和allow-list diff后，在非主分支按既有授权commit/push；独立Validate只读验证该明确业务commit。已有L dirty业务文件阻止在L直接宣称“干净验证”，必须使用主线程登记的干净隔离checkout；不得reset/stash/clean旧WIP来满足条件。必要的独立上下文由主线程安排，本准备不委托。
+5. 主线程接受任务和allow-list diff后，在非主分支按既有授权commit/push；独立Validate只读验证该明确业务commit。已有L dirty业务文件阻止在L直接宣称“干净验证”；实际检查须用固定Git源导出和明确overlay，完整核对受测源身份，不能从原dirty宿主执行。不得reset/stash/clean旧WIP来满足条件。必要的独立上下文由主线程安排，本准备不委托。
 
 #### 最早真实窗口的精确需求
 
@@ -144,7 +144,7 @@ SDK owner、平台身份与artifact必须出自真实路径；用fixture的owner
 - **Validate**：独立上下文读取固定业务commit和纳入该commit的测试/usage，实际验证本期读/权限/晚到/公开隔离及标准产物。原有效提交只做一次；可独立核必要原提交证明并对同一已授权exact record重新读取，无需再创建记录。独立真实回读需要另有当前授权预算，不继承Build首窗4次额度。没有真实独立检查时如实保留未完成，不把实现者报告冒充独立Validate。
 - **同版FEAT-010依赖**：H与74d的上述已提交业务范围无差异，但本期测试/usage/目标输入有新增，须检查本期私有读取在当前标准宿主中的S6及公共输出交叉行为。只有实际影响课程/公屏/结束路径时才补相应检查；不为补旧S1样本重复跑全屏/字幕/音频，不复活原writer，不将本期证据替FEAT-010的S7或旧fail改pass。父Feature整体验收由其主线程独立判定。
 - **Review**：由主线程按生命周期安排独立只读Sol/xhigh上下文，检查完整diff、固定来源、动作可达性/权限、原提交证明、usage和同版验证证据；本设计分析不算独立Review。发现实现问题退同一实现者，新增业务commit后重新判断受影响验证，Review不改实现/usage。
-- **Ship**：只分发Review所对应、Validate绑定且业务工作树干净的commit；在新解包目录核内容/源身份/固定artifact和native资源，做实际加载smoke。完整本期结果还需在用户实际获准的私有宿主确认固定版本、实际owner/workspace和读取入口；纯源码分发/fixture不冒称共享Harness已接通。目标部署位置和串行安装窗口由主线程沿现有授权落实；它若涉及当前受保护lib/服务，本准备及Build均无权操作，必须留到合法Ship写范围。不得打包当前L dirty产物或以安装切换掩盖原WIP。
+- **Ship**：只分发Review所对应、Validate绑定且已核定源内容的commit；原L停止段WIP不属于受测或分发输入；在新解包目录核内容/源身份/固定artifact和native资源，做实际加载smoke。完整本期结果还需在用户实际获准的私有宿主确认固定版本、实际owner/workspace和读取入口；纯源码分发/fixture不冒称共享Harness已接通。目标部署位置和串行安装窗口由主线程沿现有授权落实；它若涉及当前受保护lib/服务，本准备及Build均无权操作，必须留到合法Ship写范围。不得打包当前L dirty产物或以安装切换掩盖原WIP。
 - 目标/环境改变后的必要只读smoke另按实际许可安排；不再次提交问卷，不用新身份/记录替代原目标。发布保留30天删除责任与当前pending边界。回滚只撤本期授权/新能力，保留原证据和旧writer事实。
 
 ## 实现记录（实际）
@@ -163,8 +163,8 @@ SDK owner、平台身份与artifact必须出自真实路径；用fixture的owner
 
 未执行。技术发布/目标装配按上述Ship；产品观察条目、窗口、责任和回流只引用产品上下文“发布后观察计划”。
 
-### 主 Sol 接受与隔离分支登记决定（2026-11-16）
+### 主 Sol 接受与执行环境决定（2026-11-16）
 
 本期只覆盖原问卷登记与内部读取，复用T003；不要求完成旧修改核心。原匿名检查139及其他历史失败均保留；一次真实业务窗口是本期原问卷提交验收，不是重跑139或新增其诊断。当前尚无真实提交/关联/部署通过证据。
 
-实现使用宿主管理的独立worktree，从本次已提交的本地登记基线创建，禁止shell创建checkout/worktree。首次隔离分支若与初始登记的 codex/macos-yovoice 不同，执行者只读报告实际root/branch/HEAD并返回；主线程记录实际归属，按既有CLI迁移该worktree的本Feature登记后才沿同一执行者继续。本决定不迁移其他Feature或交还原L dirty写范围。新worktree中已提交宿主源码对应H，不包含停止的四项WIP。正式Validate/Review/Ship沿该固定分支和实际commit进行；合回原分支时仅纳入本期已接受文件。
+首次T3委托因本地target.projectId跨项目限制被invalid_request拒绝，未创建执行器、checkout或源码变化；实际T3父项目是hansen_agent_team，不能据此创建正确L隔离工作区。故本Task保持L/codex/macos-yovoice登记，改用同一T3 shared执行方式，仅写允许的新验收/usage文件；不改模型/provider、不借shell或新顶层线程创建checkout。测试/构建输入为本地已提交基线的Git对象导出，加本Task允许diff；生产源逐文件固定到H，原三个dirty宿主及managed文件完全排除。记录源manifest/构建输入/sourcemap，明确原L仍dirty。独立Validate随后对已提交业务commit新导出再验证，不能复用已经mutated的测试数据或从dirty原L宽泛复制。root保留状态/文档和最终接受，执行者不Git mutation/lifecycle。
