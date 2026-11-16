@@ -180,3 +180,5 @@ SDK owner、平台身份与artifact必须出自真实路径；用fixture的owner
 同一执行者在原新增test/registration/readonly-phase范围内补可复用归档/解包工具及必要检查，不改生产src、build.mjs或package/lock；如系统归档工具不能满足合同，报告具体缺口，不新建通用归档框架。必要时在现有测试fixture补实际自有Stage端口0/SSE及可用公共历史的私值观察，保留合成依赖标签，不重跑旧S1或生成语音/实际发送。usage须区分“owner明确选择exact记录即可record-only读取”和“本期登记保存验收另需原提交关联”，不能将后者强加为日常读取前置。
 
 **容量与时间。** 旧合并上限4,831,838,208 bytes及其超限不改历史。基于已核完整包/解包需要同时保留原59,367,190字节失败包和固定native/完整资源，主线程将后续合并容量上限明确增加268,435,456 bytes，成为5,100,273,664 bytes（4.75GiB）；R仍不超过512MiB。主线程本次df只读确认可用762,416,744 KiB。先核当前占用和预计同时占用再写，避免npm缓存复制；只清本Task可重建重复件，原日志/唯一证据与旧目录不删。首轮02:19:28合并点采样4,792,106,434 bytes仅为当时观察，非当前或峰值证明。原start01:12:14Z、最终deadline02:52:14Z及100分钟窗口保持，不重置；实际执行层起止也计入。无新诊断额度、外部调用或原修改写权。
+
+原实现线程已completed/activeRunId=null；root随后向同一线程接续被T3以runtime_mode_escalation_denied拒绝，因为原child full-access高于当前parent auto-accept-edits。未启动新run或写入。现有工具没有降低该线程runtimeMode的接口；不申请提升parent、不换模型。root对R的lsof及原记录PID复核均无匹配（有限采样），并通过task_cancel关闭原task执行归属、保留结果；因原执行器在当前权限不可用，按既有交接规则用相同codex/gpt-6.1-terra/xhigh、显式auto-accept-edits模式接替剩余离线包装。实际写范围、原deadline02:52:14Z、资源累计、失败/非收敛/诊断额度和无外部调用边界全部继承，不以新线程重置。新执行者只完成已核包装缺口和其必要检查，不是独立Review或对旧停止段的替代执行。

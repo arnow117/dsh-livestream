@@ -377,9 +377,9 @@
       "acceptance": {
         "plan": {
           "algorithm": "sha256",
-          "at": "2026-11-16T02:28:19Z",
+          "at": "2026-11-16T02:33:04Z",
           "documents": {
-            ".sdlc-v1/context/FEAT-011.engineering.md": "99954a4da5b6d60ed5bb6699f913b9fd1286cfe0f8ddb2e5041c10437150d0af",
+            ".sdlc-v1/context/FEAT-011.engineering.md": "dfc7920c42d27ef4cd9e7ca5d109182cc28d27c1e1cebd32f58b88f4be77e67d",
             ".sdlc-v1/context/REQ-014.product.md": "403bce6073ca07af84bffd7836025dd102ec590819a647acdbe3fbc26daae43b"
           },
           "normalization": "context-v1"
@@ -410,7 +410,7 @@
           "updated_at": "2026-11-16T01:03:34Z"
         }
       },
-      "updated_at": "2026-11-16T02:28:19Z",
+      "updated_at": "2026-11-16T02:33:04Z",
       "validation": {
         "at": null,
         "command": null,
