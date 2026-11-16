@@ -168,3 +168,15 @@ SDK owner、平台身份与artifact必须出自真实路径；用fixture的owner
 本期只覆盖原问卷登记与内部读取，复用T003；不要求完成旧修改核心。原匿名检查139及其他历史失败均保留；一次真实业务窗口是本期原问卷提交验收，不是重跑139或新增其诊断。当前尚无真实提交/关联/部署通过证据。
 
 首次T3委托因本地target.projectId跨项目限制被invalid_request拒绝，未创建执行器、checkout或源码变化；实际T3父项目是hansen_agent_team，不能据此创建正确L隔离工作区。故本Task保持L/codex/macos-yovoice登记，改用同一T3 shared执行方式，仅写允许的新验收/usage文件；不改模型/provider、不借shell或新顶层线程创建checkout。测试/构建输入为本地已提交基线的Git对象导出，加本Task允许diff；生产源逐文件固定到H，原三个dirty宿主及managed文件完全排除。记录源manifest/构建输入/sourcemap，明确原L仍dirty。独立Validate随后对已提交业务commit新导出再验证，不能复用已经mutated的测试数据或从dirty原L宽泛复制。root保留状态/文档和最终接受，执行者不Git mutation/lifecycle。
+
+### 首轮Build处置与同一执行器接续（2026-11-16）
+
+主Sol核对首轮result/DELIVERY、实际命令日志、nativeArtifact源码及npm成员清单后保留Build incomplete；不请求T001 done或进入正式Validate/Review/Ship。固定标准构建54成员、源映射、真实SDK配合Node合成子进程的迟到409及双视口E2E只按其实际范围接受为可复用输入；真实问卷GET在取得HTTP响应前被相同未细分DNS/public检查拒绝，零有效提交/原记录/真实native读，保留139及本轮停止。此接续不增加任何浏览器、DNS、账号、平台、模型/TTS或native执行窗口。
+
+执行偏差按原事实披露：早期仅新Node测试从L运行，不含禁用生产源，最终已在导出重做；首次解包导入缺DSH_HOME，产生任务自有fallback设置但当时监听/网络未完整观测，之后全新guarded导入通过。上述事实不构成产品缺陷，也不能改写为全程隔离合规。npm缓存曾造成合并采样超旧上限19,418,423字节，已清理；原违规和未知峰值保留，不用后续容量扩展追认合规。
+
+**新的已核包装问题与有效方案。** npm归档中固定native字节匹配但mode0700，许可文件0600；构建对应0500/0400。生产verifiedNativeExecutable还要求父目录无写位、同uid、单硬链接和固定SHA；仅入口import成功不能证明native路径可用。目标是本机固定私有交付，不新增npm发布要求。本轮提供完整、保留权限的私有交付归档（含标准lib、package声明的stage/assets/patch/license及同版usage），用显式完整成员清单映射固定源/标准输出；新解包核原native目录/文件模式、uid/nlink/字节并通过原校验，绝不执行native或放宽nativeArtifact。保留原npm失败包及证据；npm安装兼容性仍未验证，不描述为已修复。只读源/标准JS保持原字节，不重建原writer或重跑无关套件。
+
+同一执行者在原新增test/registration/readonly-phase范围内补可复用归档/解包工具及必要检查，不改生产src、build.mjs或package/lock；如系统归档工具不能满足合同，报告具体缺口，不新建通用归档框架。必要时在现有测试fixture补实际自有Stage端口0/SSE及可用公共历史的私值观察，保留合成依赖标签，不重跑旧S1或生成语音/实际发送。usage须区分“owner明确选择exact记录即可record-only读取”和“本期登记保存验收另需原提交关联”，不能将后者强加为日常读取前置。
+
+**容量与时间。** 旧合并上限4,831,838,208 bytes及其超限不改历史。基于已核完整包/解包需要同时保留原59,367,190字节失败包和固定native/完整资源，主线程将后续合并容量上限明确增加268,435,456 bytes，成为5,100,273,664 bytes（4.75GiB）；R仍不超过512MiB。主线程本次df只读确认可用762,416,744 KiB。先核当前占用和预计同时占用再写，避免npm缓存复制；只清本Task可重建重复件，原日志/唯一证据与旧目录不删。首轮02:19:28合并点采样4,792,106,434 bytes仅为当时观察，非当前或峰值证明。原start01:12:14Z、最终deadline02:52:14Z及100分钟窗口保持，不重置；实际执行层起止也计入。无新诊断额度、外部调用或原修改写权。
