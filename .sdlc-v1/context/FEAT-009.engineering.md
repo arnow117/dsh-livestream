@@ -2,6 +2,8 @@
 
 ## 当前有效方案
 
+**当前执行边界（2026-11-16 用户分期决定）**：先登记与读取，自动修改后续。T001/T002 转为 blocked 并保留原依赖，T003 的既有 done 不变；不重启原资料修改线程，不部署未接受的 index/agent/runtime/managedLivestreamHost 改动，不为本次读取交付修正或测试其 writer。原工作树、staging、P1、unknown/marker/receipt 和全部历史保留。已有只读实现及独立登记验收以新增合法增量接续；完整本 Feature 的验收条件不改成只读，也不提前推进 Validate/Review/Ship。
+
 ### 架构设计
 
 **关联产品**：L/.sdlc-v1/context/REQ-012.product.md，SHA256 `9a74072f02084305687fb0018d704479e991c41feb36693e50718c1c765a7dfc`，spec_ready 已 match。工程上下文为 `.sdlc-v1/context/FEAT-009.engineering.md`，主 Sol 已接受本方案；Feature/Task 进度以 state.json 为准。本文件不修改产品范围。

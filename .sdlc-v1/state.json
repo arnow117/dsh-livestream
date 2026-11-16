@@ -299,18 +299,18 @@
         "FEAT-009-T001": {
           "depends_on": [],
           "id": "FEAT-009-T001",
-          "status": "in_progress",
+          "status": "blocked",
           "title": "受控资料执行核心、共享artifact与独立Robot私有host",
-          "updated_at": "2026-11-15T03:30:24Z"
+          "updated_at": "2026-11-16T00:34:34Z"
         },
         "FEAT-009-T002": {
           "depends_on": [
             "FEAT-009-T001"
           ],
           "id": "FEAT-009-T002",
-          "status": "todo",
+          "status": "blocked",
           "title": "原Drawer与真实私有宿主接线及同Base消费修改完整旅程",
-          "updated_at": "2026-11-13T16:25:39Z"
+          "updated_at": "2026-11-16T00:34:34Z"
         },
         "FEAT-009-T003": {
           "depends_on": [],
@@ -320,7 +320,7 @@
           "updated_at": "2026-11-14T04:41:19Z"
         }
       },
-      "updated_at": "2026-11-15T14:22:24Z",
+      "updated_at": "2026-11-16T00:34:34Z",
       "validation": {
         "at": null,
         "command": null,
@@ -371,6 +371,51 @@
         "command": "node test/acceptance/run.mjs --grep 'host and course' --action-timeout 5000 --workers 1 --retries 0 --strict-cache",
         "commit": "74d2a953509cf975ec3517934ae1139e53313ad9",
         "result": "fail"
+      }
+    },
+    "FEAT-011": {
+      "acceptance": {
+        "plan": {
+          "algorithm": "sha256",
+          "at": "2026-11-16T01:02:25Z",
+          "documents": {
+            ".sdlc-v1/context/FEAT-011.engineering.md": "9a5d5ec19b675797aad1c16eeaa1c1c10c387dc7da941230c00205c675f49623",
+            ".sdlc-v1/context/REQ-014.product.md": "403bce6073ca07af84bffd7836025dd102ec590819a647acdbe3fbc26daae43b"
+          },
+          "normalization": "context-v1"
+        }
+      },
+      "branch": "codex/macos-yovoice",
+      "created_at": "2026-11-16T01:02:25Z",
+      "engineering_context_ref": ".sdlc-v1/context/FEAT-011.engineering.md",
+      "id": "FEAT-011",
+      "release": {
+        "at": null,
+        "commit": null,
+        "status": "pending"
+      },
+      "requirement_id": "REQ-014",
+      "review": {
+        "at": null,
+        "by": null,
+        "decision": "pending"
+      },
+      "status": "in_progress",
+      "tasks": {
+        "FEAT-011-T001": {
+          "depends_on": [],
+          "id": "FEAT-011-T001",
+          "status": "in_progress",
+          "title": "固定只读候选与原问卷同表读取交付",
+          "updated_at": "2026-11-16T01:03:34Z"
+        }
+      },
+      "updated_at": "2026-11-16T01:03:34Z",
+      "validation": {
+        "at": null,
+        "command": null,
+        "commit": null,
+        "result": "pending"
       }
     }
   },
@@ -557,7 +602,7 @@
       "product_context_ref": ".sdlc-v1/context/REQ-012.product.md",
       "status": "in_delivery",
       "title": "同一 Base 四字段私有资料消费与受管修改",
-      "updated_at": "2026-11-15T03:30:24Z"
+      "updated_at": "2026-11-16T00:34:34Z"
     },
     "REQ-013": {
       "acceptance": {
@@ -581,6 +626,29 @@
       "status": "in_delivery",
       "title": "专用屏幕全屏直播播出与组合验收",
       "updated_at": "2026-11-15T08:53:33Z"
+    },
+    "REQ-014": {
+      "acceptance": {
+        "spec_ready": {
+          "algorithm": "sha256",
+          "at": "2026-11-16T01:02:25Z",
+          "documents": {
+            ".sdlc-v1/context/REQ-014.product.md": "403bce6073ca07af84bffd7836025dd102ec590819a647acdbe3fbc26daae43b"
+          },
+          "normalization": "context-v1"
+        }
+      },
+      "created_at": "2026-11-16T01:02:25Z",
+      "depends_on": [],
+      "description": "按用户先登记与读取、自动修改后续的分期，复用原飞书问卷与T003，独立交付一次原提交、同表确切记录回读、内部授权读取及固定版本验收；不结算父私信、直播入口或原修改目标。",
+      "domain": "registration",
+      "feature_id": "FEAT-011",
+      "id": "REQ-014",
+      "priority": "P1",
+      "product_context_ref": ".sdlc-v1/context/REQ-014.product.md",
+      "status": "in_delivery",
+      "title": "原问卷登记与同表私有读取",
+      "updated_at": "2026-11-16T01:03:34Z"
     }
   },
   "state_format": "sdlc-lightweight-state-v1",

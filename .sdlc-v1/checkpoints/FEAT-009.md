@@ -4,7 +4,7 @@
 
 - 2026-11-15 14:45 UTC；L=/Users/mac/hansen_agent_team/workspace/20261109-deepseek-harness/dsh-livestream；branch=codex/macos-yovoice；源码/方案基线HEAD=34a5b8443f8931c02b5a06f04c57917cc9597905，随后仅本次澄清/检查点提交，以恢复时Git为准。
 - W=/Users/mac/hansen_agent_team/workspace/20261113-dsh-public-chat；S=W/feat009-t001/staging；P=L/packages/dsh-livestream。
-- REQ-012 / FEAT-009；T001=in_progress、T002=todo且依赖T001、T003=done。Goal工具本次实读为active；用户要求保存上下文，没有暂停/取消Goal。
+- REQ-012 / FEAT-009；T001/T002=blocked且原依赖保留、T003=done；2026-11-16用户明确先登记与读取、自动修改后续，原执行者不恢复。Goal工具最近实读仍blocked，接口不支持恢复；本轮已按新指示继续只读交付准备，不重建Goal。
 - P的index.ts/agent.ts/runtime.ts有原未提交变化，registration/managedLivestreamHost.ts为未跟踪；S两项来源模块为在途写范围，均未被主线程提交/验收。
 
 ## 已确认
@@ -15,7 +15,7 @@
 - run17 v9标准构建54文件、carrier5成员核对一致，8host JS同host-v3；正常合成正向/49相关回归证据保留，不能替代权限接受。审计W/main-run17-final-acceptance-132/build-content-audit.json。
 - 独立133发现MSR133-01 High/P1，主Sol已接受changes_requested；v9不能作为完整软件通过。134修正委托ordinal5被provider风险检查终止，8项输入未变，仅写correction-133/start.json。
 - 135已撤回旧版绕过复现/动态变体要求，当前仅防御性封装与正常回归；有效设计/范围/失败处置已在FEAT-009工程末节134/135，方案已推送34a5b84。
-- 用户最新确认“访客填共享飞书表单、内部访问同表全表”；主线程建议先登记+读取、修改单列，用户尚未确认；未修改REQ012范围/依赖，未取消当前执行者。见REQ004产品新增澄清。
+- 用户确认“访客填共享飞书表单、内部访问同表全表”，并于2026-11-16选择先登记与读取、自动修改后续。REQ012完整规格及原Task依赖保留，修改后续而非取消；读取交付准备合法独立增量。
 
 ## 未完成
 
@@ -27,7 +27,7 @@
 
 ## 下一步
 
-- 恢复先核实际root/branch/HEAD/工作树、state和当前工程末节。原任务是用户停止，不能据Goal自动重启；主线程已异步询问继续修改修正或先登记/读取、修改后续，等待用户答复。只读审计与保存证据已完成，没有新实现/测试/派工。
+- 恢复先核实际root/branch/HEAD/工作树、state和当前工程末节。原任务是用户停止且现已明确自动修改后续，不重启。接续登记与读取的独立增量准备，复用T003，不等T001/T002；原WIP不得夹带提交或部署。
 - 若135再次被平台拒绝，按brief停止该操作并报告；不改写被拒内容、换provider/新线程或其他入口重试。独立检查必须新delegate_task，不用thread_send冒充；实现修正沿原执行者。
 - 135使用既有start14:17:20Z/deadline15:17:20Z；整个run17含correction目标134217728 bytes，T001+read-increment合并≤4831838208，最后样本4591514373；时间、失败/非收敛和唯一主诊断全部继承，不按目录/清上下文重置。
 - 无native执行/Go/真实配置/Keychain/平台/照片/模型/TTS/Robot/浏览器；仅未改标准build在同一自有输出替换唯一原native副本并先保留旧非native字节。固定native154145…与诊断候选056597…不可互换。
@@ -40,6 +40,6 @@
 - W/main-defensive-source-maintenance-135/{SUPERSEDES.md,dispatch-receipt.json,platform-restriction.json,plan-refresh.json}；baseline=W/main-source-issuer-fix-134/input-baseline.json。
 - W/managed-source-security-review-133/{findings.md,result.json}；W/feat009-t001/run17-l-source-integration/{result-final.json,source-artifact-manifest-final.json,correction-133/start.json}；后续135结果路径按原brief为R/result-defensive-maintenance.json，尚未确认生成。
 - W/main-interrupted-source-audit-136/audit.json记录本次终态、现有内容/日志核对、资源采样和缺项；它不替代执行者最终交付、独立接受或用户恢复决定。
-- 独立REQ004表单137第二轮139已completed/activeRunId=null/pending0；自有匿名浏览器的唯一导航被自身DNS/公网地址检查拦截，无目标HTTP响应/截图，结果incomplete，临时profile及已观察进程已清理。证据W/req004-form-readonly-137/browser/{result-native.json,report-native.md}；root先前有限Incognito观察另见main-observation.json。不判表单故障、不追认提交/记录/权限通过；资料线程继续停止，原范围问题仍待答复，无在途表单任务，不重派。
+- 独立REQ004表单137第二轮139已completed/activeRunId=null/pending0；自有匿名浏览器的唯一导航被自身DNS/公网地址检查拦截，无目标HTTP响应/截图，结果incomplete，临时profile及已观察进程已清理。证据W/req004-form-readonly-137/browser/{result-native.json,report-native.md}；root先前有限Incognito观察另见main-observation.json。不判表单故障、不追认提交/记录/权限通过；资料线程继续停止，现已明确先登记与读取；无在途表单任务，不原样重派旧检查。
 - 读取先行接受W/main-t003-acceptance-42、main-real-read-acceptance-51；共享profile子artifact固定manifest cff638ff461fab35b082e93d62c28c768472688d03888b69864700f89abb8fcb，不是完整writer核心。
 - SDLC CLI=/Users/mac/hansen_agent_team/external/sdlc-pilot/scripts/lifecycle_state.py；Plan最后已核match，工程digest bc2086de27740610893b496b2773a949ff54537b8859cf97d30270f78779ab03；引用前重核。
